@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scene": { "name": "SineTracker", "base": "Scene" },
+  "config": { "pixel_width": 1920, "pixel_height": 1080, "frame_rate": 60, "background_color": "#000000" },
+  "header": "class Spiral(VMobject):\n    \"\"\"Custom mobject defined in the header: it shows up in the library.\"\"\"\n\n    def __init__(self, turns=3, size=1.0, **kwargs):\n        super().__init__(**kwargs)\n        ts = np.linspace(0, turns * TAU, 240)\n        r = size * ts / (turns * TAU)\n        self.set_points_smoothly(np.stack([r * np.cos(ts), r * np.sin(ts), 0 * ts], axis=1))\n",
+  "objects": [
+    { "id": "o_title", "name": "title", "ctor": "Text", "args": { "*": "r\"Tracing sin(x)\"", "font_size": "42" }, "pos": [0, 3.25], "chain": "" },
+    { "id": "o_axes", "name": "axes", "ctor": "Axes", "args": { "x_range": "[-7, 7, 1]", "y_range": "[-1.5, 1.5, 0.5]", "x_length": "11", "y_length": "4", "axis_config": "{\"color\": GREY}" }, "pos": [0, -0.4], "chain": "" },
+    { "id": "o_graph", "name": "graph", "ctor": "axes.plot", "args": { "function": "lambda x: np.sin(x)", "color": "BLUE" }, "pos": null, "chain": "" },
+    { "id": "o_t", "name": "t", "ctor": "ValueTracker", "args": { "*": "-6" }, "pos": null, "chain": "" },
+    { "id": "o_dot", "name": "dot", "ctor": "Dot", "args": { "color": "YELLOW", "radius": "0.12" }, "pos": null, "chain": ".add_updater(lambda m: m.move_to(axes.i2gp(t.get_value(), graph)))" },
+    { "id": "o_spiral", "name": "spiral", "ctor": "Spiral", "args": { "turns": "4", "size": "0.9", "color": "PINK" }, "pos": [5.25, 2.5], "chain": "" }
+  ],
+  "steps": [
+    { "id": "s1", "kind": "play", "anims": [ { "id": "a1", "cls": "Write", "target": "title", "args": {} } ] },
+    { "id": "s2", "kind": "play", "anims": [ { "id": "a2", "cls": "Create", "target": "axes", "args": {} } ], "run_time": "1.5" },
+    { "id": "s3", "kind": "play", "anims": [ { "id": "a3", "cls": "Create", "target": "graph", "args": {} }, { "id": "a4", "cls": "FadeIn", "target": "dot", "args": { "scale": "3" } } ], "lag_ratio": "0.5" },
+    { "id": "s4", "kind": "play", "anims": [ { "id": "a5", "cls": "animate", "target": "t", "args": {}, "chain": ".set_value(6)" } ], "run_time": "4", "rate_func": "linear" },
+    { "id": "s5", "kind": "play", "anims": [ { "id": "a6", "cls": "Create", "target": "spiral", "args": {} }, { "id": "a7", "cls": "Indicate", "target": "title", "args": {} } ] },
+    { "id": "s6", "kind": "code", "code": "# Raw manim code: anything goes here\nself.play(graph.animate.set_color(GREEN), Circumscribe(dot), Rotate(spiral, PI))" },
+    { "id": "s7", "kind": "wait", "duration": "1" }
+  ]
+}

@@ -1,0 +1,258 @@
+"""Local HTTP server connecting the web UI to manim.
+
+Bound to 127.0.0.1 only. Because the API executes scene code, every API call
+must carry a per-session token (embedded in the served page) and a matching
+Host header, so other websites open in a browser can't drive it.
+"""
+
+from __future__ import annotations
+
+import json
+import mimetypes
+import re
+import secrets
+import shutil
+import threading
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
+
+from . import catalog, codegen, render, runtime
+from .project import load_project, new_project, save_project
+
+WEB_DIR = Path(__file__).parent / "web"
+
+
+class AppState:
+    def __init__(self, project_path: str | None):
+        self.token = secrets.token_urlsafe(24)
+        self.project_path = project_path
+        self.manim_lock = threading.Lock()
+        self.jobs: dict[str, render.RenderJob] = {}
+        self.catalog_cache: dict[str, dict] = {}
+        self.dialogs: Any = None  # set by the desktop shell (pywebview)
+        self.port = 0
+
+
+class Handler(BaseHTTPRequestHandler):
+    app: AppState
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt: str, *args: Any) -> None:  # keep the console quiet
+        pass
+
+    # ---- plumbing -------------------------------------------------------
+    def _host_ok(self) -> bool:
+        host = self.headers.get("Host", "")
+        return host in (f"127.0.0.1:{self.app.port}", f"localhost:{self.app.port}")
+
+    def _authorized(self, query: dict[str, list[str]]) -> bool:
+        token = self.headers.get("X-MathEngine-Token") or (query.get("token") or [""])[0]
+        return self._host_ok() and secrets.compare_digest(token, self.app.token)
+
+    def _send(self, status: int, body: bytes, ctype: str, extra: dict[str, str] | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _json(self, data: Any, status: int = 200) -> None:
+        self._send(status, json.dumps(data).encode(), "application/json")
+
+    def _body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(length) or b"{}") if length else {}
+
+    # ---- routing --------------------------------------------------------
+    def do_GET(self) -> None:
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if not self._host_ok():
+            return self._send(403, b"forbidden", "text/plain")
+        if url.path.startswith("/api/") or url.path.startswith("/media/"):
+            if not self._authorized(query):
+                return self._send(403, b"forbidden", "text/plain")
+            return self._route("GET", url.path, query, {})
+        return self._static(url.path)
+
+    do_HEAD = do_GET
+
+    def do_POST(self) -> None:
+        url = urlparse(self.path)
+        query = parse_qs(url.query)
+        if not self._authorized(query):
+            return self._send(403, b"forbidden", "text/plain")
+        try:
+            body = self._body()
+        except json.JSONDecodeError:
+            return self._json({"error": "bad json"}, 400)
+        self._route("POST", url.path, query, body)
+
+    def _route(self, method: str, path: str, query: dict, body: dict) -> None:
+        routes: dict[tuple[str, str], Callable[[dict, dict], Any]] = {
+            ("POST", "/api/catalog"): self.api_catalog,
+            ("POST", "/api/signature"): self.api_signature,
+            ("POST", "/api/run"): self.api_run,
+            ("POST", "/api/code"): self.api_code,
+            ("POST", "/api/render"): self.api_render,
+            ("GET", "/api/project/initial"): self.api_project_initial,
+            ("POST", "/api/project/open"): self.api_project_open,
+            ("POST", "/api/project/save"): self.api_project_save,
+            ("POST", "/api/export_code"): self.api_export_code,
+            ("POST", "/api/dialog"): self.api_dialog,
+        }
+        try:
+            handler = routes.get((method, path))
+            if handler:
+                return self._json(handler(query, body))
+            m = re.fullmatch(r"/api/render/(\w+)(/cancel)?", path)
+            if m:
+                job = self.app.jobs.get(m.group(1))
+                if not job:
+                    return self._json({"error": "no such job"}, 404)
+                if m.group(2):
+                    job.cancel()
+                return self._json(job.to_json())
+            m = re.fullmatch(r"/media/(\w+)\.mp4", path)
+            if m:
+                job = self.app.jobs.get(m.group(1))
+                if job and job.result and job.result.exists():
+                    return self._file(job.result)
+            self._json({"error": "not found"}, 404)
+        except Exception as exc:  # report backend bugs to the UI instead of dropping the connection
+            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+    # ---- static & media -------------------------------------------------
+    def _static(self, path: str) -> None:
+        rel = path.lstrip("/") or "index.html"
+        file = (WEB_DIR / rel).resolve()
+        if not str(file).startswith(str(WEB_DIR.resolve())) or not file.is_file():
+            file = WEB_DIR / "index.html"
+            if not file.is_file():
+                return self._send(500, b"Frontend not built. Run: cd frontend && npm install && npm run build", "text/plain")
+        if file.name == "index.html":
+            html = file.read_text(encoding="utf-8").replace(
+                "<head>", f'<head><meta name="me-token" content="{self.app.token}">', 1)
+            return self._send(200, html.encode(), "text/html; charset=utf-8")
+        ctype = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+        self._send(200, file.read_bytes(), ctype, {"Cache-Control": "max-age=3600"})
+
+    def _file(self, file: Path) -> None:
+        """Serve a file with HTTP Range support (needed for <video> seeking)."""
+        size = file.stat().st_size
+        rng = self.headers.get("Range")
+        start, end = 0, size - 1
+        status = 200
+        if rng and (m := re.match(r"bytes=(\d*)-(\d*)", rng)):
+            if m.group(1):
+                start = int(m.group(1))
+                end = int(m.group(2)) if m.group(2) else size - 1
+            else:
+                start = size - int(m.group(2))
+            end = min(end, size - 1)
+            status = 206
+        self.send_response(status)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Cache-Control", "no-store")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with open(file, "rb") as f:
+            f.seek(start)
+            remaining = end - start + 1
+            while remaining > 0:
+                chunk = f.read(min(1 << 16, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                remaining -= len(chunk)
+
+    # ---- API ------------------------------------------------------------
+    def api_catalog(self, _q: dict, body: dict) -> dict:
+        header = body.get("header", "")
+        if header not in self.app.catalog_cache:
+            with self.app.manim_lock:
+                extra = catalog.header_namespace(header)
+                data = catalog.build(extra)
+            data["latex"] = shutil.which("latex") is not None
+            data["ffmpeg"] = shutil.which("ffmpeg") is not None
+            self.app.catalog_cache = {header: data}
+        return self.app.catalog_cache[header]
+
+    def api_signature(self, _q: dict, body: dict) -> dict:
+        with self.app.manim_lock:
+            ns = catalog.header_namespace(body.get("header", ""))
+            return catalog.signature(body["expr"], ns, body.get("object_classes"))
+
+    def api_run(self, _q: dict, body: dict) -> dict:
+        t = body.get("t")
+        with self.app.manim_lock:
+            res = runtime.run(body["doc"], None if t is None else float(t),
+                              render=body.get("render", True), preview_width=int(body.get("width", 960)))
+        return res.to_json()
+
+    def api_code(self, _q: dict, body: dict) -> dict:
+        return {"code": codegen.generate(body["doc"]).source}
+
+    def api_export_code(self, _q: dict, body: dict) -> dict:
+        path = Path(body["path"]).expanduser()
+        path.write_text(codegen.generate(body["doc"]).source, encoding="utf-8")
+        return {"path": str(path)}
+
+    def api_render(self, _q: dict, body: dict) -> dict:
+        key = self.app.project_path or "untitled"
+        with self.app.manim_lock:  # validate first so errors show in the editor, not a log
+            check = runtime.run(body["doc"], None, render=False)
+        if check.error:
+            return {"state": "error", "message": check.error["message"], "error": check.error}
+        job = render.RenderJob(body["doc"], body.get("quality", "preview"), body.get("output"), key, check.plays)
+        if body.get("quality") == "preview":
+            for old in list(self.app.jobs.values()):
+                if old.quality == "preview" and old.state in ("queued", "running"):
+                    old.cancel()
+        self.app.jobs[job.id] = job
+        job.start()
+        return job.to_json()
+
+    def api_project_initial(self, _q: dict, _b: dict) -> dict:
+        if self.app.project_path and Path(self.app.project_path).exists():
+            return {"doc": load_project(self.app.project_path), "path": self.app.project_path}
+        return {"doc": new_project(), "path": self.app.project_path}
+
+    def api_project_open(self, _q: dict, body: dict) -> dict:
+        doc = load_project(body["path"])
+        self.app.project_path = body["path"]
+        return {"doc": doc, "path": body["path"]}
+
+    def api_project_save(self, _q: dict, body: dict) -> dict:
+        save_project(body["path"], body["doc"])
+        self.app.project_path = body["path"]
+        return {"path": body["path"]}
+
+    def api_dialog(self, _q: dict, body: dict) -> dict:
+        if not self.app.dialogs:
+            return {"path": None, "unsupported": True}
+        return {"path": self.app.dialogs(body.get("kind", "open"), body.get("filename", ""), body.get("types", []))}
+
+
+def make_server(project_path: str | None, port: int = 0) -> tuple[ThreadingHTTPServer, AppState]:
+    app = AppState(project_path)
+    handler = type("BoundHandler", (Handler,), {"app": app})
+    server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    server.daemon_threads = True
+    app.port = server.server_address[1]
+    return server, app

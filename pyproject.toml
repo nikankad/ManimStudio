@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mathengine"
+version = "0.1.0"
+description = "Drag-and-drop visual editor for manim (Community Edition) videos"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "manim>=0.19",
+  "pywebview>=5.0",
+]
+
+[project.scripts]
+mathengine = "mathengine.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mathengine"]
+artifacts = ["mathengine/web/**"]

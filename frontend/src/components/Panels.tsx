@@ -1,0 +1,307 @@
+import { useEffect, useRef, useState } from 'react';
+import { api, askPath } from '../api';
+import { deleteSelection, docKey, duplicateObject, emptyDoc, getState, loadDoc, redo, setPlaying, setState, toast, undo, updateDoc, useStore } from '../store';
+import type { Job } from '../types';
+import { Field } from './ParamField';
+
+export async function saveProject(saveAs = false) {
+  const s = getState();
+  let path = s.path;
+  if (!path || saveAs) path = await askPath('save', 'scene.mathengine', ['MathEngine project (*.mathengine)'], 'Save project to path:');
+  if (!path) return;
+  if (!/\.mathengine$/.test(path)) path += '.mathengine';
+  await api.saveProject(path, s.doc);
+  setState({ path, dirty: false });
+  toast(`Saved ${path}`);
+}
+
+export async function openProject() {
+  const path = await askPath('open', '', ['MathEngine project (*.mathengine)'], 'Open project path:');
+  if (!path) return;
+  const res = await api.openProject(path);
+  loadDoc(res.doc, res.path);
+}
+
+export function Toolbar() {
+  const path = useStore((s) => s.path);
+  const dirty = useStore((s) => s.dirty);
+  const snap = useStore((s) => s.snap);
+  const record = useStore((s) => s.record);
+  const autoIntro = useStore((s) => s.autoIntro);
+  const canUndo = useStore((s) => s.past.length > 0);
+  const canRedo = useStore((s) => s.future.length > 0);
+  const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
+  return (
+    <header className="toolbar">
+      <span className="brand">∑ MathEngine</span>
+      <span className="muted">{name}{dirty ? ' •' : ''}</span>
+      <button className="ghost" onClick={() => { if (!getState().dirty || confirm('Discard unsaved changes?')) loadDoc(emptyDoc(), null); }}>New</button>
+      <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
+      <button className="ghost" onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
+      <span className="sep" />
+      <button className="ghost" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)">↶</button>
+      <button className="ghost" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)">↷</button>
+      <span className="sep" />
+      <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
+      <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
+      <label className={`toggle ${record ? 'rec' : ''}`} title="Dragging an object adds an .animate.move_to(...) step instead of changing its start position"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record moves</label>
+      <div className="spacer" />
+      <PreviewButton />
+      <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
+      <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
+      <button className="primary" onClick={() => setState({ panel: 'export' })}>Export video</button>
+    </header>
+  );
+}
+
+/** Renders a smooth low-res video with the real manim CLI and plays it in the canvas. */
+function PreviewButton() {
+  const video = useStore((s) => s.video);
+  const doc = useStore((s) => s.doc);
+  const showVideo = useStore((s) => s.showVideo);
+  const stale = !video || video.key !== docKey(doc);
+  const running = video && (video.state === 'running' || video.state === 'queued');
+
+  const start = async () => {
+    if (!stale && video?.url) {
+      setState({ showVideo: true, time: 0 });
+      return setPlaying(true);
+    }
+    const key = docKey(doc);
+    const job = await api.render(doc, 'preview');
+    if (job.state === 'error' || !job.id) return toast(job.message);
+    setState({ video: { jobId: job.id, key, state: job.state, progress: 0, message: job.message, url: null } });
+    poll(job.id, (j) => {
+      const v = getState().video;
+      if (!v || v.jobId !== job.id) return false;
+      const done = j.state === 'done';
+      setState({ video: { ...v, state: j.state, progress: j.progress ?? 0, message: j.message, url: done ? api.mediaUrl(job.id) : null } });
+      if (done) {
+        setState({ showVideo: true, time: 0 });
+        setPlaying(true);
+      }
+      if (j.state === 'error') toast(j.message);
+      return j.state === 'running' || j.state === 'queued';
+    });
+  };
+
+  return (
+    <button onClick={() => (showVideo && !stale ? setState({ showVideo: false }) : start().catch((e) => toast(String(e))))} title="Render a smooth preview with manim (854×480, 30fps)">
+      {running ? `Rendering ${Math.round((video!.progress ?? 0) * 100)}%` : showVideo && !stale ? 'Exit preview' : '▶ Smooth preview'}
+    </button>
+  );
+}
+
+function poll(id: string, onUpdate: (j: Job) => boolean) {
+  const tick = async () => {
+    try {
+      const j = await api.job(id);
+      if (onUpdate(j)) setTimeout(tick, 400);
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  setTimeout(tick, 300);
+}
+
+function Modal({ title, children, wide }: { title: string; children: React.ReactNode; wide?: boolean }) {
+  return (
+    <div className="modal-back" onPointerDown={(e) => e.target === e.currentTarget && setState({ panel: null })}>
+      <div className={`modal ${wide ? 'wide' : ''}`}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="ghost" onClick={() => setState({ panel: null })}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export function Panels() {
+  const panel = useStore((s) => s.panel);
+  if (panel === 'code') return <CodePanel />;
+  if (panel === 'settings') return <SettingsPanel />;
+  if (panel === 'export') return <ExportPanel />;
+  return null;
+}
+
+function CodePanel() {
+  const doc = useStore((s) => s.doc);
+  const [code, setCode] = useState('');
+  useEffect(() => {
+    api.code(doc).then((r) => setCode(r.code)).catch((e) => toast(String(e)));
+  }, [doc]);
+  return (
+    <Modal title="Code" wide>
+      <div className="code-grid">
+        <div>
+          <h4>Header (module level)</h4>
+          <p className="muted small">Imports, helper functions and custom Mobject subclasses. Classes defined here show up in the library.</p>
+          <Field multiline className="mono code-input tall" value={doc.header} placeholder={'from manim_slides import Slide\n\nclass Pendulum(VGroup):\n    ...'} onChange={(v) => updateDoc((d) => void (d.header = v), 'header')} />
+        </div>
+        <div>
+          <h4>
+            Generated manim code{' '}
+            <button className="ghost small" onClick={() => navigator.clipboard.writeText(code).then(() => toast('Copied'))}>Copy</button>
+            <button className="ghost small" onClick={async () => {
+              const p = await askPath('save', 'scene.py', ['Python (*.py)'], 'Save .py to path:');
+              if (p) toast(`Saved ${(await api.exportCode(getState().doc, p)).path}`);
+            }}>Save .py</button>
+          </h4>
+          <pre className="code-view">{code}</pre>
+          <p className="muted small">Run it directly with <code>manim -pqh scene.py {doc.scene.name}</code></p>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
+
+function SettingsPanel() {
+  const doc = useStore((s) => s.doc);
+  const bases = useStore((s) => s.catalog?.scene_bases ?? ['Scene']);
+  const set = (fn: (d: typeof doc) => void, key: string) => updateDoc(fn, 'settings:' + key);
+  const res = `${doc.config.pixel_width}x${doc.config.pixel_height}`;
+  return (
+    <Modal title="Scene settings">
+      <label className="param"><span className="pname">Class name</span><Field className="mono" value={doc.scene.name} onChange={(v) => /^[A-Za-z_]\w*$/.test(v) && set((d) => void (d.scene.name = v), 'name')} /></label>
+      <label className="param">
+        <span className="pname">Base class</span>
+        <Field className="mono" value={doc.scene.base} list="me-bases" onChange={(v) => set((d) => void (d.scene.base = v), 'base')} />
+        <datalist id="me-bases">{bases.map((b) => <option key={b} value={b} />)}</datalist>
+      </label>
+      <label className="param">
+        <span className="pname">Resolution</span>
+        <select className="field" value={res} onChange={(e) => {
+          const [w, h] = e.target.value.split('x').map(Number);
+          set((d) => { d.config.pixel_width = w; d.config.pixel_height = h; }, 'res');
+        }}>
+          {RESOLUTIONS.map(([n, w, h]) => <option key={n} value={`${w}x${h}`}>{n}</option>)}
+          {!RESOLUTIONS.some(([, w, h]) => `${w}x${h}` === res) && <option value={res}>{res}</option>}
+        </select>
+      </label>
+      <label className="param">
+        <span className="pname">Frame rate</span>
+        <select className="field" value={doc.config.frame_rate} onChange={(e) => set((d) => void (d.config.frame_rate = +e.target.value), 'fps')}>
+          {[24, 30, 60, 120].map((f) => <option key={f} value={f}>{f} fps</option>)}
+        </select>
+      </label>
+      <label className="param">
+        <span className="pname">Background</span>
+        <div className="row">
+          <input type="color" className="swatch" value={doc.config.background_color} onChange={(e) => set((d) => void (d.config.background_color = e.target.value), 'bg')} />
+          <Field className="mono" value={doc.config.background_color} onChange={(v) => /^#[0-9a-f]{6}$/i.test(v) && set((d) => void (d.config.background_color = v), 'bg')} />
+        </div>
+      </label>
+    </Modal>
+  );
+}
+
+function ExportPanel() {
+  const doc = useStore((s) => s.doc);
+  const path = useStore((s) => s.path);
+  const [quality, setQuality] = useState('project');
+  const [output, setOutput] = useState(() => (path ? path.replace(/\.mathengine$/, '.mp4') : ''));
+  const [job, setJob] = useState<Job | null>(null);
+  const jobRef = useRef<string | null>(null);
+  useEffect(() => () => { jobRef.current = null; }, []);
+
+  const start = async () => {
+    let out = output;
+    if (!out) {
+      out = (await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:')) ?? '';
+      if (!out) return;
+      setOutput(out);
+    }
+    const j = await api.render(doc, quality, out);
+    setJob(j);
+    if (!j.id || j.state === 'error') return;
+    jobRef.current = j.id;
+    poll(j.id, (u) => {
+      if (jobRef.current !== j.id) return false;
+      setJob(u);
+      return u.state === 'running' || u.state === 'queued';
+    });
+  };
+  const running = job && (job.state === 'running' || job.state === 'queued');
+  return (
+    <Modal title="Export video">
+      <label className="param">
+        <span className="pname">Quality</span>
+        <select className="field" value={quality} onChange={(e) => setQuality(e.target.value)}>
+          <option value="project">Project ({doc.config.pixel_width}×{doc.config.pixel_height} @ {doc.config.frame_rate}fps)</option>
+          <option value="720p">720p30</option>
+          <option value="1080p">1080p60</option>
+          <option value="1440p">1440p60</option>
+          <option value="4k">4K60</option>
+        </select>
+      </label>
+      <label className="param">
+        <span className="pname">Output</span>
+        <div className="row">
+          <Field className="mono" value={output} placeholder="choose a file…" onChange={setOutput} />
+          <button className="ghost" onClick={async () => { const p = await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:'); if (p) setOutput(p); }}>Browse</button>
+        </div>
+      </label>
+      {job && (
+        <div className="export-status">
+          <div className="progress"><div style={{ width: `${(job.progress ?? 0) * 100}%` }} /></div>
+          <div className={job.state === 'error' ? 'err-text' : 'muted'}>{job.message}</div>
+          {job.state === 'error' && job.log && <pre className="code-view small">{job.log}</pre>}
+        </div>
+      )}
+      <div className="row actions">
+        {running ? (
+          <button className="danger" onClick={() => job?.id && api.cancelJob(job.id).then(setJob)}>Cancel</button>
+        ) : (
+          <button className="primary" onClick={() => start().catch((e) => toast(String(e)))}>Render with manim</button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+export function useShortcuts() {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void saveProject(e.shiftKey).catch((err) => toast(String(err)));
+        return;
+      }
+      if (typing) return;
+      if (mod && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (mod && e.key.toLowerCase() === 'y') {
+        redo();
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setPlaying(!getState().playing);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        deleteSelection();
+      } else if (mod && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        const sel = getState().selection;
+        if (sel?.kind === 'object') duplicateObject(sel.id);
+      } else if (e.key === 'Home') {
+        setState({ time: 0 });
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        const s = getState();
+        const marks = [0, ...(s.timeline?.steps.map((x) => x.end) ?? [])].sort((a, b) => a - b);
+        const t = e.key === 'ArrowRight' ? marks.find((m) => m > s.time + 1e-6) : [...marks].reverse().find((m) => m < s.time - 1e-6);
+        if (t !== undefined) setState({ time: t, showVideo: false });
+      } else if (e.key === 'Escape') {
+        setState({ selection: null, panel: null });
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
