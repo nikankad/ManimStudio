@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, chooseTrack, clipDuration, deleteSelection, fps,
+  addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, chooseTrack, clipDuration, deleteSelection, docKey, fps, previewFresh,
   frameSnap, getState, isLocked, parseTimecode, selectClips, sequenceEnd, setPlaying, setState, timecode, trackIsFree, uid,
   updateDoc, useStore,
 } from '../store';
@@ -413,6 +413,7 @@ export function Timeline() {
                 />
               ))}
               <div className="end-mark" style={{ left: x(end) }} title="Sequence end" />
+              <RenderBar left={x(0)} width={end * pps} />
             </div>
             {rows.map((t, r) => (
               <div key={t.id} className={`lane-row ${t.locked ? 'locked' : ''} ${t.hidden ? 'off' : ''}`} style={{ top: rowTop(r), height: ROW }} />
@@ -438,6 +439,18 @@ export function Timeline() {
 
       <ZoomBar laneW={laneW} end={end} />
       {menu && <ClipMenu {...menu} onClose={() => setMenu(null)} />}
+    </div>
+  );
+}
+
+/** Premiere-style render bar: green = smooth preview ready, yellow = rendering, red = live frames only. */
+function RenderBar({ left, width }: { left: number; width: number }) {
+  const video = useStore((s) => s.video);
+  const fresh = useStore((s) => previewFresh(s));
+  const rendering = !fresh && !!video && (video.state === 'running' || video.state === 'queued') && video.key === docKey(getState().doc);
+  return (
+    <div className={`render-bar ${fresh ? 'ok' : rendering ? 'busy' : 'stale'}`} style={{ left, width }} title={fresh ? 'Preview rendered: plays smoothly' : rendering ? `Rendering preview… ${Math.round((video?.progress ?? 0) * 100)}%` : 'Not rendered: plays live (lower frame rate)'}>
+      {rendering && <div className="render-progress" style={{ width: `${(video?.progress ?? 0) * 100}%` }} />}
     </div>
   );
 }

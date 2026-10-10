@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, deleteSelection, docKey, duplicateObject, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc,
+  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObject, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
@@ -58,41 +58,26 @@ export function Toolbar() {
   );
 }
 
-/** Renders a smooth low-res video with the real manim CLI and plays it in the canvas. */
+/** Status of the background preview render (Premiere's render bar, as a button). */
 function PreviewButton() {
   const video = useStore((s) => s.video);
-  const doc = useStore((s) => s.doc);
-  const showVideo = useStore((s) => s.showVideo);
-  const stale = !video || video.key !== docKey(doc);
-  const running = video && (video.state === 'running' || video.state === 'queued');
-
-  const start = async () => {
-    if (!stale && video?.url) {
-      setState({ showVideo: true, time: 0 });
-      return setPlaying(true);
-    }
-    const key = docKey(doc);
-    const job = await api.render(doc, 'preview');
-    if (job.state === 'error' || !job.id) return toast(job.message);
-    setState({ video: { jobId: job.id, key, state: job.state, progress: 0, message: job.message, url: null } });
-    poll(job.id, (j) => {
-      const v = getState().video;
-      if (!v || v.jobId !== job.id) return false;
-      const done = j.state === 'done';
-      setState({ video: { ...v, state: j.state, progress: j.progress ?? 0, message: j.message, url: done ? api.mediaUrl(job.id) : null } });
-      if (done) {
-        setState({ showVideo: true, time: 0 });
-        setPlaying(true);
-      }
-      if (j.state === 'error') toast(j.message);
-      return j.state === 'running' || j.state === 'queued';
-    });
-  };
-
+  const fresh = useStore((s) => previewFresh(s));
+  const autoRender = useStore((s) => s.autoRender);
+  const running = video && (video.state === 'running' || video.state === 'queued') && !fresh;
+  const stale = !fresh && !running;
   return (
-    <button onClick={() => (showVideo && !stale ? setState({ showVideo: false }) : start().catch((e) => toast(String(e))))} title="Render a smooth preview with manim (854×480, 30fps)">
-      {running ? `Rendering ${Math.round((video!.progress ?? 0) * 100)}%` : showVideo && !stale ? 'Exit preview' : '▶ Smooth preview'}
-    </button>
+    <>
+      <label className="toggle" title="Render a smooth preview with manim in the background after each edit; Space plays it">
+        <input type="checkbox" checked={autoRender} onChange={(e) => { setState({ autoRender: e.target.checked }); if (e.target.checked) void renderPreview(); }} /> Auto-render
+      </label>
+      <button
+        className={`render-status ${fresh ? 'ok' : running ? 'busy' : 'stale'}`}
+        title={fresh ? 'Smooth preview is up to date: Space plays it' : running ? video?.message : video?.state === 'error' ? video.message : 'Render a smooth preview now'}
+        onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview())}
+      >
+        {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : video?.state === 'error' && video.key === docKey(getState().doc) ? '● Render failed' : '● Render preview'}
+      </button>
+    </>
   );
 }
 

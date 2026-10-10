@@ -82,10 +82,12 @@ select.inline { background: transparent; color: var(--blue); border: none; font:
 .splitter { grid-area: split; cursor: ns-resize; background: var(--bg); border-top: 1px solid var(--line); }
 .splitter:hover { background: #2f3f55; }
 
-.toolbar { grid-area: bar; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.toolbar { grid-area: bar; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.toolbar::-webkit-scrollbar { display: none; }
+.toolbar > * { flex: none; }
 .brand { font-weight: 700; color: var(--accent); margin-right: 6px; }
 .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; display: inline-block; }
-.toggle { display: flex; gap: 4px; align-items: center; color: var(--muted); padding: 0 4px; cursor: pointer; }
+.toggle { display: flex; gap: 4px; align-items: center; color: var(--muted); padding: 0 4px; cursor: pointer; white-space: nowrap; }
 .toggle.rec { color: var(--err); }
 
 .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
@@ -121,6 +123,7 @@ select.inline { background: transparent; color: var(--blue); border: none; font:
 .viewport { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
 .stage { position: relative; box-shadow: 0 0 0 1px #2a2a30, 0 10px 40px rgba(0, 0, 0, 0.5); }
 .frame { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+.frame.hidden { visibility: hidden; }
 .frame.stale { opacity: 0.35; filter: grayscale(0.6); }
 .overlay { position: absolute; inset: 0; cursor: default; overflow: visible; }
 .sel-box { fill: transparent; stroke: var(--blue); stroke-width: 1.2; cursor: move; }
@@ -289,3 +292,13 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 @media (max-width: 1150px) {
   .app { grid-template-columns: 200px 1fr 270px; }
 }
+
+/* render bar + status */
+.render-bar { position: absolute; bottom: 0; height: 3px; background: #c0392b; pointer-events: none; }
+.render-bar.ok { background: #2ecc71; }
+.render-bar.busy { background: #6b5a1e; }
+.render-progress { height: 100%; background: #f1c40f; transition: width 0.3s; }
+.render-status { font-size: 11.5px; }
+.render-status.ok { color: #2ecc71; }
+.render-status.busy { color: #f1c40f; }
+.render-status.stale { color: #e57373; }

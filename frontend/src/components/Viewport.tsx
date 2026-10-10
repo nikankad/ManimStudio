@@ -200,7 +200,7 @@ export function Viewport() {
           }}
         >
           {frame?.image && <img className={`frame ${error ? 'stale' : ''}`} src={frame.image} draggable={false} alt="" />}
-          {showVideo && video?.url && <video ref={videoRef} className="frame" src={video.url} muted playsInline />}
+          {video?.url && <video ref={videoRef} className={`frame ${showVideo ? '' : 'hidden'}`} src={video.url} preload="auto" muted playsInline />}
           <svg
             className="overlay"
             width={size.w}

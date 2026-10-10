@@ -33,7 +33,8 @@ export interface AppState {
   targetTrack: string | null;
   view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
-  showVideo: boolean;
+  showVideo: boolean; // playing the rendered preview video instead of live frames
+  autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
 }
 
@@ -71,6 +72,7 @@ let state: AppState = {
   view: { pps: 110, start: 0 },
   video: null,
   showVideo: false,
+  autoRender: true,
   toast: null,
 };
 
@@ -88,6 +90,8 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
   if (state.doc !== prev.doc) {
     scheduleTimeline();
     requestFrame();
+    schedulePreviewRender();
+    if (state.showVideo) state = { ...state, showVideo: false };
   } else if (state.time !== prev.time || state.previewDoc !== prev.previewDoc) {
     requestFrame();
   }
@@ -129,7 +133,7 @@ export function redo() {
 
 export function loadDoc(doc: SceneDoc, path: string | null) {
   doc.markers ??= [];
-  setState({ doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null });
+  setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null });
 }
 
 export function toast(msg: string) {
@@ -157,11 +161,18 @@ async function pumpFrames() {
   frameBusy = true;
   const doc = state.previewDoc ?? state.doc;
   const time = state.time;
+  // Like Premiere's playback resolution: half-res while playing live so frames keep up.
+  const width = state.playing ? Math.max(320, Math.round(previewWidth / 2)) : previewWidth;
   try {
-    const frame = await api.run(doc, time, true, previewWidth);
+    const frame = await api.run(doc, time, true, width);
     // While the scene is broken, keep showing the last good picture (dimmed by the viewport).
     if (frame.error && state.frame?.image) frame.image = state.frame.image;
-    if (!frameWanted) setState({ frame }); // a newer request supersedes this one
+    // Requests are sequential, so this is always the newest frame we have: show it even if
+    // another one is already wanted (during playback one always is).
+    const patch: Partial<AppState> = { frame };
+    // After pausing a preview video, switch back to live frames once the exact frame is here.
+    if (state.showVideo && !state.playing && time === state.time && doc === state.doc) patch.showVideo = false;
+    setState(patch);
   } catch (e) {
     toast(String(e));
   }
@@ -260,8 +271,8 @@ export function setPlaying(playing: boolean) {
   cancelAnimationFrame(playRaf);
   const duration = sequenceEnd(state.doc, state.timeline);
   if (playing && state.time >= duration - 1e-3) setState({ time: 0 });
-  setState({ playing });
-  if (!playing) return;
+  setState({ playing, showVideo: playing ? previewFresh() : state.showVideo });
+  if (!playing) return requestFrame();
   let last = performance.now();
   const tick = (now: number) => {
     const s = getState();
@@ -274,6 +285,52 @@ export function setPlaying(playing: boolean) {
     playRaf = requestAnimationFrame(tick);
   };
   playRaf = requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- background preview renders
+
+let renderTimer: number | undefined;
+function schedulePreviewRender() {
+  clearTimeout(renderTimer);
+  if (state.autoRender) renderTimer = window.setTimeout(() => void renderPreview(), 1500);
+}
+
+/** The rendered preview video matches the current document and can be played. */
+export function previewFresh(s: AppState = state): boolean {
+  return !!s.video && s.video.state === 'done' && !!s.video.url && s.video.key === docKey(s.doc);
+}
+
+/** Render a smooth 480p preview with the manim CLI (cached per animation by manim). */
+export async function renderPreview() {
+  const doc = state.doc;
+  const key = docKey(doc);
+  const v = state.video;
+  if (v && v.key === key && v.state !== 'cancelled') return; // already rendered, rendering, or failed for this exact doc
+  if (!doc.clips.length) return;
+  try {
+    const job = await api.render(doc, 'preview');
+    if (job.state === 'error' || !job.id) {
+      setState({ video: { jobId: null, key, state: 'error', progress: 0, message: job.message, url: null } });
+      return;
+    }
+    setState({ video: { jobId: job.id, key, state: job.state, progress: 0, message: job.message, url: null } });
+    const id = job.id;
+    const tick = async () => {
+      const cur = state.video;
+      if (!cur || cur.jobId !== id) return;
+      try {
+        const j = await api.job(id);
+        const done = j.state === 'done';
+        setState({ video: { ...cur, state: j.state, progress: j.progress ?? 0, message: j.message, url: done ? api.mediaUrl(id) : null } });
+        if (j.state === 'running' || j.state === 'queued') setTimeout(tick, 400);
+      } catch (e) {
+        toast(String(e));
+      }
+    };
+    setTimeout(tick, 300);
+  } catch (e) {
+    toast(String(e));
+  }
 }
 
 // ---------------------------------------------------------------- document helpers
