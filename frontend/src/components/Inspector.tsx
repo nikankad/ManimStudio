@@ -1,10 +1,14 @@
 import { useState } from 'react';
-import { addAnimation, deleteSelection, duplicateObject, renameObject, setState, toast, updateDoc, useSignature, useStore } from '../store';
-import type { AnimEntry, Args, Param, SceneObject, Step } from '../types';
-import { Field, ParamField, quote, unquote } from './ParamField';
+import {
+  addAnimation, clipDuration, deleteSelection, duplicateObject, fps, frameSnap, renameObject, setState, timecode, toast, updateDoc,
+  useSignature, useStore,
+} from '../store';
+import type { Args, Clip, Param, SceneObject } from '../types';
+import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
 const QUICK_ANIMS = ['Create', 'Write', 'FadeIn', 'FadeOut', 'Indicate', 'Circumscribe', 'Transform', 'ReplacementTransform', 'GrowFromCenter', 'Uncreate'];
+const STYLE_KEYS = ['color', 'fill_color', 'fill_opacity', 'stroke_color', 'stroke_width', 'stroke_opacity'];
 
 export function Inspector() {
   const selection = useStore((s) => s.selection);
@@ -13,15 +17,17 @@ export function Inspector() {
   if (selection?.kind === 'object') {
     const obj = doc.objects.find((o) => o.id === selection.id);
     body = obj ? <ObjectInspector key={obj.id} obj={obj} /> : null;
-  } else if (selection?.kind === 'step' || selection?.kind === 'anim') {
-    const sid = selection.kind === 'step' ? selection.id : selection.stepId;
-    const step = doc.steps.find((s) => s.id === sid);
-    if (step) {
-      const anim = selection.kind === 'anim' && step.kind === 'play' ? step.anims.find((a) => a.id === selection.id) : undefined;
-      body = <StepInspector key={step.id} step={step} anim={anim} />;
-    }
+  } else if (selection?.kind === 'clips') {
+    const clips = doc.clips.filter((c) => selection.ids.includes(c.id));
+    if (clips.length === 1) body = <ClipInspector key={clips[0].id} clip={clips[0]} />;
+    else if (clips.length > 1) body = <MultiClipInspector clips={clips} />;
   }
-  return <aside className="panel inspector"><div className="scroll">{body ?? <SceneInfo />}</div></aside>;
+  return (
+    <aside className="panel inspector">
+      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' ? 'Properties' : 'Scene'}</div>
+      <div className="scroll">{body ?? <SceneInfo />}</div>
+    </aside>
+  );
 }
 
 function SceneInfo() {
@@ -29,18 +35,23 @@ function SceneInfo() {
   const doc = useStore((s) => s.doc);
   return (
     <div className="pad">
-      <h3>Scene</h3>
       <p className="muted">
         <b>{doc.scene.name}</b>({doc.scene.base}) · {doc.config.pixel_width}×{doc.config.pixel_height} @ {doc.config.frame_rate}fps
       </p>
       <button onClick={() => setState({ panel: 'settings' })}>Scene settings…</button>
       <h4>How it works</h4>
       <ul className="tips">
-        <li>Drag any manim class from the library onto the canvas. Everything in <code>manim</code> is there, including classes defined in your header code.</li>
+        <li>Drag any manim class onto the <b>canvas</b> or straight onto a <b>timeline track</b>.</li>
+        <li>Clips can sit anywhere on any track and overlap. Drag to move them, drag their edges to trim, and Alt-drag to duplicate.</li>
+        <li>On the canvas, drag an object to move it. Corner handles scale it, edge handles stretch it, and the top knob rotates it. With <b>Record</b> on, each of these becomes an animation clip at the playhead.</li>
         <li>Every field takes Python, like <code>BLUE</code>, <code>UP * 2</code> or <code>lambda x: x**2</code>.</li>
-        <li>Drag objects to position them. Turn on <b>Record</b> to animate the move instead.</li>
-        <li>Use <b>Code</b> blocks in the timeline for anything else, such as updaters or ValueTrackers.</li>
-        <li>Preview frames come from manim itself, so the final video matches them exactly.</li>
+        <li><b>Code</b> clips run any manim code, such as updaters or ValueTrackers.</li>
+      </ul>
+      <h4>Keys</h4>
+      <ul className="tips keys">
+        <li><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> frame · <kbd>↑</kbd><kbd>↓</kbd> edit points</li>
+        <li><kbd>M</kbd> marker · <kbd>S</kbd> snap · <kbd>=</kbd>/<kbd>-</kbd> zoom · <kbd>\</kbd> fit</li>
+        <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
       </ul>
       {catalog && !catalog.latex && (
         <div className="warn">LaTeX was not found, so <code>MathTex</code> and <code>Tex</code> won't render. Install TeX Live, MacTeX or MiKTeX. <code>Text</code> works without it.</div>
@@ -57,11 +68,20 @@ function setObj(id: string, fn: (o: SceneObject) => void, key: string) {
   }, `${id}:${key}`);
 }
 
+function setArg(args: Args, k: string, v: string) {
+  if (v.trim() === '') delete args[k];
+  else args[k] = v;
+}
+
 function ObjectInspector({ obj }: { obj: SceneObject }) {
   const sig = useSignature(obj.ctor);
   const objects = useStore((s) => s.doc.objects);
   const methods = useStore((s) => s.catalog?.methods ?? []);
+  const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
   const content = TEXT_CTORS.has(obj.ctor) ? unquote(obj.args['*'] ?? '') : null;
+  const isVector = sig?.vector ?? true;
+  const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
+  const styleKeys = STYLE_KEYS.filter((k) => paramNames.has(k) || obj.args[k] !== undefined);
 
   const commitName = (v: string) => {
     if (v === obj.name) return;
@@ -69,6 +89,13 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
     if (objects.some((o) => o.name === v)) return toast(`"${v}" is already used`);
     renameObject(obj.id, v);
   };
+  const center = obj.pos ?? info?.center ?? null;
+  const setPos = (i: 0 | 1, v: number) =>
+    setObj(obj.id, (o) => {
+      const p: [number, number] = o.pos ? [...o.pos] : center ? [...center] : [0, 0];
+      p[i] = v;
+      o.pos = p;
+    }, 'pos' + i);
 
   return (
     <div className="pad">
@@ -87,16 +114,41 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         </section>
       )}
 
-      <section>
-        <h4>Position</h4>
-        <div className="row">
-          <label className="mini">x <Field className="num" value={obj.pos ? String(obj.pos[0]) : ''} placeholder="auto" onChange={(v) => setPos(obj, 0, v)} /></label>
-          <label className="mini">y <Field className="num" value={obj.pos ? String(obj.pos[1]) : ''} placeholder="auto" onChange={(v) => setPos(obj, 1, v)} /></label>
-          {obj.pos && <button className="ghost" title="Let manim position it" onClick={() => setObj(obj.id, (o) => void (o.pos = null), 'pos')}>auto</button>}
+      <section className="fx-section">
+        <h4>Transform {obj.pos && <button className="ghost small" title="Let manim position it" onClick={() => setObj(obj.id, (o) => void (o.pos = null), 'pos')}>auto position</button>}</h4>
+        <div className="fx-row"><span>Position</span><ScrubNumber value={obj.pos?.[0] ?? center?.[0] ?? null} onChange={(v) => setPos(0, v)} step={0.02} /><ScrubNumber value={obj.pos?.[1] ?? center?.[1] ?? null} onChange={(v) => setPos(1, v)} step={0.02} /></div>
+        <div className="fx-row"><span>Scale</span><ScrubNumber value={obj.scale ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.scale = v), 'scale')} /></div>
+        <div className="fx-row"><span>Stretch</span>
+          <ScrubNumber value={obj.stretch?.[0] ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.stretch = [v, o.stretch?.[1] ?? 1]), 'sx')} />
+          <ScrubNumber value={obj.stretch?.[1] ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.stretch = [o.stretch?.[0] ?? 1, v]), 'sy')} />
         </div>
+        <div className="fx-row"><span>Rotation</span><ScrubNumber value={obj.rotation ?? 0} step={0.5} precision={1} suffix="°" onChange={(v) => setObj(obj.id, (o) => void (o.rotation = v), 'rot')} /></div>
       </section>
 
-      <ArgsEditor params={sig?.params ?? []} args={obj.args} hideStar={content !== null} onChange={(k, v) => setObj(obj.id, (o) => setArg(o.args, k, v), 'arg:' + k)} />
+      {isVector && styleKeys.length > 0 && (
+        <section className="fx-section">
+          <h4>Style</h4>
+          {styleKeys.map((k) => {
+            const p = sig?.params.find((x) => x.name === k);
+            const v = obj.args[k] ?? '';
+            const set = (nv: string) => setObj(obj.id, (o) => setArg(o.args, k, nv), 'arg:' + k);
+            if (isColorKey(k)) return <label key={k} className="param"><span className="pname">{k}</span><ColorField value={v} onChange={set} placeholder={p?.default} /></label>;
+            const num = v === '' ? null : parseFloat(v);
+            const isOpacity = k.endsWith('opacity');
+            return (
+              <label key={k} className="param">
+                <span className="pname">{k}</span>
+                <div className="row">
+                  <input type="range" className="slider" min={0} max={isOpacity ? 1 : 16} step={isOpacity ? 0.01 : 0.5} value={num ?? parseFloat(p?.default ?? '0') ?? 0} onChange={(e) => set(e.target.value)} />
+                  <ScrubNumber value={num !== null && !Number.isNaN(num) ? num : null} placeholder={p?.default ?? '—'} min={0} max={isOpacity ? 1 : undefined} step={isOpacity ? 0.01 : 0.1} onChange={(nv) => set(String(nv))} />
+                </div>
+              </label>
+            );
+          })}
+        </section>
+      )}
+
+      <ArgsEditor params={(sig?.params ?? []).filter((p) => !styleKeys.includes(p.name))} args={Object.fromEntries(Object.entries(obj.args).filter(([k]) => !styleKeys.includes(k)))} hideStar={content !== null} onChange={(k, v) => setObj(obj.id, (o) => setArg(o.args, k, v), 'arg:' + k)} />
 
       <section>
         <h4>
@@ -106,11 +158,11 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
             {methods.map((m) => <option key={m}>{m}</option>)}
           </select>
         </h4>
-        <Field multiline className="mono" value={obj.chain} placeholder=".scale(0.8).set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
+        <Field multiline className="mono" value={obj.chain} placeholder=".set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
       </section>
 
       <section>
-        <h4>Animate</h4>
+        <h4>Animate at playhead</h4>
         <div className="chips">
           {QUICK_ANIMS.map((a) => <button key={a} className="chip" onClick={() => addAnimation(a, obj.name)}>{a}</button>)}
           <button className="chip" onClick={() => addAnimation('animate', obj.name)}>.animate</button>
@@ -119,35 +171,20 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
 
       <div className="row actions">
         <button onClick={() => duplicateObject(obj.id)}>Duplicate</button>
-        <button className="danger" onClick={deleteSelection}>Delete</button>
+        <button className="danger" onClick={() => deleteSelection()}>Delete</button>
       </div>
     </div>
   );
 }
 
-function setPos(obj: SceneObject, i: 0 | 1, v: string) {
-  const n = parseFloat(v);
-  if (v.trim() === '' || Number.isNaN(n)) return;
-  setObj(obj.id, (o) => {
-    const p: [number, number] = o.pos ? [...o.pos] : [0, 0];
-    p[i] = n;
-    o.pos = p;
-  }, 'pos' + i);
-}
-
-function setArg(args: Args, k: string, v: string) {
-  if (v.trim() === '') delete args[k];
-  else args[k] = v;
-}
-
 function ArgsEditor({ params, args, onChange, hideStar }: { params: Param[]; args: Args; onChange: (k: string, v: string) => void; hideStar?: boolean }) {
   const [more, setMore] = useState(false);
+  const [newKey, setNewKey] = useState('');
   const shown = params.filter((p) => !(hideStar && p.name === '*'));
   const primary = shown.filter((p) => !p.from || p.required || args[p.name] !== undefined);
   const inherited = shown.filter((p) => !primary.includes(p));
   const known = new Set(params.map((p) => p.name));
   const extra = Object.keys(args).filter((k) => !known.has(k) && !(hideStar && k === '*'));
-  const [newKey, setNewKey] = useState('');
   return (
     <section>
       <h4>Arguments</h4>
@@ -171,70 +208,74 @@ function ArgsEditor({ params, args, onChange, hideStar }: { params: Param[]; arg
   );
 }
 
-function setStep(id: string, fn: (s: Step) => void, key: string) {
+function setClip(id: string, fn: (c: Clip) => void, key: string) {
   updateDoc((d) => {
-    const s = d.steps.find((x) => x.id === id);
-    if (s) fn(s);
+    const c = d.clips.find((x) => x.id === id);
+    if (c) fn(c);
   }, `${id}:${key}`);
 }
 
-function StepInspector({ step, anim }: { step: Step; anim?: AnimEntry }) {
+function ClipInspector({ clip }: { clip: Clip }) {
   const objects = useStore((s) => s.doc.objects);
-  const rateFuncs = useStore((s) => s.catalog?.rate_funcs ?? []);
-  const timing = useStore((s) => s.timeline?.steps.find((t) => t.id === step.id));
+  const tracks = useStore((s) => s.doc.tracks);
+  const timeline = useStore((s) => s.timeline);
+  const sig = useSignature(clip.kind === 'anim' && clip.cls !== 'animate' ? clip.cls ?? '' : '');
+  const dur = clipDuration(clip, timeline);
+  const timed = clip.kind === 'anim' || clip.kind === 'hold';
+  const frames = (v: number) => Math.round(v * fps()) / fps();
   return (
     <div className="pad">
-      <div className="insp-head">
-        <h3>{step.kind === 'play' ? 'self.play' : step.kind === 'wait' ? 'self.wait' : step.kind === 'code' ? 'Code block' : `self.${step.kind}`}</h3>
-        {timing && <span className="muted small">{timing.start.toFixed(2)}s → {timing.end.toFixed(2)}s</span>}
-      </div>
-
-      {step.kind === 'play' && (
-        <>
-          <section>
-            {step.anims.map((a) => (
-              <div key={a.id} className={`anim-row ${anim?.id === a.id ? 'sel' : ''}`} onClick={() => setState({ selection: { kind: 'anim', stepId: step.id, id: a.id } })}>
-                <span className="mono">{a.cls === 'animate' ? `${a.target}.animate${(a.chain ?? '').split('\n').join('')}` : `${a.cls}(${a.target})`}</span>
-              </div>
-            ))}
-            <button className="ghost small" onClick={() => addAnimation('Indicate', anim?.target ?? step.anims[0]?.target ?? objects[0]?.name ?? '', step.id)}>+ animation in parallel</button>
-          </section>
-          {anim && <AnimEditor step={step} anim={anim} />}
-          <section>
-            <h4>Play options</h4>
-            <label className="param"><span className="pname">run_time</span><Field className="num" value={step.run_time ?? ''} placeholder="per animation" onChange={(v) => setStep(step.id, (s) => void ((s as { run_time?: string }).run_time = v), 'rt')} /></label>
-            <label className="param">
-              <span className="pname">rate_func</span>
-              <select className="field" value={step.rate_func ?? ''} onChange={(e) => setStep(step.id, (s) => void ((s as { rate_func?: string }).rate_func = e.target.value), 'rf')}>
-                <option value="">per animation</option>
-                {rateFuncs.map((r) => <option key={r}>{r}</option>)}
-              </select>
-            </label>
-            {step.anims.length > 1 && (
-              <label className="param"><span className="pname">lag_ratio</span><Field className="num" value={step.lag_ratio ?? ''} placeholder="0 = together" onChange={(v) => setStep(step.id, (s) => void ((s as { lag_ratio?: string }).lag_ratio = v), 'lag')} /></label>
-            )}
-          </section>
-        </>
+      {clip.kind === 'anim' && (
+        <div className="insp-head">
+          <Field className="mono" value={clip.cls ?? ''} list="me-animations" onChange={(v) => setClip(clip.id, (c) => void (c.cls = v), 'cls')} />
+          <span className="muted">(</span>
+          <Field className="mono" value={clip.target ?? ''} list="me-targets" onChange={(v) => setClip(clip.id, (c) => void (c.target = v), 'target')} />
+          <span className="muted">)</span>
+        </div>
       )}
+      {clip.kind !== 'anim' && <h3>{clip.kind === 'code' ? 'Code clip' : clip.kind === 'hold' ? 'Hold' : `self.${clip.kind}(…)`}</h3>}
+      {sig?.doc && <p className="doc">{sig.doc}</p>}
 
-      {step.kind === 'wait' && (
-        <label className="param"><span className="pname">duration</span><Field className="num" value={step.duration} onChange={(v) => setStep(step.id, (s) => void ((s as { duration: string }).duration = v), 'dur')} /></label>
-      )}
+      <section className="fx-section">
+        <h4>Timing</h4>
+        <div className="fx-row"><span>Start</span><ScrubNumber value={clip.start} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.start = frames(v)), 'start')} /><span className="muted small mono">{timecode(clip.start)}</span></div>
+        {timed && <div className="fx-row"><span>Duration</span><ScrubNumber value={clip.duration} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.duration = frames(v)), 'dur')} /><span className="muted small mono">→ {timecode(clip.start + clip.duration)}</span></div>}
+        {clip.kind === 'code' && <div className="fx-row"><span>Measured</span><span className="mono">{dur.toFixed(2)}s</span></div>}
+        <div className="fx-row">
+          <span>Track</span>
+          <select className="field" value={clip.track} onChange={(e) => setClip(clip.id, (c) => void (c.track = e.target.value), 'track')}>
+            {tracks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </div>
+        <label className="check"><input type="checkbox" checked={!clip.disabled} onChange={(e) => setClip(clip.id, (c) => void (c.disabled = !e.target.checked), 'dis')} /> enabled</label>
+      </section>
 
-      {step.kind === 'code' && (
+      {clip.kind === 'anim' && clip.cls === 'animate' && (
         <section>
-          <p className="muted small">Runs inside <code>construct(self)</code>, so every object variable is in scope.</p>
-          <Field multiline className="mono code-input" value={step.code} onChange={(v) => setStep(step.id, (s) => void ((s as { code: string }).code = v), 'code')} />
+          <h4>Methods to animate</h4>
+          <Field multiline className="mono" value={clip.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => setClip(clip.id, (c) => void (c.chain = v), 'chain')} />
+          <ArgsEditor params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '' }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
+        </section>
+      )}
+      {clip.kind === 'anim' && clip.cls !== 'animate' && (
+        <ArgsEditor params={(sig?.params ?? []).filter((p) => p.name !== 'run_time')} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
+      )}
+
+      {clip.kind === 'code' && (
+        <section>
+          <label className="param"><span className="pname">label</span><Field value={clip.label ?? ''} placeholder="Code" onChange={(v) => setClip(clip.id, (c) => void (c.label = v), 'label')} /></label>
+          <p className="muted small">Runs inside <code>construct(self)</code> at this time. Every object variable is in scope, and <code>self.play</code> calls here take their own time.</p>
+          <Field multiline className="mono code-input" value={clip.code ?? ''} onChange={(v) => setClip(clip.id, (c) => void (c.code = v), 'code')} />
         </section>
       )}
 
-      {(step.kind === 'add' || step.kind === 'remove') && (
+      {(clip.kind === 'add' || clip.kind === 'remove') && (
         <section>
           {objects.map((o) => (
             <label key={o.id} className="check">
-              <input type="checkbox" checked={step.targets.includes(o.name)} onChange={(e) => setStep(step.id, (s) => {
-                const st = s as { targets: string[] };
-                st.targets = e.target.checked ? [...st.targets, o.name] : st.targets.filter((t) => t !== o.name);
+              <input type="checkbox" checked={clip.targets?.includes(o.name) ?? false} onChange={(e) => setClip(clip.id, (c) => {
+                const t = c.targets ?? [];
+                c.targets = e.target.checked ? [...t, o.name] : t.filter((x) => x !== o.name);
               }, 'targets')} />
               <span className="mono">{o.name}</span>
             </label>
@@ -243,39 +284,31 @@ function StepInspector({ step, anim }: { step: Step; anim?: AnimEntry }) {
       )}
 
       <div className="row actions">
-        <label className="check"><input type="checkbox" checked={!step.disabled} onChange={(e) => setStep(step.id, (s) => void (s.disabled = !e.target.checked), 'dis')} /> enabled</label>
-        <button className="danger" onClick={() => { setState({ selection: { kind: 'step', id: step.id } }); deleteSelection(); }}>Delete step</button>
+        <button onClick={() => setState({ time: frameSnap(clip.start + dur), showVideo: false })}>Go to end</button>
+        <button className="danger" onClick={() => deleteSelection()}>Delete clip</button>
       </div>
     </div>
   );
 }
 
-function AnimEditor({ step, anim }: { step: Step; anim: AnimEntry }) {
-  const sig = useSignature(anim.cls === 'animate' ? '' : anim.cls);
-  const set = (fn: (a: AnimEntry) => void, key: string) =>
-    setStep(step.id, (s) => {
-      if (s.kind !== 'play') return;
-      const a = s.anims.find((x) => x.id === anim.id);
-      if (a) fn(a);
-    }, anim.id + key);
+function MultiClipInspector({ clips }: { clips: Clip[] }) {
+  const t0 = Math.min(...clips.map((c) => c.start));
   return (
-    <section className="anim-editor">
-      <div className="insp-head">
-        <Field className="mono" value={anim.cls} list="me-animations" onChange={(v) => set((a) => void (a.cls = v), 'cls')} />
-        <span className="muted">(</span>
-        <Field className="mono" value={anim.target} list="me-targets" onChange={(v) => set((a) => void (a.target = v), 'target')} />
-        <span className="muted">)</span>
+    <div className="pad">
+      <h3>{clips.length} clips</h3>
+      <p className="muted small mono">{timecode(t0)} → {timecode(Math.max(...clips.map((c) => c.start + c.duration)))}</p>
+      <section className="fx-section">
+        <div className="fx-row"><span>Shift all</span>
+          <ScrubNumber value={t0} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => updateDoc((d) => {
+            const ids = new Set(clips.map((c) => c.id));
+            for (const c of d.clips) if (ids.has(c.id)) c.start = Math.max(0, Math.round((c.start + v - t0) * fps()) / fps());
+          }, 'multi-shift')} />
+        </div>
+      </section>
+      <div className="row actions">
+        <button onClick={() => updateDoc((d) => d.clips.filter((c) => clips.some((k) => k.id === c.id)).forEach((c) => (c.disabled = !c.disabled)))}>Toggle enabled</button>
+        <button className="danger" onClick={() => deleteSelection()}>Delete</button>
       </div>
-      {sig?.doc && <p className="doc">{sig.doc}</p>}
-      {anim.cls === 'animate' ? (
-        <>
-          <h4>Methods to animate</h4>
-          <Field multiline className="mono" value={anim.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => set((a) => void (a.chain = v), 'chain')} />
-        </>
-      ) : (
-        <ArgsEditor params={sig?.params ?? []} args={anim.args} onChange={(k, v) => set((a) => setArg(a.args, k, v), 'arg:' + k)} />
-      )}
-      <button className="ghost small danger" onClick={() => { setState({ selection: { kind: 'anim', stepId: step.id, id: anim.id } }); deleteSelection(); }}>Remove animation</button>
-    </section>
+    </div>
   );
 }

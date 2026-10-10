@@ -9,21 +9,44 @@ export interface SceneObject {
   args: Args; // "*" holds extra positional args
   pos: [number, number] | null;
   chain: string; // e.g. ".scale(2).set_fill(BLUE, 0.5)"
+  scale?: number;
+  stretch?: [number, number];
+  rotation?: number; // degrees
 }
 
-export interface AnimEntry {
+export interface Track {
   id: string;
-  cls: string; // "Create", ... or "animate"
-  target: string;
-  args: Args;
-  chain?: string; // for cls === "animate"
+  name: string;
+  hidden?: boolean; // track output off: clips are skipped
+  locked?: boolean;
 }
 
-export type Step =
-  | { id: string; kind: 'play'; anims: AnimEntry[]; run_time?: string; rate_func?: string; lag_ratio?: string; args?: Args; disabled?: boolean }
-  | { id: string; kind: 'wait'; duration: string; disabled?: boolean }
-  | { id: string; kind: 'add' | 'remove'; targets: string[]; disabled?: boolean }
-  | { id: string; kind: 'code'; code: string; label?: string; disabled?: boolean };
+export type ClipKind = 'anim' | 'code' | 'hold' | 'add' | 'remove';
+
+export interface Clip {
+  id: string;
+  kind: ClipKind;
+  track: string;
+  start: number; // seconds
+  duration: number; // seconds (0 for add/remove)
+  disabled?: boolean;
+  // anim
+  cls?: string; // "Create", ... or "animate"
+  target?: string;
+  args?: Args;
+  chain?: string; // for cls === "animate"
+  // code
+  code?: string;
+  label?: string;
+  // add / remove
+  targets?: string[];
+}
+
+export interface Marker {
+  id: string;
+  time: number;
+  label?: string;
+}
 
 export interface SceneDoc {
   version: number;
@@ -31,7 +54,9 @@ export interface SceneDoc {
   config: { pixel_width: number; pixel_height: number; frame_rate: number; background_color: string };
   header: string;
   objects: SceneObject[];
-  steps: Step[];
+  tracks: Track[];
+  clips: Clip[];
+  markers?: Marker[];
 }
 
 export interface Param {
@@ -81,7 +106,7 @@ export interface Signature {
 export interface RunError {
   message: string;
   line: number | null;
-  kind: 'object' | 'step' | 'header' | null;
+  kind: 'object' | 'clip' | 'header' | null;
   id: string | null;
   trace: string;
 }
@@ -115,8 +140,4 @@ export interface Job {
   error?: RunError;
 }
 
-export type Selection =
-  | { kind: 'object'; id: string }
-  | { kind: 'step'; id: string }
-  | { kind: 'anim'; stepId: string; id: string }
-  | null;
+export type Selection = { kind: 'object'; id: string } | { kind: 'clips'; ids: string[] } | null;

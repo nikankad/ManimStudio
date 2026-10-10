@@ -2,18 +2,33 @@
 
 Every value in the document is stored as Python source (e.g. ``"BLUE"``,
 ``"UP * 2"``, ``"lambda x: x**2"``), so anything manim accepts can be used
-from the GUI. ``generate(doc)`` gives a standalone file that runs with the
-``manim`` CLI; ``generate(doc, preview=True)`` additionally emits hooks the
-preview runtime uses to map time -> step and variable -> mobject.
+from the GUI.
+
+The timeline is non-linear: clips sit on tracks at absolute times and may
+overlap or leave gaps. Compilation groups clips whose time ranges overlap:
+
+* gaps become ``self.wait(...)``
+* a group whose clips all start together becomes an ordinary ``self.play(...)``
+* any other group becomes ``self.play(TimedAnimations(...))`` (see timed.py),
+  which starts each clip at its exact time
+* code clips run raw Python at their position (they may contain their own
+  ``self.play`` calls, so the clips after them wait on ``self.time``)
+
+``generate(doc, preview=True)`` also emits hooks the preview runtime uses to
+map variables to mobjects and to time code clips.
 """
 
 from __future__ import annotations
 
 import keyword
 import re
+import textwrap
 from dataclasses import dataclass, field
 
+from .timed import SOURCE as TIMED_SOURCE
+
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+EPS = 1e-6
 
 
 @dataclass
@@ -27,30 +42,23 @@ def is_valid_name(name: str) -> bool:
     return bool(IDENT.match(name)) and not keyword.iskeyword(name)
 
 
-def _call_args(args: dict | None, leading: list[str] | None = None) -> str:
+def _num(v: float) -> str:
+    v = round(float(v), 4)
+    return repr(int(v)) if v == int(v) else repr(v)
+
+
+def _call_args(args: dict | None, leading: list[str] | None = None, extra: dict | None = None) -> str:
     parts = [p for p in (leading or []) if p and p.strip()]
-    args = args or {}
-    star = str(args.get("*", "")).strip()
+    merged = dict(args or {})
+    merged.update(extra or {})
+    star = str(merged.pop("*", "")).strip()
     if star:
         parts.append(star)
-    for key, val in args.items():
-        if key == "*":
-            continue
+    for key, val in merged.items():
         val = str(val).strip()
         if val:
             parts.append(f"{key}={val}")
     return ", ".join(parts)
-
-
-def anim_expr(anim: dict) -> str:
-    cls = (anim.get("cls") or "").strip()
-    target = (anim.get("target") or "").strip()
-    if cls == "animate":
-        chain = _join_chain(anim.get("chain", ""))
-        kw = _call_args(anim.get("args"))
-        head = f"{target}.animate({kw})" if kw else f"{target}.animate"
-        return head + chain
-    return f"{cls}({_call_args(anim.get('args'), [target])})"
 
 
 def _join_chain(chain: str) -> str:
@@ -60,32 +68,83 @@ def _join_chain(chain: str) -> str:
     return chain
 
 
-def play_expr(step: dict) -> str:
-    anims = [anim_expr(a) for a in step.get("anims", []) if (a.get("cls") or "").strip()]
-    lag = str(step.get("lag_ratio", "")).strip()
-    if lag and len(anims) > 1:
-        anims = [f"LaggedStart({', '.join(anims)}, lag_ratio={lag})"]
-    kwargs = dict(step.get("args") or {})
-    for key in ("run_time", "rate_func"):
-        if str(step.get(key, "")).strip():
-            kwargs[key] = step[key]
-    return f"self.play({_call_args(kwargs, anims)})"
+def anim_expr(clip: dict, run_time: float | None) -> str:
+    """Python expression for an animation clip; ``run_time`` None leaves it to self.play."""
+    cls = (clip.get("cls") or "").strip()
+    target = (clip.get("target") or "").strip()
+    args = {k: v for k, v in (clip.get("args") or {}).items() if k != "run_time"}
+    extra = {"run_time": _num(run_time)} if run_time is not None else {}
+    if cls == "animate":
+        kw = _call_args(args, extra=extra)
+        head = f"{target}.animate({kw})" if kw else f"{target}.animate"
+        return head + _join_chain(clip.get("chain", ""))
+    return f"{cls}({_call_args(args, [target], extra)})"
+
+
+def _end(c: dict) -> float:
+    return float(c["start"]) + float(c.get("duration", 0))
+
+
+def _groups(clips: list[dict]) -> list[list[dict]]:
+    """Split clips into groups of transitively overlapping time ranges."""
+    groups: list[list[dict]] = []
+    end = -1.0
+    for c in sorted(clips, key=lambda c: float(c["start"])):
+        s = float(c["start"])
+        if groups and s < end - EPS:
+            groups[-1].append(c)
+            end = max(end, _end(c))
+        else:
+            groups.append([c])
+            end = _end(c)
+    return groups
+
+
+class _Writer:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.linemap: dict[int, tuple[str, str]] = {}
+
+    def emit(self, text: str, ref: tuple[str, str] | None = None, indent: int = 0) -> None:
+        for raw in text.splitlines() or [""]:
+            self.lines.append(" " * indent + raw if raw.strip() else "")
+            if ref:
+                self.linemap[len(self.lines)] = ref
+
+
+def _active_clips(doc: dict) -> list[dict]:
+    hidden = {t["id"] for t in doc.get("tracks", []) if t.get("hidden")}
+    out = []
+    for c in doc.get("clips", []):
+        if c.get("disabled") or c.get("track") in hidden:
+            continue
+        if c.get("kind") == "anim" and not (c.get("cls") or "").strip():
+            continue
+        out.append(c)
+    return out
+
+
+def _is_instant(c: dict) -> bool:
+    return c.get("kind") in ("add", "remove")
+
+
+def _instant_call(c: dict) -> str | None:
+    targets = ", ".join(t for t in c.get("targets", []) if t)
+    return f"self.{c['kind']}({targets})" if targets else None
 
 
 def generate(doc: dict, preview: bool = False) -> Generated:
-    lines: list[str] = []
-    linemap: dict[int, tuple[str, str]] = {}
-
-    def emit(text: str, ref: tuple[str, str] | None = None, indent: int = 0) -> None:
-        for raw in text.splitlines() or [""]:
-            lines.append(" " * indent + raw if raw.strip() else "")
-            if ref:
-                linemap[len(lines)] = ref
-
+    w = _Writer()
+    emit = w.emit
     scene = doc.get("scene", {})
     scene_name = scene.get("name") or "MainScene"
     base = scene.get("base") or "Scene"
     cfg = doc.get("config", {})
+    clips = _active_clips(doc)
+    code_clips = sorted((c for c in clips if c.get("kind") == "code"), key=lambda c: float(c["start"]))
+    timed_clips = [c for c in clips if c.get("kind") != "code"]
+    groups = _groups(timed_clips)
+    needs_helper = any(not _simple(g) for g in groups)
 
     emit("from manim import *")
     emit("import numpy as np")
@@ -97,59 +156,134 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     if header:
         emit("")
         emit(header, ("header", "header"))
+    if needs_helper:
+        emit("")
+        emit(TIMED_SOURCE.strip("\n"))
     emit("")
     emit("")
     emit(f"class {scene_name}({base}):")
     emit("def construct(self):", indent=4)
-    body = 8
-    start_len = len(lines)
+    B = 8
+    start_len = len(w.lines)
 
     for obj in doc.get("objects", []):
         ref = ("object", obj["id"])
         name = obj["name"]
-        ctor = (obj.get("ctor") or "").strip()
-        emit(f"{name} = {ctor}({_call_args(obj.get('args'))})", ref, body)
+        emit(f"{name} = {(obj.get('ctor') or '').strip()}({_call_args(obj.get('args'))})", ref, B)
         chain = _join_chain(obj.get("chain", ""))
         if chain:
-            emit(f"{name}{chain}", ref, body)
+            emit(f"{name}{chain}", ref, B)
+        stretch = obj.get("stretch") or [1, 1]
+        for dim, f in enumerate(stretch[:2]):
+            if abs(float(f) - 1) > EPS:
+                emit(f"{name}.stretch({_num(f)}, {dim})", ref, B)
+        if obj.get("scale") not in (None, 1, 1.0):
+            emit(f"{name}.scale({_num(obj['scale'])})", ref, B)
+        if obj.get("rotation"):
+            emit(f"{name}.rotate({_num(obj['rotation'])} * DEGREES)", ref, B)
         pos = obj.get("pos")
         if pos is not None:
-            emit(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0.0]))", ref, body)
+            emit(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0]))", ref, B)
         if preview:
-            emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, body)
+            emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
 
-    for step in doc.get("steps", []):
-        if step.get("disabled"):
-            continue
-        ref = ("step", step["id"])
+    # Interleave clip groups with code clips (code runs once everything before it has played).
+    state = {"cursor": 0.0, "dynamic": False}
+
+    def wait_until(t: float, ref: tuple[str, str] | None) -> None:
+        if state["dynamic"]:
+            emit(f"if self.time < {_num(t)} - 1e-3:", ref, B)
+            emit(f"    self.wait({_num(t)} - self.time)", ref, B)
+        elif t - state["cursor"] > EPS:
+            emit(f"self.wait({_num(t - state['cursor'])})", ref, B)
+        state["cursor"] = max(state["cursor"], t)
+
+    gi = 0
+    for code in code_clips + [None]:
+        limit = float(code["start"]) if code else float("inf")
+        while gi < len(groups) and float(groups[gi][0]["start"]) < limit - EPS:
+            _emit_group(groups[gi], emit, wait_until, state, B, preview)
+            gi += 1
+        if code is None:
+            break
+        ref = ("clip", code["id"])
+        wait_until(float(code["start"]), ref)
         if preview:
-            emit(f"self._me_step({step['id']!r})", ref, body)
-        kind = step.get("kind")
-        if kind == "play":
-            if any((a.get("cls") or "").strip() for a in step.get("anims", [])):
-                emit(play_expr(step), ref, body)
-        elif kind == "wait":
-            emit(f"self.wait({str(step.get('duration', '')).strip()})", ref, body)
-        elif kind in ("add", "remove"):
-            targets = ", ".join(t for t in step.get("targets", []) if t)
-            if targets:
-                emit(f"self.{kind}({targets})", ref, body)
-        elif kind == "code":
-            code = (step.get("code") or "").rstrip()
-            if code.strip():
-                emit(_dedent(code), ref, body)
+            emit(f"self._me_step({code['id']!r})", ref, B)
+        body = textwrap.dedent(code.get("code") or "").rstrip()
+        if body.strip():
+            emit(body, ref, B)
         if preview:
-            emit(f"self._me_step_end({step['id']!r})", ref, body)
+            emit(f"self._me_step_end({code['id']!r})", ref, B)
+        if "self.play" in body or "self.wait" in body or "self.pause" in body:
+            state["dynamic"] = True
 
-    if len(lines) == start_len:
-        emit("pass", None, body)
-    return Generated("\n".join(lines) + "\n", linemap)
-
-
-def _num(v: float) -> str:
-    return repr(round(float(v), 4))
+    if len(w.lines) == start_len:
+        emit("pass", None, B)
+    return Generated("\n".join(w.lines) + "\n", w.linemap)
 
 
-def _dedent(code: str) -> str:
-    import textwrap
-    return textwrap.dedent(code)
+def _simple(group: list[dict]) -> bool:
+    """Can this group be an ordinary self.play / self.add?"""
+    actions = [c for c in group if c.get("kind") != "hold"]
+    if not actions:
+        return True
+    start = float(group[0]["start"])
+    if any(abs(float(c["start"]) - start) > EPS for c in actions):
+        return False
+    anims = [c for c in actions if c.get("kind") == "anim"]
+    if anims and len(anims) != len(actions):
+        return False  # instant actions mixed with animations
+    targets = [c.get("target") for c in anims]
+    return len(targets) == len(set(targets))
+
+
+def _emit_group(group, emit, wait_until, state, B, preview) -> None:
+    start = float(group[0]["start"])
+    end = max(_end(c) for c in group)
+    first_ref = ("clip", group[0]["id"])
+    actions = [c for c in group if c.get("kind") != "hold"]
+    wait_until(start, first_ref)
+    if not actions:
+        wait_until(end, first_ref)
+        return
+
+    if _simple(group):
+        anims = [c for c in actions if c.get("kind") == "anim"]
+        if not anims:  # instant add/remove
+            for c in actions:
+                call = _instant_call(c)
+                if call:
+                    emit(call, ("clip", c["id"]), B)
+            wait_until(end, first_ref)
+            return
+        durs = {round(float(c["duration"]), 4) for c in anims}
+        shared = durs.pop() if len(durs) == 1 else None
+        exprs = [(anim_expr(c, None if shared is not None else float(c["duration"])), c) for c in anims]
+        tail = f", run_time={_num(shared)}" if shared is not None else ""
+        if len(exprs) == 1:
+            emit(f"self.play({exprs[0][0]}{tail})", ("clip", exprs[0][1]["id"]), B)
+        else:
+            emit("self.play(", first_ref, B)
+            for expr, c in exprs:
+                emit(f"    {expr},", ("clip", c["id"]), B)
+            if tail:
+                emit(f"    {tail[2:]},", first_ref, B)
+            emit(")", first_ref, B)
+        state["cursor"] = max(state["cursor"], max(_end(c) for c in anims))
+        wait_until(end, first_ref)
+        return
+
+    emit("self.play(TimedAnimations(", first_ref, B)
+    for c in sorted(group, key=lambda c: float(c["start"])):
+        ref = ("clip", c["id"])
+        offset = _num(float(c["start"]) - start)
+        if c.get("kind") == "anim":
+            emit(f"    ({offset}, lambda: {anim_expr(c, float(c['duration']))}),", ref, B)
+        elif _is_instant(c):
+            call = _instant_call(c)
+            if call:
+                emit(f"    ({offset}, lambda: {call}),", ref, B)
+    emit(f"    run_time={_num(end - start)},", first_ref, B)
+    emit("))", first_ref, B)
+    state["cursor"] = end

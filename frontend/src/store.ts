@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import type { AnimEntry, Catalog, CatalogEntry, Job, RunResult, SceneDoc, SceneObject, Selection, Signature, Step } from './types';
+import type { Catalog, CatalogEntry, Clip, Job, RunResult, SceneDoc, SceneObject, Selection, Signature, Track } from './types';
 
 export interface VideoState {
   jobId: string | null;
@@ -13,35 +13,39 @@ export interface VideoState {
 
 export interface AppState {
   doc: SceneDoc;
-  previewDoc: SceneDoc | null; // uncommitted edit shown while dragging
+  previewDoc: SceneDoc | null; // uncommitted edit shown while dragging on the canvas
   path: string | null;
   dirty: boolean;
   selection: Selection;
   time: number;
   frame: RunResult | null;
   timeline: RunResult | null;
-  lastGoodTimeline: RunResult | null; // step timings to fall back on while the scene has an error
   catalog: Catalog | null;
   signatures: Record<string, Signature>;
   playing: boolean;
   past: SceneDoc[];
   future: SceneDoc[];
   panel: null | 'code' | 'settings' | 'export';
-  snap: boolean;
+  snap: boolean; // canvas snapping
+  timelineSnap: boolean;
   autoIntro: boolean;
   record: boolean;
+  targetTrack: string | null;
+  view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
   showVideo: boolean;
   toast: string | null;
 }
 
 export const emptyDoc = (): SceneDoc => ({
-  version: 1,
+  version: 2,
   scene: { name: 'MainScene', base: 'Scene' },
   config: { pixel_width: 1920, pixel_height: 1080, frame_rate: 60, background_color: '#000000' },
   header: '',
   objects: [],
-  steps: [],
+  tracks: [1, 2, 3].map((i) => ({ id: `t${i}`, name: `V${i}` })),
+  clips: [],
+  markers: [],
 });
 
 let state: AppState = {
@@ -53,7 +57,6 @@ let state: AppState = {
   time: 0,
   frame: null,
   timeline: null,
-  lastGoodTimeline: null,
   catalog: null,
   signatures: {},
   playing: false,
@@ -61,8 +64,11 @@ let state: AppState = {
   future: [],
   panel: null,
   snap: true,
+  timelineSnap: true,
   autoIntro: true,
   record: false,
+  targetTrack: null,
+  view: { pps: 110, start: 0 },
   video: null,
   showVideo: false,
   toast: null,
@@ -85,7 +91,7 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
   } else if (state.time !== prev.time || state.previewDoc !== prev.previewDoc) {
     requestFrame();
   }
-  if (state.doc.header !== prev.doc.header) loadCatalog();
+  if (state.doc.header !== prev.doc.header) void loadCatalog();
   listeners.forEach((l) => l());
 }
 
@@ -104,12 +110,7 @@ export function updateDoc(fn: (d: SceneDoc) => void, coalesce?: string) {
   const now = Date.now();
   const merge = coalesce && lastCoalesce?.key === coalesce && now - lastCoalesce.at < 1200;
   lastCoalesce = coalesce ? { key: coalesce, at: now } : null;
-  setState((s) => ({
-    doc: next,
-    dirty: true,
-    past: merge ? s.past : [...s.past.slice(-199), s.doc],
-    future: [],
-  }));
+  setState((s) => ({ doc: next, dirty: true, past: merge ? s.past : [...s.past.slice(-199), s.doc], future: [] }));
 }
 
 export function undo() {
@@ -127,7 +128,8 @@ export function redo() {
 }
 
 export function loadDoc(doc: SceneDoc, path: string | null) {
-  setState({ doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, lastGoodTimeline: null, frame: null });
+  doc.markers ??= [];
+  setState({ doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null });
 }
 
 export function toast(msg: string) {
@@ -168,33 +170,17 @@ async function pumpFrames() {
 }
 
 let timelineTimer: number | undefined;
-let pendingJump: string | null = null;
-
-/** After the next timeline analysis, move the playhead to the end of this step. */
-export const jumpToStepEnd = (id: string) => {
-  pendingJump = id;
-};
-
 function scheduleTimeline() {
   clearTimeout(timelineTimer);
   timelineTimer = window.setTimeout(async () => {
     const doc = state.doc;
     try {
       const timeline = await api.run(doc, null, false);
-      if (state.doc !== doc) return;
-      const patch: Partial<AppState> = { timeline };
-      if (!timeline.error) patch.lastGoodTimeline = timeline;
-      if (pendingJump) {
-        const st = timeline.steps.find((s) => s.id === pendingJump);
-        if (st) patch.time = st.end;
-        pendingJump = null;
-      }
-      if (patch.time === undefined && !timeline.error && state.time > timeline.duration) patch.time = timeline.duration;
-      setState(patch);
+      if (state.doc === doc) setState({ timeline });
     } catch (e) {
       toast(String(e));
     }
-  }, 120);
+  }, 150);
 }
 
 let catalogHeader: string | null = null;
@@ -228,12 +214,51 @@ export function useSignature(expr: string): Signature | undefined {
   return sig;
 }
 
+// ---------------------------------------------------------------- time helpers
+
+export const fps = () => state.doc.config.frame_rate || 60;
+export const frameSnap = (t: number) => Math.max(0, Math.round(t * fps()) / fps());
+
+/** Measured duration of code clips (they may contain their own self.play calls). */
+export function clipDuration(c: Clip, timeline: RunResult | null): number {
+  if (c.kind === 'code') {
+    const m = timeline?.steps.find((s) => s.id === c.id);
+    if (m) return Math.max(0.1, m.end - m.start);
+  }
+  return c.duration;
+}
+
+export function sequenceEnd(doc: SceneDoc, timeline: RunResult | null): number {
+  const ends = doc.clips.map((c) => c.start + clipDuration(c, timeline));
+  return Math.max(0, ...ends, timeline && !timeline.error ? timeline.duration : 0);
+}
+
+export function timecode(t: number, rate = fps()): string {
+  const total = Math.round(Math.max(0, t) * rate);
+  const f = total % rate;
+  const s = Math.floor(total / rate);
+  const p = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${p(Math.floor(s / 3600))}:${p(Math.floor(s / 60) % 60)}:${p(s % 60)}:${p(f, String(rate - 1).length)}`;
+}
+
+/** Parse "1.5", "1:02.5", or "00:00:05:12" (frames). */
+export function parseTimecode(text: string, rate = fps()): number | null {
+  const s = text.trim();
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  const parts = s.split(/[:;]/).map(Number);
+  if (parts.some((n) => Number.isNaN(n))) return null;
+  if (parts.length === 4) return parts[0] * 3600 + parts[1] * 60 + parts[2] + parts[3] / rate;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return null;
+}
+
 // ---------------------------------------------------------------- playback
 
 let playRaf = 0;
 export function setPlaying(playing: boolean) {
   cancelAnimationFrame(playRaf);
-  const duration = state.timeline?.duration ?? 0;
+  const duration = sequenceEnd(state.doc, state.timeline);
   if (playing && state.time >= duration - 1e-3) setState({ time: 0 });
   setState({ playing });
   if (!playing) return;
@@ -241,7 +266,7 @@ export function setPlaying(playing: boolean) {
   const tick = (now: number) => {
     const s = getState();
     if (!s.playing) return;
-    const end = s.timeline?.duration ?? 0;
+    const end = sequenceEnd(s.doc, s.timeline);
     const t = Math.min(end, s.time + (now - last) / 1000);
     last = now;
     if (!s.showVideo) setState({ time: t });
@@ -266,26 +291,35 @@ export function uniqueName(doc: SceneDoc, base: string): string {
   for (let i = 2; ; i++) if (!taken.has(base + i)) return base + i;
 }
 
-export function stepIndexAt(doc: SceneDoc, timeline: RunResult | null, t: number): number {
-  // Insert after the last step that finishes at or before t.
-  if (!timeline) return doc.steps.length;
-  const ends = new Map(timeline.steps.map((s) => [s.id, s.end]));
-  let idx = 0;
-  doc.steps.forEach((s, i) => {
-    const e = ends.get(s.id);
-    if (e !== undefined && e <= t + 1e-6) idx = i + 1;
-  });
-  return idx;
+const EPS = 1e-6;
+const span = (c: Clip) => Math.max(c.duration, 0.05);
+
+export function trackIsFree(doc: SceneDoc, trackId: string, start: number, end: number, ignore: Set<string> = new Set()): boolean {
+  return !doc.clips.some((c) => c.track === trackId && !ignore.has(c.id) && c.start < end - EPS && c.start + span(c) > start + EPS);
 }
 
-export function insertionIndex(): number {
-  const { doc, selection, timeline, time } = state;
-  if (selection?.kind === 'step' || selection?.kind === 'anim') {
-    const id = selection.kind === 'step' ? selection.id : selection.stepId;
-    const i = doc.steps.findIndex((s) => s.id === id);
-    if (i >= 0) return i + 1;
+/** Pick a track for a new clip: explicit → targeted track → target object's track → first free → new. */
+export function chooseTrack(doc: SceneDoc, start: number, dur: number, opts: { track?: string; target?: string; ignore?: Set<string> } = {}): string {
+  const end = start + Math.max(dur, 0.05);
+  const free = (id: string) => !doc.tracks.find((t) => t.id === id)?.locked && trackIsFree(doc, id, start, end, opts.ignore);
+  if (opts.track && free(opts.track)) return opts.track;
+  if (state.targetTrack && free(state.targetTrack)) return state.targetTrack;
+  if (opts.target) {
+    const prev = doc.clips.filter((c) => c.target === opts.target || c.targets?.includes(opts.target!)).sort((a, b) => b.start - a.start)[0];
+    if (prev && free(prev.track)) return prev.track;
   }
-  return stepIndexAt(doc, timeline, time);
+  const t = doc.tracks.find((tr) => free(tr.id));
+  if (t) return t.id;
+  return addTrackTo(doc).id;
+}
+
+export function addTrackTo(doc: SceneDoc): Track {
+  const n = doc.tracks.length + 1;
+  let id = `t${n}`;
+  while (doc.tracks.some((t) => t.id === id)) id += '_';
+  const track = { id, name: `V${n}` };
+  doc.tracks.push(track);
+  return track;
 }
 
 const WRITE_LIKE = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Code', 'DecimalNumber', 'Integer', 'Variable', 'Title', 'BulletedList']);
@@ -298,54 +332,77 @@ function introFor(entry: CatalogEntry | undefined, ctor: string): string | null 
   return 'Create';
 }
 
-export function addObject(ctor: string, pos: [number, number] | null, targetName?: string) {
+export function selectClips(ids: string[]) {
+  setState({ selection: ids.length ? { kind: 'clips', ids } : null });
+}
+
+export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: { start?: number; track?: string }) {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
   const args: Record<string, string> = {};
   for (const [k, v] of Object.entries(entry?.starter ?? {})) args[k] = v === '@target' ? targetName ?? '' : v;
   const intro = state.autoIntro ? introFor(entry, ctor) : null;
+  const start = frameSnap(at?.start ?? state.time);
   let newId = '';
-  let stepId = '';
+  let end = start;
   updateDoc((d) => {
     const name = uniqueName(d, snake(ctor.split('.').pop() || 'obj'));
     const obj: SceneObject = { id: uid('o'), name, ctor, args, pos, chain: '' };
     newId = obj.id;
     d.objects.push(obj);
     if (intro) {
-      const step: Step = { id: uid('s'), kind: 'play', anims: [{ id: uid('a'), cls: intro, target: name, args: {} }] };
-      stepId = step.id;
-      d.steps.splice(insertionIndex(), 0, step);
+      d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, start, 1, { track: at?.track }), start, duration: 1, cls: intro, target: name, args: {} });
+      end = start + 1;
+    } else if (!NO_INTRO.has(ctor)) {
+      d.clips.push({ id: uid('c'), kind: 'add', track: chooseTrack(d, start, 0, { track: at?.track }), start, duration: 0, targets: [name] });
     }
   });
-  if (stepId) jumpToStepEnd(stepId);
-  setState({ selection: { kind: 'object', id: newId } });
+  setState({ selection: { kind: 'object', id: newId }, time: end });
 }
 
-export function addAnimation(cls: string, target: string, intoStep?: string) {
-  const anim: AnimEntry = { id: uid('a'), cls, target, args: {} };
-  if (cls === 'animate') anim.chain = '.shift(RIGHT)';
-  if (intoStep) {
-    updateDoc((d) => {
-      const st = d.steps.find((s) => s.id === intoStep);
-      if (st?.kind === 'play') st.anims.push(anim);
-    });
-    setState({ selection: { kind: 'anim', stepId: intoStep, id: anim.id } });
-    return;
+export function addAnimation(cls: string, target: string, at?: { start?: number; track?: string }) {
+  const start = frameSnap(at?.start ?? state.time);
+  const clip: Clip = { id: uid('c'), kind: 'anim', track: '', start, duration: 1, cls, target, args: {} };
+  if (cls === 'animate') clip.chain = '.shift(RIGHT)';
+  updateDoc((d) => {
+    clip.track = chooseTrack(d, start, 1, { track: at?.track, target });
+    d.clips.push(clip);
+  });
+  setState({ selection: { kind: 'clips', ids: [clip.id] }, time: start + 1 });
+}
+
+export function addClip(kind: 'code' | 'hold' | 'add' | 'remove', at?: { start?: number; track?: string }) {
+  const start = frameSnap(at?.start ?? state.time);
+  const duration = kind === 'add' || kind === 'remove' ? 0 : 1;
+  const clip: Clip = { id: uid('c'), kind, track: '', start, duration };
+  if (kind === 'code') clip.code = '# any manim code; every object variable is in scope\n';
+  if (kind === 'add' || kind === 'remove') clip.targets = [];
+  updateDoc((d) => {
+    clip.track = chooseTrack(d, start, duration, { track: at?.track });
+    d.clips.push(clip);
+  });
+  selectClips([clip.id]);
+}
+
+export function addMarker(time = state.time) {
+  updateDoc((d) => {
+    d.markers ??= [];
+    d.markers.push({ id: uid('m'), time: frameSnap(time) });
+  });
+}
+
+/** All edit points (clip starts/ends + markers), for ↑/↓ navigation and snapping. */
+export function editPoints(doc: SceneDoc, timeline: RunResult | null): number[] {
+  const pts = new Set<number>([0]);
+  for (const c of doc.clips) {
+    pts.add(c.start);
+    pts.add(c.start + clipDuration(c, timeline));
   }
-  const step: Step = { id: uid('s'), kind: 'play', anims: [anim] };
-  const idx = insertionIndex();
-  updateDoc((d) => void d.steps.splice(idx, 0, step));
-  jumpToStepEnd(step.id);
-  setState({ selection: { kind: 'anim', stepId: step.id, id: anim.id } });
+  for (const m of doc.markers ?? []) pts.add(m.time);
+  return [...pts].sort((a, b) => a - b);
 }
 
-export function addStep(kind: 'wait' | 'code' | 'add' | 'remove') {
-  const id = uid('s');
-  const step: Step =
-    kind === 'wait' ? { id, kind, duration: '1' } : kind === 'code' ? { id, kind, code: '# any manim code, e.g.\n# self.play(Rotate(circle, PI))\n' } : { id, kind, targets: [] };
-  const idx = insertionIndex();
-  updateDoc((d) => void d.steps.splice(idx, 0, step));
-  jumpToStepEnd(id);
-  setState({ selection: { kind: 'step', id } });
+export function addTrack() {
+  updateDoc((d) => void addTrackTo(d));
 }
 
 const wordRe = (name: string) => new RegExp(`\\b${name.replace(/[^\w]/g, '')}\\b`, 'g');
@@ -362,37 +419,39 @@ export function renameObject(id: string, newName: string) {
       o.chain = rep(o.chain);
       for (const k in o.args) o.args[k] = rep(o.args[k]);
     }
-    for (const s of d.steps) {
-      if (s.kind === 'play')
-        for (const a of s.anims) {
-          a.target = rep(a.target);
-          if (a.chain) a.chain = rep(a.chain);
-          for (const k in a.args) a.args[k] = rep(a.args[k]);
-        }
-      else if (s.kind === 'code') s.code = rep(s.code);
-      else if (s.kind === 'add' || s.kind === 'remove') s.targets = s.targets.map(rep);
+    for (const c of d.clips) {
+      if (c.target) c.target = rep(c.target);
+      if (c.chain) c.chain = rep(c.chain);
+      if (c.code) c.code = rep(c.code);
+      if (c.targets) c.targets = c.targets.map(rep);
+      for (const k in c.args ?? {}) c.args![k] = rep(c.args![k]);
     }
   });
 }
 
-export function deleteSelection() {
+export const isLocked = (d: SceneDoc, c: Clip) => !!d.tracks.find((t) => t.id === c.track)?.locked;
+
+export function deleteSelection(ripple = false) {
   const sel = state.selection;
   if (!sel) return;
   updateDoc((d) => {
     if (sel.kind === 'object') {
       const obj = d.objects.find((o) => o.id === sel.id);
       d.objects = d.objects.filter((o) => o.id !== sel.id);
-      if (obj) {
-        // Drop animations that targeted it; keep everything else for the user to fix.
-        for (const s of d.steps) if (s.kind === 'play') s.anims = s.anims.filter((a) => a.target !== obj.name);
-        d.steps = d.steps.filter((s) => s.kind !== 'play' || s.anims.length);
+      if (obj) d.clips = d.clips.filter((c) => c.target !== obj.name);
+      return;
+    }
+    const ids = new Set(sel.ids);
+    const removed = d.clips.filter((c) => ids.has(c.id) && !isLocked(d, c));
+    d.clips = d.clips.filter((c) => !removed.includes(c));
+    if (ripple) {
+      // Close the gaps left behind across all tracks, like Premiere's ripple delete.
+      for (const r of removed.sort((a, b) => b.start - a.start)) {
+        const gapEnd = r.start + r.duration;
+        const blocked = d.clips.some((c) => c.start < gapEnd - EPS && c.start + c.duration > r.start + EPS);
+        if (blocked) continue;
+        for (const c of d.clips) if (c.start >= gapEnd - EPS && !isLocked(d, c)) c.start = Math.max(0, c.start - r.duration);
       }
-    } else if (sel.kind === 'step') {
-      d.steps = d.steps.filter((s) => s.id !== sel.id);
-    } else {
-      const st = d.steps.find((s) => s.id === sel.stepId);
-      if (st?.kind === 'play') st.anims = st.anims.filter((a) => a.id !== sel.id);
-      d.steps = d.steps.filter((s) => s.kind !== 'play' || s.anims.length);
     }
   });
   setState({ selection: null });
@@ -406,62 +465,107 @@ export function duplicateObject(id: string) {
     const copy: SceneObject = { ...structuredClone(src), id: uid('o'), name: uniqueName(d, src.name.replace(/\d+$/, '')) };
     if (copy.pos) copy.pos = [copy.pos[0] + 0.5, copy.pos[1] - 0.5];
     newId = copy.id;
-    d.objects.splice(d.objects.indexOf(d.objects.find((o) => o.id === id)!) + 1, 0, copy);
-    if (state.autoIntro) {
-      const entry = state.catalog?.mobjects.find((m) => m.name === src.ctor);
-      const intro = introFor(entry, src.ctor);
-      if (intro) d.steps.splice(insertionIndex(), 0, { id: uid('s'), kind: 'play', anims: [{ id: uid('a'), cls: intro, target: copy.name, args: {} }] });
-    }
+    d.objects.splice(d.objects.findIndex((o) => o.id === id) + 1, 0, copy);
+    const entry = state.catalog?.mobjects.find((m) => m.name === src.ctor);
+    const intro = state.autoIntro ? introFor(entry, src.ctor) : null;
+    const start = frameSnap(state.time);
+    if (intro) d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, start, 1, { target: src.name }), start, duration: 1, cls: intro, target: copy.name, args: {} });
   });
   setState({ selection: { kind: 'object', id: newId } });
 }
 
+// ---------------------------------------------------------------- clipboard
+
+let clipboard: Clip[] = [];
+export function copyClips() {
+  if (state.selection?.kind !== 'clips') return;
+  const ids = new Set(state.selection.ids);
+  clipboard = structuredClone(state.doc.clips.filter((c) => ids.has(c.id)));
+  toast(`Copied ${clipboard.length} clip${clipboard.length === 1 ? '' : 's'}`);
+}
+
+export function pasteClips() {
+  if (!clipboard.length) return;
+  const t0 = Math.min(...clipboard.map((c) => c.start));
+  const at = frameSnap(state.time);
+  const ids: string[] = [];
+  updateDoc((d) => {
+    for (const c of clipboard) {
+      const copy: Clip = { ...structuredClone(c), id: uid('c'), start: at + (c.start - t0) };
+      copy.track = chooseTrack(d, copy.start, copy.duration, { track: c.track });
+      d.clips.push(copy);
+      ids.push(copy.id);
+    }
+  });
+  selectClips(ids);
+}
+
+// ---------------------------------------------------------------- canvas edits
+
 export const fmt = (v: number) => String(Math.round(v * 100) / 100);
-
 const snapV = (v: number) => (state.snap ? Math.round(v * 4) / 4 : Math.round(v * 100) / 100);
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
 
-/** Show the object at its dragged position without committing (start-position drags only). */
-export function previewMove(id: string, dx: number, dy: number, center: [number, number] | null) {
+export interface TransformDelta {
+  move?: [number, number];
+  scale?: number; // multiplicative
+  stretch?: [number, number]; // multiplicative
+  rotate?: number; // degrees, additive
+}
+
+function applyTransform(o: SceneObject, t: TransformDelta, center: [number, number] | null) {
+  if (t.move) {
+    const base = o.pos ?? center ?? [0, 0];
+    o.pos = [snapV(base[0] + t.move[0]), snapV(base[1] + t.move[1])];
+  }
+  if (t.scale !== undefined) o.scale = round3((o.scale ?? 1) * t.scale);
+  if (t.stretch) {
+    const s = o.stretch ?? [1, 1];
+    o.stretch = [round3(s[0] * t.stretch[0]), round3(s[1] * t.stretch[1])];
+  }
+  if (t.rotate) o.rotation = round3(((o.rotation ?? 0) + t.rotate) % 360);
+}
+
+/** Show a canvas drag/resize/rotate live without committing it. */
+export function previewTransform(id: string, t: TransformDelta, center: [number, number] | null) {
   if (state.record) return;
-  const obj = state.doc.objects.find((o) => o.id === id);
-  if (!obj) return;
-  const base = obj.pos ?? center ?? [0, 0];
   const doc = structuredClone(state.doc);
-  doc.objects.find((o) => o.id === id)!.pos = [snapV(base[0] + dx), snapV(base[1] + dy)];
+  const o = doc.objects.find((x) => x.id === id);
+  if (!o) return;
+  applyTransform(o, t, center);
   setState({ previewDoc: doc });
 }
 
-/** Drag result: set the object's position (or, in record mode, animate it there). */
-export function moveObject(id: string, dx: number, dy: number, center: [number, number] | null) {
+/** Commit a canvas edit: change the object, or in record mode add an .animate clip at the playhead. */
+export function commitTransform(id: string, t: TransformDelta, center: [number, number] | null) {
   setState({ previewDoc: null });
   const obj = state.doc.objects.find((o) => o.id === id);
   if (!obj) return;
-  if (state.record && center) {
-    const x = snapV(center[0] + dx), y = snapV(center[1] + dy);
-    const chain = `.move_to(np.array([${fmt(x)}, ${fmt(y)}, 0]))`;
-    // Reuse a move in the step ending at the playhead, otherwise insert a new one.
-    const { timeline, time, doc } = state;
-    const endingHere = timeline?.steps.find((s) => Math.abs(s.end - time) < 1e-6);
-    const st = doc.steps.find((s) => s.id === endingHere?.id);
-    const existing = st?.kind === 'play' ? st.anims.find((a) => a.cls === 'animate' && a.target === obj.name && a.chain?.startsWith('.move_to(')) : undefined;
-    if (st && existing) {
-      updateDoc((d) => {
-        const s2 = d.steps.find((s) => s.id === st.id);
-        if (s2?.kind === 'play') s2.anims.find((a) => a.id === existing.id)!.chain = chain;
-      });
-    } else {
-      const step: Step = { id: uid('s'), kind: 'play', anims: [{ id: uid('a'), cls: 'animate', target: obj.name, args: {}, chain }] };
-      const idx = stepIndexAt(doc, timeline, time);
-      updateDoc((d) => void d.steps.splice(idx, 0, step));
-      jumpToStepEnd(step.id);
-    }
+  if (!state.record) {
+    updateDoc((d) => applyTransform(d.objects.find((x) => x.id === id)!, t, center));
     return;
   }
-  const base = obj.pos ?? center ?? [0, 0];
+  let chain = '';
+  if (t.move && center) chain = `.move_to(np.array([${fmt(snapV(center[0] + t.move[0]))}, ${fmt(snapV(center[1] + t.move[1]))}, 0]))`;
+  else if (t.scale !== undefined) chain = `.scale(${round3(t.scale)})`;
+  else if (t.stretch) chain = t.stretch[0] !== 1 ? `.stretch(${round3(t.stretch[0])}, 0)` : `.stretch(${round3(t.stretch[1])}, 1)`;
+  else if (t.rotate) chain = `.rotate(${round3(t.rotate)} * DEGREES)`;
+  if (!chain) return;
+  const time = frameSnap(state.time);
+  // Re-dragging right after recording a move edits that move instead of stacking another one.
+  const existing = chain.startsWith('.move_to(')
+    ? state.doc.clips.find((c) => c.cls === 'animate' && c.target === obj.name && c.chain?.startsWith('.move_to(') && Math.abs(c.start + c.duration - time) < 1e-3)
+    : undefined;
+  if (existing) {
+    updateDoc((d) => void (d.clips.find((c) => c.id === existing.id)!.chain = chain));
+    return;
+  }
+  const clip: Clip = { id: uid('c'), kind: 'anim', track: '', start: time, duration: 1, cls: 'animate', target: obj.name, args: {}, chain };
   updateDoc((d) => {
-    const o = d.objects.find((x) => x.id === id)!;
-    o.pos = [snapV(base[0] + dx), snapV(base[1] + dy)];
+    clip.track = chooseTrack(d, time, 1, { target: obj.name });
+    d.clips.push(clip);
   });
+  setState({ time: time + 1 });
 }
 
 export function docKey(doc: SceneDoc): string {

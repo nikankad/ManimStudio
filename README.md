@@ -29,34 +29,45 @@ mathengine render scene.mathengine -q 1080p -o scene.mp4   # headless render
 mathengine code scene.mathengine > scene.py # plain manim code
 ```
 
-- **Library** (left): drag any manim class onto the canvas. The *Animations* tab can be dropped onto
-  objects on the canvas, or onto a timeline block to play in parallel.
-- **Canvas**: the frame at the playhead, rendered by manim. Drag objects to set their position.
-  With **● Record moves** on, a drag adds `obj.animate.move_to(...)` instead.
-- **Inspector** (right): every constructor and animation parameter. Fields take Python
-  (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names). Constructors can be methods of other
-  objects, such as `axes.plot`. There's also a free-form method chain (`.scale(2).set_fill(RED, 0.5)`).
-- **Timeline**: maps 1:1 to `self.play(...)`, `self.wait(...)`, `self.add/remove(...)`, and **Code**
-  blocks, where you can write anything inside `construct()` (updaters, ValueTrackers, loops…).
-  Drag to reorder, drag the right edge to change `run_time`, click the ruler to scrub.
+- **Timeline** (bottom, the main workspace): a Premiere Pro–style, non-linear editor. Clips sit on stacked
+  tracks (V1, V2, …) at any time and can overlap or leave gaps. Drag a clip to move it in time or to another
+  track, drag its edges to trim, Alt-drag to duplicate, shift-click or drag a box to select several, and
+  right-click for more (enable/disable, ripple delete…). It snaps to the playhead, markers and clip edges
+  (toggle with **S**). Each track has output and lock toggles, and clicking a track name targets it for new
+  clips. Ctrl/⌘ + wheel zooms, the scroll bar's ends zoom too, and `\` zooms to fit.
+- **Library** (left): drag any manim class onto the canvas or straight onto a track at any time. The
+  *Effects* tab holds animations; dropping one on a track targets the selected object.
+- **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
+  corner handles to scale it, the edge handles to stretch it, or the top knob to rotate it. Arrow keys
+  nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
+- **Inspector** (right): *Properties* for objects (scrubbable Transform values, Style with color pickers
+  and sliders, every constructor argument), or *Effect Controls* for clips (start, duration, track and all
+  animation arguments). Fields take Python (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names).
+  Constructors can be methods of other objects, such as `axes.plot`.
+- **Code clips** run any manim code inside `construct()` (updaters, ValueTrackers, loops…).
 - **</> Code**: the header (imports, helpers, custom Mobject classes) and the generated scene.
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**
   renders at full quality.
 
-Shortcuts: Space play, ⌘Z / ⇧⌘Z undo/redo, ⌘S save, ⌘D duplicate, Delete, ← → jump between steps.
+Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
+S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object.
 
 ## How it works
 
 ```
 frontend/ (React)  ──HTTP (127.0.0.1 + session token)──▶  mathengine/server.py
                                                             ├─ catalog.py   introspects manim → palette & forms
-                                                            ├─ codegen.py   scene JSON → manim Python
+                                                            ├─ codegen.py   tracks/clips → manim Python (+ timed.py)
                                                             ├─ runtime.py   seek to time t in-process, render one frame
                                                             └─ render.py    `manim render` subprocess for video
 ```
 
-A project (`.mathengine`) is JSON. Every value is stored as Python source, so anything manim accepts
-is representable. Seeking re-runs `construct()` with a `play()` that skips animations instead of
+A project (`.mathengine`) is JSON: objects, tracks and timed clips. Every value is stored as Python
+source, so anything manim accepts is representable. When compiling, clips whose time ranges overlap are
+grouped. Gaps become `self.wait(...)`, a group whose clips all start together becomes a plain `self.play(...)`,
+and any other group becomes `self.play(TimedAnimations(...))`. That small helper (`mathengine/timed.py`,
+copied into the exported file) builds each clip *when its start time arrives*, so `.animate` begins from
+the object's current state and objects only appear when their intro starts. Seeking re-runs `construct()` with a `play()` that skips animations instead of
 rendering them, stops partway through at the requested time, and draws that moment with the scene's
 camera. This takes about 50 to 150 ms per frame, and the frame is exactly what the final render shows.
 

@@ -80,6 +80,10 @@ COMMON_METHODS = [
 DIRECTIONS = ["UP", "DOWN", "LEFT", "RIGHT", "UL", "UR", "DL", "DR", "ORIGIN", "IN", "OUT"]
 
 
+# The animated mobject is the clip's target, not a form field.
+TARGET_PARAMS = {"mobject", "mobjects", "vmobject"}
+
+
 def _expr_repr(value: Any, colors: dict[str, str], dirs: dict[tuple, str]) -> str:
     """Python-source representation of a default value."""
     m = manim()
@@ -146,6 +150,10 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
         for p in params:
             if p.kind is p.VAR_KEYWORD:
                 has_kwargs = True
+                continue
+            if skip_first and (p.name in TARGET_PARAMS or (p.kind is p.VAR_POSITIONAL and level == 0 and first)):
+                seen.add(p.name)
+                first = False
                 continue
             if skip_first and first and level == 0:
                 first = False

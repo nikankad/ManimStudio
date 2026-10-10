@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '../store';
 import type { Param } from '../types';
 
@@ -28,11 +29,121 @@ export function Field({ value, onChange, placeholder, className, list, multiline
   return multiline ? <textarea {...props} rows={Math.min(14, Math.max(2, local.split('\n').length + 1))} /> : <input {...props} list={list} />;
 }
 
+/** Premiere-style "scrubby" number: drag horizontally to change, click to type. */
+export function ScrubNumber({ value, onChange, step = 0.05, precision = 2, suffix = '', min, max, placeholder }: {
+  value: number | null;
+  onChange: (v: number) => void;
+  step?: number;
+  precision?: number;
+  suffix?: string;
+  min?: number;
+  max?: number;
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const clampV = (v: number) => Math.min(max ?? Infinity, Math.max(min ?? -Infinity, v));
+  const fmtV = (v: number) => String(Math.round(v * 10 ** precision) / 10 ** precision);
+  if (editing !== null)
+    return (
+      <input
+        className="field num scrub-edit"
+        autoFocus
+        value={editing}
+        onChange={(e) => setEditing(e.target.value)}
+        onBlur={() => {
+          const n = parseFloat(editing);
+          if (!Number.isNaN(n)) onChange(clampV(n));
+          setEditing(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') setEditing(null);
+        }}
+      />
+    );
+  return (
+    <span
+      className={`scrub ${value === null ? 'unset' : ''}`}
+      title="Drag to change · click to type · Shift = ×10, Alt = ÷10"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        const x0 = e.clientX;
+        const v0 = value ?? 0;
+        let moved = false;
+        const move = (ev: PointerEvent) => {
+          const dx = ev.clientX - x0;
+          if (Math.abs(dx) > 2) moved = true;
+          if (!moved) return;
+          const k = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1;
+          onChange(clampV(Number(fmtV(v0 + dx * step * k))));
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', () => {
+          window.removeEventListener('pointermove', move);
+          if (!moved) setEditing(value === null ? '' : fmtV(value));
+        }, { once: true });
+      }}
+    >
+      {value === null ? placeholder ?? '—' : fmtV(value) + suffix}
+    </span>
+  );
+}
+
+const MAIN_COLORS = ['WHITE', 'GREY', 'BLACK', 'BLUE', 'TEAL', 'GREEN', 'YELLOW', 'GOLD', 'ORANGE', 'RED', 'MAROON', 'PURPLE', 'PINK', 'LIGHT_BROWN', 'DARK_BROWN'];
+const SHADES = ['BLUE', 'TEAL', 'GREEN', 'YELLOW', 'GOLD', 'RED', 'MAROON', 'PURPLE', 'GREY'];
+
+/** Color swatch that opens a picker with the manim palette, a hex field and the system picker. */
+export function ColorField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const table = useStore((s) => s.catalog?.color_hex ?? {});
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const hex = colorHex(value || placeholder || '', table);
+  const pick = (v: string) => onChange(v);
+  const rect = btn.current?.getBoundingClientRect();
+  return (
+    <div className="row color-field">
+      <button ref={btn} className={`swatch ${hex ? '' : 'none'}`} style={{ background: hex ?? undefined }} onClick={() => setOpen(!open)} title="Pick a color" />
+      <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" className="mono" />
+      {open && rect && createPortal(
+        <>
+          <div className="popover-back" onPointerDown={() => setOpen(false)} />
+          <div className="color-pop" style={{ top: Math.min(rect.bottom + 6, window.innerHeight - 300), left: Math.max(8, rect.right - 250) }}>
+            <div className="cp-grid main">
+              {MAIN_COLORS.filter((n) => table[n]).map((n) => (
+                <button key={n} className={`cp-sw ${value === n ? 'on' : ''}`} style={{ background: table[n] }} title={n} onClick={() => pick(n)} />
+              ))}
+            </div>
+            <div className="cp-shades">
+              {SHADES.map((base) => (
+                <div key={base} className="cp-grid">
+                  {['A', 'B', 'C', 'D', 'E'].map((sh) => `${base}_${sh}`).filter((n) => table[n]).map((n) => (
+                    <button key={n} className={`cp-sw ${value === n ? 'on' : ''}`} style={{ background: table[n] }} title={n} onClick={() => pick(n)} />
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="row">
+              <input type="color" className="cp-native" value={hex ?? '#ffffff'} onChange={(e) => pick(`"${e.target.value.toUpperCase()}"`)} />
+              <span className="mono small">{hex ?? 'none'}</span>
+              <div className="spacer" />
+              <button className="ghost small" onClick={() => { onChange(''); setOpen(false); }}>default</button>
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+export const isColorKey = (name: string) => /(^|_)colou?r$/i.test(name);
+
 export function ParamField({ param, value, onChange }: { param: Param; value: string; onChange: (v: string) => void }) {
   const catalog = useStore((s) => s.catalog);
   const placeholder = param.default || (param.required ? 'required' : '');
   let control;
-  switch (param.kind) {
+  const kind = isColorKey(param.name) && param.kind === 'expr' ? 'color' : param.kind;
+  switch (kind) {
     case 'bool':
       control = (
         <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
@@ -42,16 +153,9 @@ export function ParamField({ param, value, onChange }: { param: Param; value: st
         </select>
       );
       break;
-    case 'color': {
-      const hex = colorHex(value || param.default, catalog?.color_hex ?? {});
-      control = (
-        <div className="row">
-          <input type="color" className="swatch" value={hex ?? '#ffffff'} onChange={(e) => onChange(`"${e.target.value.toUpperCase()}"`)} />
-          <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" />
-        </div>
-      );
+    case 'color':
+      control = <ColorField value={value} onChange={onChange} placeholder={placeholder} />;
       break;
-    }
     case 'rate_func':
       control = (
         <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>

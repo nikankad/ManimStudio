@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
-import { deleteSelection, docKey, duplicateObject, emptyDoc, getState, loadDoc, redo, setPlaying, setState, toast, undo, updateDoc, useStore } from '../store';
+import {
+  addMarker, commitTransform, copyClips, deleteSelection, docKey, duplicateObject, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc,
+  pasteClips, redo, sequenceEnd, setPlaying, setState, toast, undo, updateDoc, useStore,
+} from '../store';
+import { zoomBy, zoomToFit } from './Timeline';
 import type { Job } from '../types';
 import { Field } from './ParamField';
 
@@ -44,7 +48,7 @@ export function Toolbar() {
       <span className="sep" />
       <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
       <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
-      <label className={`toggle ${record ? 'rec' : ''}`} title="Dragging an object adds an .animate.move_to(...) step instead of changing its start position"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record moves</label>
+      <label className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
       <div className="spacer" />
       <PreviewButton />
       <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
@@ -269,37 +273,58 @@ export function useShortcuts() {
       const el = e.target as HTMLElement;
       const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
       const mod = e.metaKey || e.ctrlKey;
-      if (mod && e.key.toLowerCase() === 's') {
+      const k = e.key.toLowerCase();
+      if (mod && k === 's') {
         e.preventDefault();
         void saveProject(e.shiftKey).catch((err) => toast(String(err)));
         return;
       }
       if (typing) return;
-      if (mod && e.key.toLowerCase() === 'z') {
+      const s = getState();
+      const go = (t: number) => setState({ time: frameSnap(Math.max(0, Math.min(sequenceEnd(s.doc, s.timeline), t))), showVideo: false });
+      const objSel = s.selection?.kind === 'object' ? s.selection.id : null;
+      if (mod && k === 'z') {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
-      } else if (mod && e.key.toLowerCase() === 'y') {
-        redo();
-      } else if (e.key === ' ') {
+      } else if (mod && k === 'y') redo();
+      else if (mod && k === 'c') copyClips();
+      else if (mod && k === 'v') pasteClips();
+      else if (mod && k === 'd') {
         e.preventDefault();
-        setPlaying(!getState().playing);
-      } else if (e.key === 'Delete' || e.key === 'Backspace') {
-        deleteSelection();
-      } else if (mod && e.key.toLowerCase() === 'd') {
+        if (objSel) duplicateObject(objSel);
+      } else if (e.key === ' ' || k === 'l') {
         e.preventDefault();
-        const sel = getState().selection;
-        if (sel?.kind === 'object') duplicateObject(sel.id);
-      } else if (e.key === 'Home') {
-        setState({ time: 0 });
+        setPlaying(e.key === ' ' ? !s.playing : true);
+      } else if (k === 'k') setPlaying(false);
+      else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection(e.shiftKey);
+      else if (e.key === 'Home') go(0);
+      else if (e.key === 'End') go(sequenceEnd(s.doc, s.timeline));
+      else if (objSel && e.key.startsWith('Arrow')) {
+        // Nudge the selected object on the canvas (Shift = 1 unit).
+        e.preventDefault();
+        const step = e.shiftKey ? 1 : 0.1;
+        const d: [number, number] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key] as [number, number];
+        const info = s.frame?.objects.find((o) => o.id === objSel);
+        commitTransform(objSel, { move: d }, info?.center ?? null);
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        const s = getState();
-        const marks = [0, ...(s.timeline?.steps.map((x) => x.end) ?? [])].sort((a, b) => a - b);
-        const t = e.key === 'ArrowRight' ? marks.find((m) => m > s.time + 1e-6) : [...marks].reverse().find((m) => m < s.time - 1e-6);
-        if (t !== undefined) setState({ time: t, showVideo: false });
-      } else if (e.key === 'Escape') {
-        setState({ selection: null, panel: null });
-      }
+        e.preventDefault();
+        const n = (e.shiftKey ? 5 : 1) * (e.key === 'ArrowLeft' ? -1 : 1);
+        go(s.time + n / fps());
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        const pts = editPoints(s.doc, s.timeline);
+        const t = e.key === 'ArrowDown' ? pts.find((p) => p > s.time + 1e-6) : [...pts].reverse().find((p) => p < s.time - 1e-6);
+        if (t !== undefined) go(t);
+      } else if (k === 'm') addMarker();
+      else if (k === 's' && !mod) setState({ timelineSnap: !s.timelineSnap });
+      else if (e.key === '=' || e.key === '+') zoomBy(1.4);
+      else if (e.key === '-') zoomBy(1 / 1.4);
+      else if (e.key === '\\') zoomToFit(document.querySelector('.tl-lanes')?.clientWidth);
+      else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') {
+        const ids = new Set(s.selection.ids);
+        updateDoc((d) => d.clips.filter((c) => ids.has(c.id)).forEach((c) => (c.disabled = !c.disabled)));
+      } else if (e.key === 'Escape') setState({ selection: null, panel: null });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

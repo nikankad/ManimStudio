@@ -31,11 +31,11 @@ export function Library() {
 
   const activate = (e: CatalogEntry) => {
     const s = getState();
+    const selId = s.selection?.kind === 'object' ? s.selection.id : null;
+    const sel = s.doc.objects.find((o) => o.id === selId);
     if (e.kind === 'mobject') {
-      const sel = s.selection?.kind === 'object' ? s.doc.objects.find((o) => o.id === s.selection!.id) : undefined;
       addObject(e.name, [0, 0], sel?.name);
     } else {
-      const sel = s.selection?.kind === 'object' ? s.doc.objects.find((o) => o.id === s.selection!.id) : undefined;
       const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name ?? '';
       addAnimation(e.name, target);
     }
@@ -45,7 +45,7 @@ export function Library() {
     <aside className="panel library">
       <div className="tabs">
         <button className={tab === 'mobject' ? 'on' : ''} onClick={() => setTab('mobject')}>Objects</button>
-        <button className={tab === 'animation' ? 'on' : ''} onClick={() => setTab('animation')}>Animations</button>
+        <button className={tab === 'animation' ? 'on' : ''} onClick={() => setTab('animation')}>Effects</button>
         <button className={tab === 'outline' ? 'on' : ''} onClick={() => setTab('outline')}>Scene</button>
       </div>
       {tab === 'outline' ? (
@@ -56,7 +56,7 @@ export function Library() {
           {!catalog && <div className="muted pad">Loading manim…</div>}
           <div className="scroll">
             {tab === 'animation' && !query && (
-              <div className="hint pad">Drag onto an object in the canvas, or onto a timeline block to play in parallel.</div>
+              <div className="hint pad">Drag onto an object on the canvas (plays at the playhead) or onto any timeline track at any time. It targets the selected object.</div>
             )}
             {tab === 'animation' && (
               <LibItem entry={{ name: 'animate', kind: 'animation', category: '', doc: 'mobject.animate.<method>(…) — animate any method call (shift, scale, set_color…)', bases: [], vector: true, starter: {}, featured: 0 }} onActivate={activate} label=".animate" />
