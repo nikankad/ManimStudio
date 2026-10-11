@@ -9,6 +9,7 @@ import type { Job } from '../types';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
+import { HelpPanel } from './Help';
 
 export async function saveProject(saveAs = false) {
   const s = getState();
@@ -50,13 +51,16 @@ export function Toolbar() {
       <span className="sep" />
       <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
       <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
-      <label className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
+      <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
       <div className="spacer" />
-      <button className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
-      <PreviewButton />
-      <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
-      <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
-      <button className="primary" onClick={() => setState({ panel: 'export' })}>Export video</button>
+      <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
+      <span className="toolbar-group" data-tour="output">
+        <PreviewButton />
+        <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
+        <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
+        <button className="primary" onClick={() => setState({ panel: 'export' })}>Export video</button>
+      </span>
+      <button data-tour="help" className="ghost help-btn" title="Guide and tour (? or F1)" onClick={() => setState({ panel: 'help', panelData: null })}>? Help</button>
     </header>
   );
 }
@@ -102,6 +106,7 @@ export function Panels() {
   if (panel === 'settings') return <SettingsPanel />;
   if (panel === 'export') return <ExportPanel />;
   if (panel === 'graph') return <GraphBuilder />;
+  if (panel === 'help') return <HelpPanel />;
   if (panel === 'delete') return <DeleteDialog />;
   if (panel === 'insert') return <InsertConstruction />;
   if (panel === 'save-construction') return <SaveConstruction />;
@@ -257,8 +262,18 @@ export function useShortcuts() {
         void saveProject(e.shiftKey).catch((err) => toast(String(err)));
         return;
       }
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setState({ panel: 'help', panelData: null });
+        return;
+      }
       if (typing) return;
       const s = getState();
+      if (e.key === '?' && !mod) {
+        e.preventDefault();
+        setState({ panel: s.panel === 'help' ? null : 'help', panelData: null });
+        return;
+      }
       const go = (t: number) => setState({ time: frameSnap(Math.max(0, Math.min(sequenceEnd(s.doc, s.timeline), t))), showVideo: false });
       const objSel = s.selection?.kind === 'object' ? s.selection.id : null;
       if (mod && k === 'z') {

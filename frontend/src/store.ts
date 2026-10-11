@@ -28,7 +28,8 @@ export interface AppState {
   playing: boolean;
   past: SceneDoc[];
   future: SceneDoc[];
-  panel: null | 'code' | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction';
+  panel: null | 'code' | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help';
+  tour: number | null; // guided tour step
   panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
   tool: Tool; // canvas drawing tool
   starters: Template[]; // built-in constructions
@@ -74,6 +75,7 @@ let state: AppState = {
   panel: null,
   panelData: null,
   tool: 'select',
+  tour: null,
   starters: [],
   library: [],
   snap: true,

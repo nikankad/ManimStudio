@@ -45,11 +45,11 @@ export function Library() {
   };
 
   return (
-    <aside className="panel library">
+    <aside className="panel library" data-tour="library">
       <div className="tabs">
         <button className={tab === 'mobject' ? 'on' : ''} onClick={() => setTab('mobject')}>Objects</button>
         <button className={tab === 'animation' ? 'on' : ''} onClick={() => setTab('animation')}>Effects</button>
-        <button className={tab === 'constructions' ? 'on' : ''} onClick={() => setTab('constructions')} title="Reusable constructions">Build</button>
+        <button data-tour="build" className={tab === 'constructions' ? 'on' : ''} onClick={() => setTab('constructions')} title="Reusable constructions">Build</button>
         <button className={tab === 'outline' ? 'on' : ''} onClick={() => setTab('outline')}>Scene</button>
       </div>
       {tab === 'outline' ? (

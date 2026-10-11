@@ -156,9 +156,13 @@ mathengine code scene.mathengine > scene.py # plain manim code
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**
   renders at full quality.
 
+**Help**: the toolbar's **? Help** button (or `?` / `F1`) opens a searchable guide to every feature, with
+buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
+users are offered the tour once.
+
 Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
 S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object(s) ·
-1–7 drawing tools · Enter finish polygon · Esc cancel drawing.
+1–7 drawing tools · Enter finish polygon · Esc cancel drawing · ? or F1 help.
 
 ## How it works
 

@@ -686,7 +686,7 @@ export function Viewport() {
       <div className="monitor-title">
         <span>Program: {doc.scene.name}</span>
         {record && <span className="rec-badge">● REC</span>}
-        <div className="tools" role="toolbar" aria-label="Drawing tools">
+        <div className="tools" role="toolbar" aria-label="Drawing tools" data-tour="tools">
           {TOOLS.map((t) => (
             <button key={t.tool} className={`tool-btn ${tool === t.tool ? 'on' : ''}`} title={t.hint} aria-label={t.label} onClick={() => setState({ tool: t.tool })}>{t.icon}</button>
           ))}
@@ -702,6 +702,7 @@ export function Viewport() {
       </div>
       <div className="viewport" ref={wrapRef}>
         <div
+          data-tour="canvas"
           className={`stage ${tool !== 'select' ? 'drawing' : ''}`}
           style={{ width: size.w, height: size.h, background: doc.config.background_color }}
           onDragOver={(e) => {

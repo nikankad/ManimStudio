@@ -31,7 +31,7 @@ export function Inspector() {
     else if (clips.length > 1) body = <MultiClipInspector clips={clips} />;
   }
   return (
-    <aside className="panel inspector">
+    <aside className="panel inspector" data-tour="inspector">
       <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : 'Scene'}</div>
       <div className="scroll" tabIndex={-1}>{body ?? <SceneInfo />}</div>
     </aside>
@@ -46,7 +46,10 @@ function SceneInfo() {
       <p className="muted">
         <b>{doc.scene.name}</b>({doc.scene.base}) · {doc.config.pixel_width}×{doc.config.pixel_height} @ {doc.config.frame_rate}fps
       </p>
-      <button onClick={() => setState({ panel: 'settings' })}>Scene settings…</button>
+      <div className="row">
+        <button onClick={() => setState({ panel: 'settings' })}>Scene settings…</button>
+        <button onClick={() => setState({ panel: 'help', panelData: null })}>Guide &amp; tour</button>
+      </div>
       <ParametersPanel />
       <h4>How it works</h4>
       <ul className="tips">

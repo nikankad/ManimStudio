@@ -6,6 +6,7 @@ import { SharedLists } from './components/ParamField';
 import { Panels, Toolbar, useShortcuts } from './components/Panels';
 import { Timeline } from './components/Timeline';
 import { Viewport } from './components/Viewport';
+import { Tour, WelcomeCard } from './components/Help';
 import { getState, loadCatalog, loadDoc, toast, useStore } from './store';
 import { loadTemplates } from './templates';
 
@@ -63,6 +64,8 @@ export function App() {
       <Timeline />
       <Panels />
       <SharedLists />
+      <Tour />
+      <WelcomeCard />
       {message && <div className="toast">{message}</div>}
     </div>
   );

@@ -347,7 +347,7 @@ export function Timeline() {
   };
 
   return (
-    <div className="timeline" onWheel={onWheel}>
+    <div className="timeline" data-tour="timeline" onWheel={onWheel}>
       <div className="tl-header">
         <div className="seq-tab">{doc.scene.name}</div>
         <TimecodeInput value={time} onChange={(t) => setState({ time: t, showVideo: false })} />
