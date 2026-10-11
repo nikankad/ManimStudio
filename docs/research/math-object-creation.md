@@ -321,7 +321,7 @@ Each starter compiles without diagnostics and renders in the test suite.
   two points, label-offset drags, undo, delete and detach, Record-mode parameter drags, the graph builder and
   its error messages, equation terms with MathLive, `TransformTerms` pairing, and saving and inserting
   constructions, including two instances of the same starter.
-- **Tests:** `tests/` holds 46 pytest cases rendering with the real manim:
+- **Tests:** `tests/` holds 56 pytest cases rendering with the real manim:
   - the expression language;
   - every link kind, followed during animation;
   - style animations surviving redraws;

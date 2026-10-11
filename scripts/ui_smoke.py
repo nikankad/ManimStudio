@@ -529,11 +529,95 @@ def intersections_and_perpendiculars(p):
     browser.close()
 
 
+def timeline_editing(p):
+    """Search ranking, where moved clips land, keyboard focus after library drops, timecode entry, order warnings."""
+    browser, page, requests = open_page(p)
+    page.goto(URL)
+    page.wait_for_selector(".lib-item", timeout=60000)
+    page.locator(".toolbar button", has_text="New").click()
+    page.wait_for_timeout(500)
+
+    def clips():
+        d = saved(page)
+        names = {t["id"]: t["name"] for t in d["tracks"]}
+        return sorted(((c.get("cls") or c["kind"], c.get("target"), names[c["track"]], c["start"]) for c in d["clips"]), key=lambda c: (c[2], c[3]))
+
+    def timecode():
+        return page.locator(".tl-header .timecode").first.inner_text()
+
+    # Exact matches come first in the library search; taking an item gives the keyboard back to the editor.
+    for name in ("Circle", "Square"):
+        page.locator(".library .search").fill(name)
+        assert page.locator(".lib-item").first.inner_text() == name, page.locator(".lib-item").first.inner_text()
+        page.locator(".lib-item").first.dblclick()
+        page.wait_for_timeout(1000)
+    assert page.evaluate("document.activeElement.tagName") == "BODY"
+    assert clips() == [("Create", "circle", "V1", 0), ("Create", "square", "V1", 1)], clips()
+
+    lanes = page.locator(".tl-lanes").bounding_box()
+    pps = page.locator(".timeline .clip").first.bounding_box()["width"]  # a 1 s clip
+
+    def row_mid(name):
+        b = page.locator(".track-head", has_text=name).bounding_box()
+        return b["y"] + b["height"] / 2
+
+    # Dropping the square's clip onto the circle's: the ghost shows it on V2, and it lands there.
+    y1, y2 = row_mid("V1"), row_mid("V2")
+    page.mouse.move(lanes["x"] + 1.5 * pps, y1)
+    page.mouse.down()
+    page.mouse.move(lanes["x"] + 1.0 * pps, y1, steps=8)
+    ghost = page.locator(".timeline .clip.ghost").first.bounding_box()
+    assert abs(ghost["y"] + ghost["height"] / 2 - y2) < 10, (ghost, y2)
+    page.mouse.up()
+    page.wait_for_timeout(500)
+    assert clips() == [("Create", "circle", "V1", 0), ("Create", "square", "V2", 0.5)], clips()
+
+    # An effect dropped on a track with nothing selected says what it targets; Space then plays.
+    page.keyboard.press("Escape")
+    page.locator(".library .tabs button", has_text="Effects").click()
+    page.locator(".library .search").fill("Indicate")
+    page.locator(".lib-item", has_text="Indicate").first.drag_to(page.locator(".tl-lanes"), target_position={"x": 3 * pps, "y": 30 + 24})
+    page.wait_for_timeout(500)
+    assert "animates square" in " ".join(page.locator(".toast").all_inner_texts()), page.locator(".toast").all_inner_texts()
+    page.keyboard.press("Home")
+    page.keyboard.press("Space")
+    page.wait_for_timeout(800)
+    page.keyboard.press("Space")
+    assert timecode() != "00:00:00:00", timecode()
+
+    # Typing in the timecode replaces it.
+    page.locator(".tl-header .timecode").click()
+    page.keyboard.type("3")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(200)
+    assert timecode() == "00:00:03:00", timecode()
+
+    # An .animate clip on the circle before its Create is marked and explained.
+    page.mouse.click(lanes["x"] + 1, lanes["y"] + 10)  # playhead to 0 (ruler)
+    page.locator(".library .tabs button", has_text="Scene").click()
+    page.locator(".outline-row", has_text="circle").first.click()
+    page.locator(".library .tabs button", has_text="Effects").click()
+    page.locator(".lib-item", has_text=".animate").first.dblclick()
+    page.wait_for_timeout(300)
+    create = page.locator(".timeline .clip", has_text="circle").filter(has_text="Create").first.bounding_box()
+    page.mouse.move(create["x"] + create["width"] / 2, create["y"] + create["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(create["x"] + create["width"] / 2 + 2 * pps, create["y"] + create["height"] / 2, steps=8)
+    page.mouse.up()
+    page.wait_for_selector(".timeline .clip.warn", timeout=20000)
+    title = page.locator(".timeline .clip.warn").first.get_attribute("title")
+    print("order warning:", title.split("⚠")[-1].strip()[:90])
+    assert "only appears at 2s (Create)" in title, title
+    shot(page, "timeline_warning")
+    browser.close()
+
+
 SAVE = os.path.join(OUT, "smoke.mathengine")
 with sync_playwright() as p:
     drawing_graphs_equations(p)
     connections_records_constructions(p)
     intersections_and_perpendiculars(p)
+    timeline_editing(p)
 print("screenshots in", OUT)
 print("ERRORS:", errors)
 sys.exit(1 if errors else 0)

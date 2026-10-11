@@ -169,6 +169,44 @@ def _active_clips(doc: dict, skip: set[str] = frozenset()) -> list[dict]:
     return out
 
 
+def _introduces(cls: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z_]\w*", cls or ""):
+        return False
+    try:
+        from .catalog import is_introducer
+    except Exception:
+        return False
+    return is_introducer(cls)
+
+
+def _check_order(clips: list[dict], plan: construct.Plan) -> None:
+    """Warn about clips that animate an object before its intro (Create, FadeIn, Add…) on the timeline.
+
+    manim puts an object on screen as soon as anything animates it, so it would be visible from that
+    clip on, and the intro would then draw it again.
+    """
+    appears: dict[str, tuple[float, str]] = {}
+    for c in clips:
+        if c.get("kind") == "add":
+            names, how = c.get("targets") or [], "an Add clip"
+        elif c.get("kind") == "anim" and _introduces((c.get("cls") or "").strip()):
+            names, how = [(c.get("target") or "").strip()], (c.get("cls") or "").strip()
+        else:
+            continue
+        for n in names:
+            if n and (n not in appears or float(c["start"]) < appears[n][0]):
+                appears[n] = (float(c["start"]), how)
+    for c in clips:
+        name = (c.get("target") or "").strip()
+        if c.get("kind") != "anim" or name not in appears or _introduces((c.get("cls") or "").strip()):
+            continue
+        t, how = appears[name]
+        if float(c["start"]) < t - EPS:
+            plan.diag(c["id"], "warning", f"{name} only appears at {_num(t)}s ({how}), but this clip animates it at {_num(c['start'])}s: "
+                      f"manim shows it from here, and {how} then draws it again. Move this clip after {_num(t)}s, or move the intro earlier.",
+                      "clip")
+
+
 def _is_instant(c: dict) -> bool:
     return c.get("kind") in ("add", "remove")
 
@@ -187,6 +225,7 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     cfg = doc.get("config", {})
     plan = construct.plan(doc)
     clips = _active_clips(doc, plan.invalid_clips)
+    _check_order(clips, plan)
     code_clips = sorted((c for c in clips if c.get("kind") == "code"), key=lambda c: float(c["start"]))
     timed_clips = [c for c in clips if c.get("kind") != "code"]
     groups = _groups(timed_clips)

@@ -292,11 +292,13 @@ const TOPICS: Topic[] = [
   {
     id: 'timeline',
     title: 'Timeline and animation',
-    keywords: 'timeline clip track play scrub trim marker record animate effect',
+    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order',
     body: (
       <>
         <ul>
-          <li>Clips sit on tracks at any time and may overlap or leave gaps. Drag to move, drag edges to trim, <kbd>Alt</kbd>-drag to duplicate, right-click for more.</li>
+          <li>Clips sit on tracks at any time and may overlap or leave gaps. Drag to move, drag edges to trim, <kbd>Alt</kbd>-drag to duplicate, right-click for more. A clip dropped where its track is taken goes to the nearest free track above; the drag preview shows where.</li>
+          <li>Overlapping clips on the same object <b>add up</b>: move it and change its color, rotate it or fade it out at the same time. Replacing it or turning it into another shape still lets the later clip win.</li>
+          <li>A clip marked <b>!</b> animates an object before its intro (Create, FadeIn, Add): the object would show from that clip on. Effect Controls explains it.</li>
           <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
           <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
           <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>

@@ -11,7 +11,14 @@ export type DragPayload = { kind: 'mobject' | 'animation'; name: string };
 function group(entries: CatalogEntry[], query: string): [string, CatalogEntry[]][] {
   const q = query.trim().toLowerCase();
   const hits = entries.filter((e) => !q || e.name.toLowerCase().includes(q) || e.category.toLowerCase().includes(q));
-  if (q) return [['Results', hits]];
+  if (q) {
+    // Exact name first, then names starting with the query, then common classes, then other matches.
+    const rank = (e: CatalogEntry) => {
+      const n = e.name.toLowerCase();
+      return n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? (e.featured >= 0 ? 2 : 3) : 4;
+    };
+    return [['Results', [...hits].sort((a, b) => rank(a) - rank(b) || a.name.length - b.name.length || a.name.localeCompare(b.name))]];
+  }
   const featured = hits.filter((e) => e.featured >= 0).sort((a, b) => a.featured - b.featured);
   const byCat = new Map<string, CatalogEntry[]>();
   for (const e of hits) {
@@ -40,7 +47,9 @@ export function Library() {
       addObject(e.name, [0, 0], sel?.name);
     } else {
       const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name ?? '';
+      if (!target) return toast('Add an object first, then add animations');
       addAnimation(e.name, target);
+      if (!sel) toast(`${e.name === 'animate' ? '.animate' : e.name} animates ${target}, the newest object. Select an object first to target it, or change it in Effect Controls`);
     }
   };
 
@@ -88,6 +97,12 @@ export function Library() {
   );
 }
 
+/** Give the keyboard back to the editor (Space plays, Delete deletes) once something is taken from the library. */
+function leaveSearch() {
+  const el = document.activeElement as HTMLElement | null;
+  if (el?.classList.contains('search')) el.blur();
+}
+
 function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate: (e: CatalogEntry) => void; label?: string }) {
   return (
     <div
@@ -95,10 +110,14 @@ function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate
       draggable
       title={entry.doc || entry.name}
       onDragStart={(ev) => {
+        leaveSearch();
         ev.dataTransfer.setData(DND_TYPE, JSON.stringify({ kind: entry.kind, name: entry.name } satisfies DragPayload));
         ev.dataTransfer.effectAllowed = 'copy';
       }}
-      onDoubleClick={() => onActivate(entry)}
+      onDoubleClick={() => {
+        leaveSearch();
+        onActivate(entry);
+      }}
     >
       {label ?? entry.name}
     </div>

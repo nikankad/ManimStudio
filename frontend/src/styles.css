@@ -249,9 +249,10 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .clip.err { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
 .clip.disabled { opacity: 0.35; filter: grayscale(1); }
 .clip.ghost { opacity: 0.85; z-index: 2; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5); }
-.clip.ghost.bad { box-shadow: 0 0 0 2px var(--err); }
 .clip.copy { opacity: 0.6; }
 .clip.pushed { border-style: dashed; border-color: var(--warn); }
+.clip.warn { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+.clip-warn { flex: none; width: 13px; height: 13px; border-radius: 50%; background: var(--warn); color: #1b1b1e; font: 700 10px/13px var(--mono); text-align: center; }
 .clip.instant { background: transparent; border: none; box-shadow: none; overflow: visible; }
 .clip.instant::after { display: none; }
 .clip.instant::before { left: 1px; top: 50%; width: 11px; height: 11px; bottom: auto; margin-top: -6px; transform: rotate(45deg); background: var(--clip); border: 1px solid rgba(255, 255, 255, 0.5); cursor: grab; }

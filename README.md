@@ -37,6 +37,14 @@ mathengine code scene.mathengine > scene.py # plain manim code
   right-click for more (enable/disable, ripple delete…). It snaps to the playhead, markers and clip edges
   (toggle with **S**). Each track has output and lock toggles, and clicking a track name targets it for new
   clips. Ctrl/⌘ + wheel zooms, the scroll bar's ends zoom too, and `\` zooms to fit.
+  - A clip dropped where its track is taken (or locked) goes to the nearest free track above, or a new one;
+    the drag preview shows where it will land.
+  - Clips that animate the same object at overlapping times **add up**: a move and a color change, two moves,
+    or a rotation or fade-out during a move all happen together. (In plain manim the later animation would
+    take the object over.) Animations that replace the object, turn it into another shape, or set a
+    ValueTracker keep manim's rule: the later one wins.
+  - A clip that animates an object before its intro (Create, FadeIn, an Add clip…) is marked with **!** and
+    explained in Effect Controls: manim would show the object from that clip on.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track at any time. The
   *Effects* tab holds animations; dropping one on a track targets the selected object.
 - **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
@@ -203,7 +211,7 @@ that must be ValueTracker objects. Nothing is inferred from arbitrary Python. Wh
 grouped. Gaps become `self.wait(...)`, a group whose clips all start together becomes a plain `self.play(...)`,
 and any other group becomes `self.play(TimedAnimations(...))`. That small helper (`mathengine/timed.py`,
 copied into the exported file) builds each clip *when its start time arrives*, so `.animate` begins from
-the object's current state and objects only appear when their intro starts. Constructions compile to plain manim code too: a small `Constraints` helper, emitted into the file,
+the object's current state and objects only appear when their intro starts. Inside it, animations of the same object that overlap run on private copies and their changes are added to the object each frame. Constructions compile to plain manim code too: a small `Constraints` helper, emitted into the file,
 re-evaluates every construction in document order each frame and after each `self.play`. It skips any
 mobject an animation is playing on (manim's `updating_suspended`). Segments become
 `constraints.redraw(lambda: Line(A.get_center(), B.get_center()), A, B)`, attached labels

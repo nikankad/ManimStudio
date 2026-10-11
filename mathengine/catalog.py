@@ -484,6 +484,37 @@ def sets_run_time(cls_name: str) -> bool:
 
 
 @functools.lru_cache(maxsize=256)
+def is_introducer(cls_name: str) -> bool:
+    """True for animations that put their mobject on screen to stay (Create, Write, FadeIn, GrowFromCenter…).
+
+    A flash that adds and removes a copy (ShowPassingFlash) doesn't count.
+    """
+    m = manim()
+    cls = vars(m).get(cls_name)
+    if not isinstance(cls, type) or not issubclass(cls, m.Animation):
+        return False
+    for extra in ((), (m.ORIGIN,)):  # GrowFromPoint(mobject, point) needs a point
+        try:
+            anim = cls(m.Square(), *extra)
+            return bool(anim.is_introducer() and not anim.is_remover())
+        except Exception:
+            pass
+    # Can't build one with a square: read the defaults instead.
+    flags = {}
+    for klass in cls.__mro__:
+        if "__init__" not in klass.__dict__:
+            continue
+        try:
+            params = inspect.signature(klass.__init__).parameters
+        except (TypeError, ValueError):
+            continue
+        for name in ("introducer", "remover"):
+            if name in params and params[name].default is not inspect.Parameter.empty:
+                flags.setdefault(name, bool(params[name].default))
+    return flags.get("introducer", False) and not flags.get("remover", False)
+
+
+@functools.lru_cache(maxsize=256)
 def target_keyword(cls_name: str) -> str | None:
     """Keyword the clip target must be passed as, when it isn't the first argument (ApplyMatrix(matrix, mobject))."""
     cls = vars(manim()).get(cls_name)
