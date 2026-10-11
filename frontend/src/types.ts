@@ -181,6 +181,7 @@ export interface Catalog {
   methods: string[];
   scene_bases: string[];
   latex: boolean;
+  latex_hint?: string; // how to install LaTeX on this OS
   ffmpeg: boolean;
 }
 

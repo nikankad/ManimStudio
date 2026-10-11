@@ -26,7 +26,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 
-from . import construct
+from . import construct, tex
 from .timed import SOURCE as TIMED_SOURCE
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -216,7 +216,35 @@ def _instant_call(c: dict) -> str | None:
     return f"self.{c['kind']}({targets})" if targets else None
 
 
-def generate(doc: dict, preview: bool = False) -> Generated:
+def _without_latex(doc: dict) -> tuple[dict, list[tuple[str, str, str]]]:
+    """The document as this computer can draw it without LaTeX: simple MathTex/Tex labels become Text.
+
+    Returns the (copied) document and diagnostics: a note on each converted label, an error on each object
+    that still needs LaTeX (equations).
+    """
+    notes: list[tuple[str, str, str]] = []
+    objects = []
+    for obj in doc.get("objects", []):
+        ctor = (obj.get("ctor") or "").strip()
+        if ctor in tex.TEX_CTORS:
+            fallback = None if (obj.get("eq") or {}).get("parts") else tex.text_fallback(ctor, obj.get("args") or {})
+            if fallback:
+                obj = {**obj, "ctor": fallback[0], "args": fallback[1]}
+                notes.append((obj["id"], "warning", "Drawn with Text because LaTeX isn't installed on this computer. "
+                              "Install LaTeX to draw it with TeX again."))
+            else:
+                notes.append((obj["id"], "error", tex.missing_message(obj.get("name", "This object"))))
+        objects.append(obj)
+    return {**doc, "objects": objects}, notes
+
+
+def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Generated:
+    """Python source for the document. ``latex``: whether LaTeX can be used (default: is it installed here)."""
+    if latex is None:
+        latex = tex.latex_available()
+    notes: list[tuple[str, str, str]] = []
+    if not latex:
+        doc, notes = _without_latex(doc)
     w = _Writer()
     emit = w.emit
     scene = doc.get("scene", {})
@@ -224,6 +252,8 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     base = scene.get("base") or "Scene"
     cfg = doc.get("config", {})
     plan = construct.plan(doc)
+    for oid, level, message in notes:
+        plan.diag(oid, level, message)
     clips = _active_clips(doc, plan.invalid_clips)
     _check_order(clips, plan)
     code_clips = sorted((c for c in clips if c.get("kind") == "code"), key=lambda c: float(c["start"]))
@@ -245,6 +275,9 @@ def generate(doc: dict, preview: bool = False) -> Generated:
         bg = cfg.get("background_color")
         if bg:
             emit(f"config.background_color = {bg!r}")
+    if not latex:
+        emit("")
+        emit(tex.NUMBERS_SOURCE.strip("\n"))
     header = (doc.get("header") or "").rstrip()
     if header:
         emit("")

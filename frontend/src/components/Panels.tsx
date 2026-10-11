@@ -10,6 +10,7 @@ import { Field } from './ParamField';
 import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
 import { HelpPanel } from './Help';
+import { AppSettings, UpdateNotice } from './Updates';
 
 export async function saveProject(saveAs = false) {
   const s = getState();
@@ -53,6 +54,7 @@ export function Toolbar() {
       <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
       <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
       <div className="spacer" />
+      <UpdateNotice />
       <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
         <PreviewButton />
@@ -182,6 +184,7 @@ function SettingsPanel() {
           <Field className="mono" value={doc.config.background_color} onChange={(v) => /^#[0-9a-f]{6}$/i.test(v) && set((d) => void (d.config.background_color = v), 'bg')} />
         </div>
       </label>
+      <AppSettings />
     </Modal>
   );
 }

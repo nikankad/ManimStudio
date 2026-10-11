@@ -10,18 +10,24 @@ the `manim` CLI.
 
 ## Download
 
-Every push to `main` publishes a release with ready-to-run builds for Windows, macOS (Apple Silicon and Intel)
-and Linux: see the repository's **Releases** page. Unzip and run `MathEngine`; `mathengine-cli` next to it
-renders from a terminal. The builds include Python, manim and ffmpeg, but not LaTeX (see below).
+Ready-to-run builds for Windows, macOS (Apple Silicon and Intel) and Linux are on the repository's **Releases**
+page. Unzip and run the app; the `-cli` executable next to it renders from a terminal. The builds include
+Python, manim and ffmpeg, but not LaTeX, which equations need (see below; everything else works without it).
 
-The release workflow (`.github/workflows/release.yml`) runs the tests, packages the app on each platform with
-PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the example
-project, and attaches them to a release tagged `v<major>.<minor>.<run number>` (major.minor from
-`pyproject.toml`). To build one yourself:
+- **Stable** releases (`v0.2.0`, …) are the ones to use. The app tells you when a newer one is out (it checks
+  GitHub once per launch; turn it off in Settings, or set `MATHENGINE_NO_UPDATE_CHECK=1`).
+- **Nightly** is a single pre-release rebuilt from every push to `main`. It can be unfinished; nightly builds
+  tell you when a newer nightly is out.
+
+Releasing (`.github/workflows/release.yml`): set `version` in `pyproject.toml`, commit, then
+`git tag v0.2.0 && git push origin v0.2.0`. The workflow runs the tests, packages the app on each platform
+with PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the
+example project, and publishes the release. A tag that doesn't match `pyproject.toml` is refused. To build
+one yourself:
 
 ```bash
 pip install . pyinstaller              # on Linux also: pip install "pywebview[qt]"
-cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/MathEngine (MathEngine.app on macOS)
+cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/
 ```
 
 ## Install
@@ -33,8 +39,12 @@ cd frontend && npm install && npm run build        # builds the UI into mathengi
 
 MathEngine needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
 parts. manim's system requirements also apply:
-- **LaTeX** for `MathTex` / `Tex`, and for `DecimalNumber`, which measurements, value labels and the starter
-  constructions use (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
+- **LaTeX** for equations (`MathTex`, `Tex`): MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on
+  Windows. It's found in its standard install locations even when it isn't on `PATH` (an app opened from the
+  macOS Finder doesn't see `/Library/TeX/texbin` or Homebrew). Without it, numbers (measurements, value labels,
+  axis numbers) and simple labels such as `A`, `\theta` or `x^2` are drawn with `Text` instead, so the rest of
+  MathEngine, including the starter constructions, keeps working; equations say they need LaTeX. After
+  installing it, *Check again* in the scene panel picks it up without a restart.
 - **ffmpeg** is bundled with manim via PyAV; no separate install is needed.
 
 ## Use

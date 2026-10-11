@@ -268,7 +268,7 @@ const TOPICS: Topic[] = [
           <li><b>Split into terms</b> makes each symbol a term. Click terms in the inspector or on the canvas to select them, then <i>Color</i>, <i>Brace</i>, <i>Label</i> or <i>Highlight</i> them. Repeated symbols are separate terms (<code>x #1</code>, <code>x #2</code>).</li>
           <li><b>Check with manim</b> compiles the equation with real LaTeX and flags terms that render nothing.</li>
           <li><b>Transform terms…</b> animates one equation into another: click a source term, then the term it becomes, or use <i>Pair identical terms</i>. This only controls how terms move; it doesn't check the math.</li>
-          <li>LaTeX must be installed for equations and number labels to render.</li>
+          <li>Equations need LaTeX installed. Without it, numbers and simple labels (like <code>A</code> or <code>θ</code>) are drawn with plain text instead.</li>
         </ul>
       </>
     ),
@@ -360,7 +360,7 @@ const TOPICS: Topic[] = [
         <li><b>A red error bar under the canvas</b>: click it to jump to the object or clip that failed. The last good frame stays visible, dimmed.</li>
         <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source or <b>Detach</b>.</li>
         <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or detach it.</li>
-        <li><b>Equations or numbers don't render</b>: install LaTeX (TeX Live, MacTeX or MiKTeX). <code>Text</code> works without it.</li>
+        <li><b>“Needs LaTeX”</b> on an equation: install LaTeX (MiKTeX on Windows, MacTeX or BasicTeX on macOS, TeX Live on Linux), then click <b>Check again</b> in the scene panel; no restart needed. Until then, numbers and simple labels are drawn with plain text.</li>
         <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
       </ul>
     ),

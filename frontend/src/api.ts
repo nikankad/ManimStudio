@@ -49,8 +49,25 @@ async function get<T>(path: string): Promise<T> {
   return data as T;
 }
 
+export interface AppInfo {
+  version: string;
+  channel: 'stable' | 'nightly' | 'dev';
+  commit: string;
+  repository: string;
+  releases: string;
+}
+export interface UpdateInfo extends AppInfo {
+  available: boolean;
+  latest?: string;
+  url?: string;
+}
+
 export const api = {
+  version: () => get<AppInfo>('/api/version'),
+  updateCheck: () => post<UpdateInfo>('/api/update_check', {}),
+  openRelease: (url: string) => post<{ ok: boolean }>('/api/open_release', { url }),
   catalog: (header: string) => post<Catalog>('/api/catalog', { header }),
+  tex: () => post<{ latex: boolean; dir: string | null; hint: string }>('/api/tex', {}),
   signature: (expr: string, header: string, object_classes: Record<string, string>) =>
     post<Signature>('/api/signature', { expr, header, object_classes }),
   run: (doc: SceneDoc, t: number | null, render: boolean, width = 960) =>

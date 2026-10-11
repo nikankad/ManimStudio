@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api } from './api';
+import { api, type AppInfo } from './api';
 import { renameIdentifiers } from './pyparse';
 import { dependentsOf, FOLLOW_KINDS, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
@@ -41,6 +41,7 @@ export interface AppState {
   targetTrack: string | null;
   view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
+  app: AppInfo | null; // this build's version and release channel
   showVideo: boolean; // playing the rendered preview video instead of live frames
   autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
@@ -85,6 +86,7 @@ let state: AppState = {
   targetTrack: null,
   view: { pps: 110, start: 0 },
   video: null,
+  app: null,
   showVideo: false,
   autoRender: true,
   toast: null,
@@ -198,6 +200,27 @@ async function pumpFrames() {
 let timelineTimer: number | undefined;
 let timelineBusy = false;
 let timelineWanted = false;
+/**
+ * Look for LaTeX again (after the user installed it). When it's found, everything is re-run so equations
+ * and numbers are drawn with TeX instead of Text.
+ */
+export async function recheckLatex(): Promise<boolean> {
+  try {
+    const res = await api.tex();
+    if (state.catalog) setState({ catalog: { ...state.catalog, latex: res.latex, latex_hint: res.hint } });
+    if (res.latex) {
+      setState({ video: null }); // the rendered preview was drawn without LaTeX
+      scheduleTimeline();
+      requestFrame();
+      toast('LaTeX found: equations and numbers are drawn with TeX now');
+    } else toast(`LaTeX still isn't found. ${res.hint}`);
+    return res.latex;
+  } catch (e) {
+    toast(String(e));
+    return false;
+  }
+}
+
 function scheduleTimeline() {
   clearTimeout(timelineTimer);
   timelineTimer = window.setTimeout(() => void runTimeline(), 150);

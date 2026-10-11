@@ -7,7 +7,7 @@ import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geo
 import { countMeets } from '../intersect';
 import { fmtPt, freeShape, writeShape, type Shape } from '../geometry';
 import {
-  animateParam, createParam, detachObjects, getState, params, selectObjects, setLink, setParamValue, setState, toast, updateDoc, useStore,
+  animateParam, createParam, detachObjects, getState, params, recheckLatex, selectObjects, setLink, setParamValue, setState, toast, updateDoc, useStore,
 } from '../store';
 import { allTemplates, detachInstance, syncInstances, updateTemplateFromInstance } from '../templates';
 import type { Link, Pt, SceneObject } from '../types';
@@ -24,9 +24,36 @@ export function Diagnostics({ id }: { id: string }) {
   return (
     <>
       {diags.map((d, i) => (
-        <div key={i} className={d.level === 'error' ? 'err-box' : 'warn'}>{d.message}</div>
+        <div key={i} className={d.level === 'error' ? 'err-box' : 'warn'}>
+          {d.message}
+          {/LaTeX isn't installed/.test(d.message) && <> <CheckLatexButton /></>}
+        </div>
       ))}
     </>
+  );
+}
+
+function CheckLatexButton() {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button className="ghost small" disabled={busy} title="Look for LaTeX again after installing it (no restart needed)"
+      onClick={() => { setBusy(true); void recheckLatex().finally(() => setBusy(false)); }}>
+      {busy ? 'Checking…' : 'Check again'}
+    </button>
+  );
+}
+
+/** What works without LaTeX, how to install it, and a button to look for it again. */
+export function LatexNotice() {
+  const catalog = useStore((s) => s.catalog);
+  if (!catalog || catalog.latex) return null;
+  return (
+    <div className="warn latex-notice">
+      <b>LaTeX isn't installed.</b> Equations (<code>MathTex</code>, <code>Tex</code>) need it. Meanwhile, numbers (measurements, value
+      labels, axis numbers) and simple labels such as <code>A</code>, <code>θ</code> or <code>x²</code> are drawn with <code>Text</code>, so
+      everything else works. {catalog.latex_hint}
+      <div className="row"><CheckLatexButton /></div>
+    </div>
   );
 }
 

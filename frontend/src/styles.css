@@ -460,3 +460,10 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .tip-title { font: 600 12px var(--mono); color: #fff; margin-bottom: 3px; }
 .tip-text { color: #d4d5dc; }
 .tip-note { margin-top: 4px; color: #a3a5b0; font-size: 11px; }
+
+/* update notice and app settings (components/Updates.tsx) */
+.update-pill { display: inline-flex; align-items: center; gap: 2px; border: 1px solid #2f6f45; border-radius: 6px; background: #17301f; }
+.update-pill .ghost { color: #8fe3a8; }
+.app-settings { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+button.link { background: none; border: none; padding: 0; color: var(--blue); cursor: pointer; font: inherit; text-decoration: underline; }
+.latex-notice .row { margin-top: 6px; }

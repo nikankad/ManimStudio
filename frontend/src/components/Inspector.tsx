@@ -8,7 +8,8 @@ import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
 import type { Args, Clip, Param, SceneDoc, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 import { Tip, type TipContent } from './Tip';
-import { ActionsSection, Diagnostics, GeometrySection, InstanceSection, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
+import { versionLabel } from './Updates';
+import { ActionsSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isFollow, isRedraw } from '../construct';
 import { detachObjects, duplicateObjects, selectedObjectIds } from '../store';
@@ -41,6 +42,7 @@ export function Inspector() {
 
 function SceneInfo() {
   const catalog = useStore((s) => s.catalog);
+  const app = useStore((s) => s.app);
   const doc = useStore((s) => s.doc);
   return (
     <div className="pad">
@@ -70,10 +72,8 @@ function SceneInfo() {
         <li><kbd>M</kbd> marker · <kbd>S</kbd> snap · <kbd>=</kbd>/<kbd>-</kbd> zoom · <kbd>\</kbd> fit</li>
         <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
       </ul>
-      {catalog && !catalog.latex && (
-        <div className="warn">LaTeX was not found, so <code>MathTex</code>, <code>Tex</code> and <code>DecimalNumber</code> (measurements, value labels and the starter constructions) won't render. Install TeX Live, MacTeX or MiKTeX. <code>Text</code> works without it.</div>
-      )}
-      {catalog && <p className="muted small">manim {catalog.manim_version}</p>}
+      <LatexNotice />
+      {catalog && <p className="muted small">MathEngine {versionLabel(app)} · manim {catalog.manim_version}</p>}
     </div>
   );
 }

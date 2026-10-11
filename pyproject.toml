@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mathengine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Drag-and-drop visual editor for manim (Community Edition) videos"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,4 +25,4 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::SyntaxWarning"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mathengine"]
-artifacts = ["mathengine/web/**"]
+artifacts = ["mathengine/web/**", "mathengine/_build.py"]  # _build.py: release builds only
