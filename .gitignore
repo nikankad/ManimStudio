@@ -8,3 +8,4 @@ dist/
 *.mathengine.tmp
 .claude/
 media/
+build/

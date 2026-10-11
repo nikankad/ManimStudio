@@ -8,6 +8,22 @@ real constructor signature, appears in the library, including classes you define
 header code. Nothing is reimplemented: previews are drawn by manim's own renderer, and exports run
 the `manim` CLI.
 
+## Download
+
+Every push to `main` publishes a release with ready-to-run builds for Windows, macOS (Apple Silicon and Intel)
+and Linux: see the repository's **Releases** page. Unzip and run `MathEngine`; `mathengine-cli` next to it
+renders from a terminal. The builds include Python, manim and ffmpeg, but not LaTeX (see below).
+
+The release workflow (`.github/workflows/release.yml`) runs the tests, packages the app on each platform with
+PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the example
+project, and attaches them to a release tagged `v<major>.<minor>.<run number>` (major.minor from
+`pyproject.toml`). To build one yourself:
+
+```bash
+pip install . pyinstaller              # on Linux also: pip install "pywebview[qt]"
+cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/MathEngine (MathEngine.app on macOS)
+```
+
 ## Install
 
 ```bash
