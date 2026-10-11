@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import { api } from './api';
+import { api, type AppInfo } from './api';
 import { renameIdentifiers } from './pyparse';
-import { dependentsOf, FOLLOW_KINDS, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
+import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import type { Args, Catalog, CatalogEntry, Clip, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Template, Tool, Track } from './types';
 
@@ -41,6 +41,7 @@ export interface AppState {
   targetTrack: string | null;
   view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
+  app: AppInfo | null; // this build's version and release channel
   showVideo: boolean; // playing the rendered preview video instead of live frames
   autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
@@ -85,6 +86,7 @@ let state: AppState = {
   targetTrack: null,
   view: { pps: 110, start: 0 },
   video: null,
+  app: null,
   showVideo: false,
   autoRender: true,
   toast: null,
@@ -198,6 +200,27 @@ async function pumpFrames() {
 let timelineTimer: number | undefined;
 let timelineBusy = false;
 let timelineWanted = false;
+/**
+ * Look for LaTeX again (after the user installed it). When it's found, everything is re-run so equations
+ * and numbers are drawn with TeX instead of Text.
+ */
+export async function recheckLatex(): Promise<boolean> {
+  try {
+    const res = await api.tex();
+    if (state.catalog) setState({ catalog: { ...state.catalog, latex: res.latex, latex_hint: res.hint } });
+    if (res.latex) {
+      setState({ video: null }); // the rendered preview was drawn without LaTeX
+      scheduleTimeline();
+      requestFrame();
+      toast('LaTeX found: equations and numbers are drawn with TeX now');
+    } else toast(`LaTeX still isn't found. ${res.hint}`);
+    return res.latex;
+  } catch (e) {
+    toast(String(e));
+    return false;
+  }
+}
+
 function scheduleTimeline() {
   clearTimeout(timelineTimer);
   timelineTimer = window.setTimeout(() => void runTimeline(), 150);
@@ -481,12 +504,12 @@ export function addAnimation(cls: string, target: string, at?: { start?: number;
   setState({ selection: { kind: 'clips', ids: [clip.id] }, time: start + 1 });
 }
 
-export function addClip(kind: 'code' | 'hold' | 'add' | 'remove', at?: { start?: number; track?: string }) {
+export function addClip(kind: 'code' | 'hold' | 'add' | 'remove' | 'couple' | 'uncouple', at?: { start?: number; track?: string; targets?: string[] }) {
   const start = frameSnap(at?.start ?? state.time);
-  const duration = kind === 'add' || kind === 'remove' ? 0 : 1;
+  const duration = kind === 'code' || kind === 'hold' ? 1 : 0;
   const clip: Clip = { id: uid('c'), kind, track: '', start, duration };
   if (kind === 'code') clip.code = '# any manim code; every object variable is in scope\n';
-  if (kind === 'add' || kind === 'remove') clip.targets = [];
+  if (kind !== 'code' && kind !== 'hold') clip.targets = at?.targets ?? [];
   updateDoc((d) => {
     clip.track = chooseTrack(d, start, duration, { track: at?.track });
     d.clips.push(clip);
@@ -545,7 +568,7 @@ export function deleteSelection(ripple = false) {
   if (!sel) return;
   if (sel.kind === 'object' || sel.kind === 'objects') {
     const ids = selectedObjectIds(sel);
-    const deps = dependentsOf(state.doc, ids);
+    const deps = dependentsOf(state.doc, ids, false);
     if (deps.length) return setState({ panel: 'delete', panelData: ids }); // ask: delete them too, or detach
     return deleteObjects(ids, 'cascade');
   }
@@ -570,7 +593,7 @@ export function deleteSelection(ripple = false) {
  * Remove objects. Objects built from them are either deleted too ('cascade'), or 'detach'ed:
  * converted to plain objects at their current geometry where possible (points, labels, segments,
  * circles, polygons); constructions that can't exist without their source (angles, areas, braces…)
- * are always deleted.
+ * are always deleted. Uncoupled objects that stand alone just forget a relationship to a removed object.
  */
 export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
   const frame = state.frame;
@@ -580,7 +603,7 @@ export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
     for (let grew = true; grew; ) {
       grew = false;
       for (const o of d.objects) {
-        if (remove.has(o.id) || !objectDeps(o, d).some((x) => remove.has(x))) continue;
+        if (remove.has(o.id) || !objectDeps(o, d, false).some((x) => remove.has(x))) continue;
         // Objects referring to a removed one through Python (axes.plot on deleted axes) can't be detached.
         if (mode === 'cascade' || !o.link || !detachInPlace(o, frame?.objects.find((i) => i.id === o.id), true)) {
           remove.add(o.id);
@@ -590,6 +613,7 @@ export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
     }
     const names = new Set(d.objects.filter((o) => remove.has(o.id)).map((o) => o.name));
     d.objects = d.objects.filter((o) => !remove.has(o.id));
+    for (const o of d.objects) if (standsAlone(o) && objectDeps(o, d).some((x) => remove.has(x))) delete o.link;
     d.clips = d.clips.filter((c) => !names.has(c.target ?? '') && !(c.terms && remove.has(c.terms.to)));
     for (const c of d.clips) if (c.targets) c.targets = c.targets.filter((t) => !names.has(t));
   });
@@ -606,31 +630,97 @@ export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
 export function detachInPlace(o: SceneObject, info: ObjInfo | undefined, convertOnly = false): boolean {
   const l = o.link;
   if (!l) return true;
-  const g = info?.geom;
-  if (isFollow(o) || (l.frozen && FOLLOW_KINDS.has(l.kind))) {
+  if (standsAlone(o) || bakeGeometry(o, info)) {
     delete o.link;
+    return true;
+  }
+  if (convertOnly) return false;
+  delete l.off;
+  l.frozen = true;
+  return true;
+}
+
+/**
+ * Write a constructed object's current geometry (`info`, from the preview) into its own fields, so it
+ * can stand alone: a position for follow kinds, ends / center and radius / vertices for shapes. False
+ * when its kind can't stand alone (angles, areas, braces…) or the geometry isn't known.
+ */
+function bakeGeometry(o: SceneObject, info: ObjInfo | undefined): boolean {
+  const l = o.link!;
+  const g = info?.geom;
+  if (FOLLOW_KINDS.has(l.kind)) {
     if (info?.center) o.pos = [Math.round(info.center[0] * 1000) / 1000, Math.round(info.center[1] * 1000) / 1000];
     return true;
   }
-  if ((l.kind === 'segment' || l.kind === 'perpendicular' || l.kind === 'parallel') && g?.kind === 'line') {
-    delete o.link;
+  if (['segment', 'perpendicular', 'parallel', 'tangent', 'secant'].includes(l.kind) && g?.kind === 'line') {
     writeShape(o, { kind: 'line', start: g.start, end: g.end });
     return true;
   }
   if (l.kind === 'circle2' && g?.kind === 'circle') {
-    delete o.link;
     writeShape(o, { kind: 'circle', center: g.center, r: g.radius });
     return true;
   }
   if (l.kind === 'polygon' && g?.kind === 'polygon') {
-    delete o.link;
     o.ctor = 'Polygon';
     writeShape(o, { kind: 'polygon', vertices: g.vertices });
     return true;
   }
-  if (convertOnly) return false;
-  l.frozen = true;
-  return true;
+  return false;
+}
+
+/**
+ * Uncouple: keep each relationship but pause it. The object stays where it is and is edited like any
+ * other (shapes keep their current geometry); angles, areas and the like stay as they are now (built once).
+ */
+export function uncoupleObjects(ids: string[]) {
+  const frame = state.frame;
+  const skipped: string[] = [];
+  updateDoc((d) => {
+    for (const o of d.objects) {
+      if (!ids.includes(o.id) || !isCoupled(o)) continue;
+      if (STANDALONE_KINDS.has(o.link!.kind) && !bakeGeometry(o, frame?.objects.find((i) => i.id === o.id))) skipped.push(o.name);
+      else o.link!.off = true;
+    }
+  });
+  if (skipped.length) toast(`${skipped.join(', ')}: its current shape isn't known yet (fix the preview first), so it stays coupled`);
+}
+
+/** Couple again: the paused (or frozen) relationships take over the objects' place or shape again. */
+export function coupleObjects(ids: string[]) {
+  const objs = state.doc.objects.filter((o) => ids.includes(o.id) && o.link && !isCoupled(o));
+  const bad = objs.find((o) => objectDeps(o, state.doc).some((s) => !state.doc.objects.some((x) => x.id === s)));
+  if (bad) return toast(`${bad.name} can't be coupled again: something it was built from was deleted`);
+  updateDoc((d) => {
+    for (const o of d.objects) {
+      if (!objs.some((x) => x.id === o.id)) continue;
+      delete o.link!.off;
+      delete o.link!.frozen;
+      clearOwnGeometry(o);
+    }
+    sortByDependencies(d);
+  });
+}
+
+/** A coupled redraw construction defines the whole shape, so its own transforms would only be ignored. */
+function clearOwnGeometry(o: SceneObject) {
+  if (!o.link || FOLLOW_KINDS.has(o.link.kind)) return;
+  o.pos = null;
+  delete o.scale;
+  delete o.stretch;
+  delete o.rotation;
+}
+
+/** Couple an existing object to others: give it `link` (built from its current geometry by the caller). */
+export function coupleTo(id: string, link: Link, patch?: (o: SceneObject) => void) {
+  if (wouldCycle(state.doc, id, linkSources(link))) return toast('That would make the construction depend on itself');
+  updateDoc((d) => {
+    const o = d.objects.find((x) => x.id === id)!;
+    o.link = link;
+    patch?.(o);
+    clearOwnGeometry(o);
+    sortByDependencies(d);
+  });
+  selectObjects([id]);
 }
 
 export function detachObjects(ids: string[]) {
@@ -668,7 +758,7 @@ export function duplicateObjects(ids: string[]) {
     for (const copy of copies) {
       remapLink(copy, idMap);
       renameRefs(copy, nameMap);
-      if (!copy.link) {
+      if (!copy.link || standsAlone(copy)) {
         const shape = freeShape(copy);
         const moved = shape && bakeTransform(shape, { move: [0.5, -0.5] }, shapeCenter(shape));
         if (moved) writeShape(copy, moved);

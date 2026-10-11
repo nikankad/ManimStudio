@@ -119,7 +119,8 @@ class TimedAnimations(Animation):
 
     @staticmethod
     def _layerable(anim):
-        return not (getattr(anim, "replace_mobject_with_target_in_scene", False) or isinstance(anim.mobject, ValueTracker))
+        return not (getattr(anim, "replace_mobject_with_target_in_scene", False) or isinstance(anim.mobject, ValueTracker)
+                    or getattr(anim, "_me_exclusive", False))
 
     def _start(self, start, anim):
         target = anim.mobject

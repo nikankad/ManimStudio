@@ -7,7 +7,7 @@
 // and names (so timeline clips stay attached) and their own input values.
 
 import { api } from './api';
-import { linkSources, objectDeps, remapLink, renameRefs, sortByDependencies } from './construct';
+import { linkSources, objectDeps, remapLink, renameRefs, sortByDependencies, standsAlone } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { pyQuote, renameIdentifiers } from './pyparse';
 import { chooseTrack, frameSnap, getState, selectObjects, setState, toast, uid, uniqueName, updateDoc } from './store';
@@ -47,7 +47,7 @@ function applyInputs(t: Template, values: Record<string, string>, byLocal: Map<s
 }
 
 function offsetObject(o: SceneObject, offset: Pt) {
-  if (o.link || (!offset[0] && !offset[1])) return;
+  if ((o.link && !standsAlone(o)) || (!offset[0] && !offset[1])) return;
   const shape = freeShape(o);
   const moved = shape && bakeTransform(shape, { move: offset }, shapeCenter(shape));
   if (moved) writeShape(o, moved);
@@ -107,7 +107,7 @@ function addClip(d: SceneDoc, c: Partial<Clip>, nameMap: Map<string, string>, hi
   const clip = { ...structuredClone(c), id: uid('c') } as Clip;
   clip.args ??= {};
   clip.start = Math.max(0, at + (c.start ?? 0));
-  clip.duration = c.duration ?? (c.kind === 'add' || c.kind === 'remove' ? 0 : 1);
+  clip.duration = c.duration ?? (c.kind === 'anim' || c.kind === 'hold' || c.kind === 'code' ? 1 : 0);
   if (clip.target) {
     clip.target = nameMap.get(clip.target) ?? clip.target;
     if (hidden.has(clip.target)) return;

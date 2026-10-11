@@ -3,7 +3,7 @@
 > This document did not exist when the visual authoring work started; it was written alongside that work.
 > It records the problem, the options considered, what was built, and what is deliberately left out.
 
-MathEngine already exposed every manim class with a control per constructor argument, factory methods
+Manim Studio (then MathEngine) already exposed every manim class with a control per constructor argument, factory methods
 (`axes.plot`), ValueTrackers, a non-linear timeline and whole-object canvas transforms. What it lacked was the
 way people actually build math diagrams: draw a few points, connect them, label them, put a point on a curve,
 and then animate a parameter and watch everything follow. This document covers the six pieces added for that,
@@ -340,4 +340,4 @@ Each starter compiles without diagnostics and renders in the test suite.
 - **Arbitrary objects:** constructions on 3D objects; points on arbitrary curves other than graphs, circles,
   axes and number lines.
 - **Equation editing:** splitting inside a term from the canvas (use *Split* / *Merge* in the inspector).
-- **No algebra:** MathEngine does no algebra; term correspondences are purely visual.
+- **No algebra:** Manim Studio does no algebra; term correspondences are purely visual.

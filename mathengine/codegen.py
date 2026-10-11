@@ -1,4 +1,4 @@
-"""Compile a MathEngine scene document into a plain ManimCE Python file.
+"""Compile a Manim Studio scene document into a plain ManimCE Python file.
 
 Every value in the document is stored as Python source (e.g. ``"BLUE"``,
 ``"UP * 2"``, ``"lambda x: x**2"``), so anything manim accepts can be used
@@ -26,7 +26,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 
-from . import construct
+from . import construct, tex
 from .timed import SOURCE as TIMED_SOURCE
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -208,15 +208,59 @@ def _check_order(clips: list[dict], plan: construct.Plan) -> None:
 
 
 def _is_instant(c: dict) -> bool:
-    return c.get("kind") in ("add", "remove")
+    """Clips that happen at one instant: add, remove, uncouple, and couple without a glide."""
+    return c.get("kind") in ("add", "remove", "uncouple") or (c.get("kind") == "couple" and float(c.get("duration") or 0) <= EPS)
 
 
-def _instant_call(c: dict) -> str | None:
+def _gliding(c: dict) -> bool:
+    return c.get("kind") == "couple" and float(c.get("duration") or 0) > EPS
+
+
+def _instant_call(c: dict, plan: construct.Plan | None = None) -> str | None:
+    if c.get("kind") in construct.SWITCH_CLIPS:
+        names = [t for t in c.get("targets", []) if plan and t in plan.switchable]
+        if not names:
+            return None
+        return f"{plan.constraints_var}.{'pause' if c['kind'] == 'uncouple' else 'resume'}({', '.join(names)})"
     targets = ", ".join(t for t in c.get("targets", []) if t)
     return f"self.{c['kind']}({targets})" if targets else None
 
 
-def generate(doc: dict, preview: bool = False) -> Generated:
+def _glide_call(c: dict, plan: construct.Plan, run_time: float) -> str | None:
+    """A couple clip with a duration: the objects move back into place over it."""
+    names = [t for t in c.get("targets", []) if t in plan.switchable]
+    return f"{plan.constraints_var}.couple({', '.join(names)}, run_time={_num(run_time)})" if names else None
+
+
+def _without_latex(doc: dict) -> tuple[dict, list[tuple[str, str, str]]]:
+    """The document as this computer can draw it without LaTeX: simple MathTex/Tex labels become Text.
+
+    Returns the (copied) document and diagnostics: a note on each converted label, an error on each object
+    that still needs LaTeX (equations).
+    """
+    notes: list[tuple[str, str, str]] = []
+    objects = []
+    for obj in doc.get("objects", []):
+        ctor = (obj.get("ctor") or "").strip()
+        if ctor in tex.TEX_CTORS:
+            fallback = None if (obj.get("eq") or {}).get("parts") else tex.text_fallback(ctor, obj.get("args") or {})
+            if fallback:
+                obj = {**obj, "ctor": fallback[0], "args": fallback[1]}
+                notes.append((obj["id"], "warning", "Drawn with Text because LaTeX isn't installed on this computer. "
+                              "Install LaTeX to draw it with TeX again."))
+            else:
+                notes.append((obj["id"], "error", tex.missing_message(obj.get("name", "This object"))))
+        objects.append(obj)
+    return {**doc, "objects": objects}, notes
+
+
+def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Generated:
+    """Python source for the document. ``latex``: whether LaTeX can be used (default: is it installed here)."""
+    if latex is None:
+        latex = tex.latex_available()
+    notes: list[tuple[str, str, str]] = []
+    if not latex:
+        doc, notes = _without_latex(doc)
     w = _Writer()
     emit = w.emit
     scene = doc.get("scene", {})
@@ -224,6 +268,8 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     base = scene.get("base") or "Scene"
     cfg = doc.get("config", {})
     plan = construct.plan(doc)
+    for oid, level, message in notes:
+        plan.diag(oid, level, message)
     clips = _active_clips(doc, plan.invalid_clips)
     _check_order(clips, plan)
     code_clips = sorted((c for c in clips if c.get("kind") == "code"), key=lambda c: float(c["start"]))
@@ -245,6 +291,9 @@ def generate(doc: dict, preview: bool = False) -> Generated:
         bg = cfg.get("background_color")
         if bg:
             emit(f"config.background_color = {bg!r}")
+    if not latex:
+        emit("")
+        emit(tex.NUMBERS_SOURCE.strip("\n"))
     header = (doc.get("header") or "").rstrip()
     if header:
         emit("")
@@ -272,6 +321,8 @@ def generate(doc: dict, preview: bool = False) -> Generated:
         if obj["id"] in plan.lines:
             for line in plan.lines[obj["id"]]:
                 emit(line, ref, B)
+            for line in plan.after.get(obj["id"], []):
+                emit(line, ref, B)
             if preview:
                 emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
             continue
@@ -290,6 +341,8 @@ def generate(doc: dict, preview: bool = False) -> Generated:
         pos = obj.get("pos")
         if pos is not None:
             emit(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0]))", ref, B)
+        for line in plan.after.get(obj["id"], []):
+            emit(line, ref, B)
         if preview:
             emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
 
@@ -334,6 +387,8 @@ def _simple(group: list[dict]) -> bool:
     actions = [c for c in group if c.get("kind") != "hold"]
     if not actions:
         return True
+    if any(_gliding(c) for c in actions):
+        return False
     start = float(group[0]["start"])
     if any(abs(float(c["start"]) - start) > EPS for c in actions):
         return False
@@ -358,7 +413,7 @@ def _emit_group(group, emit, wait_until, state, B, preview, doc=None, plan=None)
         anims = [c for c in actions if c.get("kind") == "anim"]
         if not anims:  # instant add/remove
             for c in actions:
-                call = _instant_call(c)
+                call = _instant_call(c, plan)
                 if call:
                     emit(call, ("clip", c["id"]), B)
             wait_until(end, first_ref)
@@ -387,7 +442,11 @@ def _emit_group(group, emit, wait_until, state, B, preview, doc=None, plan=None)
         if c.get("kind") == "anim":
             emit(f"    ({offset}, lambda: {anim_expr(c, float(c['duration']), doc, plan)}),", ref, B)
         elif _is_instant(c):
-            call = _instant_call(c)
+            call = _instant_call(c, plan)
+            if call:
+                emit(f"    ({offset}, lambda: {call}),", ref, B)
+        elif _gliding(c):
+            call = _glide_call(c, plan, float(c["duration"]))
             if call:
                 emit(f"    ({offset}, lambda: {call}),", ref, B)
     emit(f"    run_time={_num(end - start)},", first_ref, B)

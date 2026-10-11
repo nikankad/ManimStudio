@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, mathexpr, render, runtime, starters
+from . import catalog, codegen, mathexpr, render, runtime, starters, tex, version
 from .project import load_project, new_project, save_project
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -100,6 +100,10 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self, method: str, path: str, query: dict, body: dict) -> None:
         routes: dict[tuple[str, str], Callable[[dict, dict], Any]] = {
             ("POST", "/api/catalog"): self.api_catalog,
+            ("POST", "/api/tex"): self.api_tex,
+            ("GET", "/api/version"): self.api_version,
+            ("POST", "/api/update_check"): self.api_update_check,
+            ("POST", "/api/open_release"): self.api_open_release,
             ("POST", "/api/signature"): self.api_signature,
             ("POST", "/api/run"): self.api_run,
             ("POST", "/api/code"): self.api_code,
@@ -194,10 +198,33 @@ class Handler(BaseHTTPRequestHandler):
             with self.app.manim_lock:
                 extra = catalog.header_namespace(header)
                 data = catalog.build(extra)
-            data["latex"] = shutil.which("latex") is not None
+            data["latex"] = tex.latex_available()
+            data["latex_hint"] = tex.install_hint()
             data["ffmpeg"] = shutil.which("ffmpeg") is not None
             self.app.catalog_cache = {header: data}
         return self.app.catalog_cache[header]
+
+    def api_version(self, _q: dict, _body: dict) -> dict:
+        return version.info()
+
+    def api_update_check(self, _q: dict, _body: dict) -> dict:
+        return version.check_for_update()
+
+    def api_open_release(self, _q: dict, body: dict) -> dict:
+        """Open this project's release page in the system browser (the app window has no address bar)."""
+        url = str(body.get("url", ""))
+        if not version.release_page(url):
+            return {"ok": False}
+        import webbrowser
+
+        return {"ok": bool(webbrowser.open(url))}
+
+    def api_tex(self, _q: dict, _body: dict) -> dict:
+        """Look for LaTeX again (after the user installed it), without restarting."""
+        found = tex.latex_available(refresh=True)
+        for data in self.app.catalog_cache.values():
+            data["latex"] = found
+        return {"latex": found, "dir": tex.find_tex(), "hint": tex.install_hint()}
 
     def api_signature(self, _q: dict, body: dict) -> dict:
         with self.app.manim_lock:

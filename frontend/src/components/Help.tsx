@@ -18,7 +18,7 @@ const libraryTab = (label: string) => () =>
 
 export const TOUR: TourStep[] = [
   {
-    title: 'Welcome to MathEngine',
+    title: 'Welcome to Manim Studio',
     body: <>Build math animations visually. Everything you see is rendered by <b>manim</b>, and every project exports as a plain manim Python file. This tour takes about a minute.</>,
   },
   {
@@ -174,7 +174,7 @@ const TOPICS: Topic[] = [
     keywords: 'begin first new project basics overview',
     body: (
       <>
-        <p>MathEngine builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
+        <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
         <ol>
           <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
@@ -206,7 +206,7 @@ const TOPICS: Topic[] = [
   {
     id: 'connect',
     title: 'Connecting objects',
-    keywords: 'connect link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
+    keywords: 'connect couple uncouple pause forget relationship relationships link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
     body: (
       <>
         <p>Connected objects are built from other objects and stay attached to them while you edit, animate and scrub.</p>
@@ -216,7 +216,10 @@ const TOPICS: Topic[] = [
           <li><b>Intersections</b>: select two lines, circles, graphs or axes and pick <i>Intersection</i> (one point per crossing), or click the crossing with the point tool. A graph offers <i>Mark roots</i> and <i>y-intercept</i>. Lines count as extended both ways; while the objects don't meet, the point stays where it was.</li>
           <li><b>Right angles and parallels</b>: select a point and a line for <i>Perpendicular</i>, <i>Parallel</i>, <i>Altitude</i> (dashed, from the point to the line) or <i>Foot of perpendicular</i>; a point and axes for <i>Drop to x-axis</i> / <i>Drop to y-axis</i>. A segment offers <i>Perpendicular bisector</i>. These chain: the altitudes of a triangle meet at an intersection that moves with the vertices.</li>
           <li>Drag an attached label to change its offset. Drag a constrained point to move it along its curve or circle.</li>
-          <li>The inspector's <b>Construction</b> section shows the sources and values; <b>Detach</b> makes the object independent. Deleting a source asks whether to delete or detach what was built from it.</li>
+          <li><b>Couple existing objects</b>: select two or more objects that already exist; the <b>Couple</b> group offers what fits, built from where things are now: <i>Put P on circle</i>, <i>Pin P to axes</i>, <i>Attach label to A</i>, <i>Make line connect A and B</i>, <i>Make polygon go through A, B, C</i>… An object without a relationship also has <i>couple to</i> in its inspector.</li>
+          <li>The inspector's <b>Relationship</b> section shows the sources and values. <b>Uncouple</b> pauses it: the object stays where it is and is edited or animated like any other, and the relationship is remembered. <b>Couple again</b> restores it; <b>Forget</b> removes it for good. Deleting a source asks whether to delete what was built from it or keep it as independent objects.</li>
+          <li><b>Over time</b>: <i>+ Uncouple at playhead</i> / <i>+ Couple at playhead</i> (inspector, or the timeline's + Uncouple / + Couple) add clips that switch a relationship during the video. Between them the object can be moved by its own animations; give a Couple clip a duration and it glides back into place.</li>
+          <li>The <b>Scene</b> tab's <b>Relationships</b> view lists every relationship with its state, what it's built from, what's built from it and its timeline switches; couple, uncouple or forget them from there.</li>
           <li>A connection controls either an object's <i>position</i> or its <i>shape</i>; animations still control color, opacity and appearance.</li>
         </ul>
       </>
@@ -268,7 +271,7 @@ const TOPICS: Topic[] = [
           <li><b>Split into terms</b> makes each symbol a term. Click terms in the inspector or on the canvas to select them, then <i>Color</i>, <i>Brace</i>, <i>Label</i> or <i>Highlight</i> them. Repeated symbols are separate terms (<code>x #1</code>, <code>x #2</code>).</li>
           <li><b>Check with manim</b> compiles the equation with real LaTeX and flags terms that render nothing.</li>
           <li><b>Transform terms…</b> animates one equation into another: click a source term, then the term it becomes, or use <i>Pair identical terms</i>. This only controls how terms move; it doesn't check the math.</li>
-          <li>LaTeX must be installed for equations and number labels to render.</li>
+          <li>Equations need LaTeX installed. Without it, numbers and simple labels (like <code>A</code> or <code>θ</code>) are drawn with plain text instead.</li>
         </ul>
       </>
     ),
@@ -358,9 +361,9 @@ const TOPICS: Topic[] = [
     body: (
       <ul>
         <li><b>A red error bar under the canvas</b>: click it to jump to the object or clip that failed. The last good frame stays visible, dimmed.</li>
-        <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source or <b>Detach</b>.</li>
-        <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or detach it.</li>
-        <li><b>Equations or numbers don't render</b>: install LaTeX (TeX Live, MacTeX or MiKTeX). <code>Text</code> works without it.</li>
+        <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source, or <b>Uncouple</b> / <b>Forget</b> the relationship.</li>
+        <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or uncouple it during the clip (+ Uncouple at playhead / + Couple at playhead).</li>
+        <li><b>“Needs LaTeX”</b> on an equation: install LaTeX (MiKTeX on Windows, MacTeX or BasicTeX on macOS, TeX Live on Linux), then click <b>Check again</b> in the scene panel; no restart needed. Until then, numbers and simple labels are drawn with plain text.</li>
         <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
       </ul>
     ),
@@ -429,7 +432,7 @@ export function WelcomeCard() {
   if (!show || tour !== null || panel) return null;
   return (
     <div className="welcome-card" role="dialog" aria-label="Welcome">
-      <b>New to MathEngine?</b>
+      <b>New to Manim Studio?</b>
       <p className="muted small">A one-minute tour shows where everything is. You can reopen it from Help at any time.</p>
       <div className="row">
         <button className="ghost small" onClick={dismiss}>Not now</button>

@@ -753,7 +753,7 @@ ANIMATION_HELP = {
                   "on screen; turn it on to make the object appear with this clip.",
     "remover": "Whether the object leaves the screen when the animation ends. Automatic uses the class's own "
                "choice (yes for FadeOut, Uncreate). Turn it on to remove the object after this clip.",
-    "suspend_mobject_updating": "Pauses the object's updaters, and its MathEngine construction, while this clip "
+    "suspend_mobject_updating": "Pauses the object's updaters, and its Manim Studio construction, while this clip "
                                 "plays, so the animation alone moves it. Turn it off to keep them running during "
                                 "the clip (the object then follows both).",
     "reverse_rate_function": "Plays the animation backwards: it starts from the end state and finishes at the "

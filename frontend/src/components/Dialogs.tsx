@@ -210,20 +210,20 @@ export function GraphBuilder() {
   );
 }
 
-/** Deleting objects that others are built from: delete those too, or detach them. */
+/** Deleting objects that others are built from: delete those too, or keep them as independent objects. */
 export function DeleteDialog() {
   const doc = useStore((s) => s.doc);
   const ids = (useStore((s) => s.panelData) as string[] | null) ?? [];
-  const deps = dependentsOf(doc, ids);
+  const deps = dependentsOf(doc, ids, false);
   const names = doc.objects.filter((o) => ids.includes(o.id)).map((o) => o.name);
   return (
     <Modal title={`Delete ${names.join(', ')}`}>
       <p>{deps.length === 1 ? 'This object is' : 'These objects are'} built from {names.length === 1 ? 'it' : 'them'}:</p>
       <div className="chips">{deps.map((d) => <span key={d.id} className="chip mono">{d.name}</span>)}</div>
-      <p className="muted small"><b>Detach</b> keeps points, labels, segments, circles and polygons where they are now as independent objects; constructions that can't exist without their source (angles, areas, braces, tangents…) are deleted either way.</p>
+      <p className="muted small"><b>Keep them</b> leaves points, labels, lines, circles and polygons where they are now, as independent objects (their relationship is forgotten); constructions that can't exist without their source (angles, areas, braces…) are deleted either way. Uncoupled objects just forget the relationship.</p>
       <div className="row actions">
         <button onClick={close}>Cancel</button>
-        <button onClick={() => deleteObjects(ids, 'detach')}>Detach and delete</button>
+        <button onClick={() => deleteObjects(ids, 'detach')}>Keep them, delete {names.length === 1 ? names[0] : 'these'}</button>
         <button className="danger" onClick={() => deleteObjects(ids, 'cascade')}>Delete all ({ids.length + deps.length})</button>
       </div>
     </Modal>

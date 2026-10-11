@@ -8,7 +8,7 @@ from mathengine.project import FORMAT_VERSION, load_project, save_project, upgra
 
 
 def test_v2_project_upgrades_losslessly(tmp_path):
-    src = json.loads(open(__file__.replace("tests/test_project_and_starters.py", "examples/sine_tracker.mathengine")).read())
+    src = json.loads(open(__file__.replace("tests/test_project_and_starters.py", "examples/sine_tracker.manimstudio")).read())
     assert src["version"] == 2
     up = upgrade(json.loads(json.dumps(src)))
     assert up["version"] == FORMAT_VERSION == 3

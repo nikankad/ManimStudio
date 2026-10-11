@@ -1,4 +1,8 @@
-# MathEngine
+# Manim Studio
+
+<img src="icon.png" alt="" width="64" align="right">
+
+*Formerly MathEngine: the `mathengine` command and `.mathengine` projects still work.*
 
 A drag-and-drop editor for [manim](https://www.manim.community/) (Community Edition) videos.
 Build scenes visually, edit any argument as Python, and export a real manim `.py` file or MP4.
@@ -10,18 +14,24 @@ the `manim` CLI.
 
 ## Download
 
-Every push to `main` publishes a release with ready-to-run builds for Windows, macOS (Apple Silicon and Intel)
-and Linux: see the repository's **Releases** page. Unzip and run `MathEngine`; `mathengine-cli` next to it
-renders from a terminal. The builds include Python, manim and ffmpeg, but not LaTeX (see below).
+Ready-to-run builds for Windows, macOS (Apple Silicon and Intel) and Linux are on the repository's **Releases**
+page. Unzip and run the app; the `-cli` executable next to it renders from a terminal. The builds include
+Python, manim and ffmpeg, but not LaTeX, which equations need (see below; everything else works without it).
 
-The release workflow (`.github/workflows/release.yml`) runs the tests, packages the app on each platform with
-PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the example
-project, and attaches them to a release tagged `v<major>.<minor>.<run number>` (major.minor from
-`pyproject.toml`). To build one yourself:
+- **Stable** releases (`v0.2.0`, …) are the ones to use. The app tells you when a newer one is out (it checks
+  GitHub once per launch; turn it off in Settings, or set `MATHENGINE_NO_UPDATE_CHECK=1`).
+- **Nightly** is a single pre-release rebuilt from every push to `main`. It can be unfinished; nightly builds
+  tell you when a newer nightly is out.
+
+Releasing (`.github/workflows/release.yml`): set `version` in `pyproject.toml`, commit, then
+`git tag v0.2.0 && git push origin v0.2.0`. The workflow runs the tests, packages the app on each platform
+with PyInstaller (`packaging/manim-studio.spec`), checks that each package opens the editor and renders the
+example project, and publishes the release. A tag that doesn't match `pyproject.toml` is refused. To build
+one yourself:
 
 ```bash
 pip install . pyinstaller              # on Linux also: pip install "pywebview[qt]"
-cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/MathEngine (MathEngine.app on macOS)
+cd packaging && pyinstaller manim-studio.spec   # -> packaging/dist/
 ```
 
 ## Install
@@ -31,20 +41,24 @@ uv venv --python 3.12 && uv pip install -e .     # or: pip install -e .
 cd frontend && npm install && npm run build        # builds the UI into mathengine/web
 ```
 
-MathEngine needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
+Manim Studio needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
 parts. manim's system requirements also apply:
-- **LaTeX** for `MathTex` / `Tex`, and for `DecimalNumber`, which measurements, value labels and the starter
-  constructions use (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
+- **LaTeX** for equations (`MathTex`, `Tex`): MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on
+  Windows. It's found in its standard install locations even when it isn't on `PATH` (an app opened from the
+  macOS Finder doesn't see `/Library/TeX/texbin` or Homebrew). Without it, numbers (measurements, value labels,
+  axis numbers) and simple labels such as `A`, `\theta` or `x^2` are drawn with `Text` instead, so the rest of
+  Manim Studio, including the starter constructions, keeps working; equations say they need LaTeX. After
+  installing it, *Check again* in the scene panel picks it up without a restart.
 - **ffmpeg** is bundled with manim via PyAV; no separate install is needed.
 
 ## Use
 
 ```bash
-mathengine                                  # open the editor (native window via pywebview)
-mathengine examples/sine_tracker.mathengine
-mathengine --browser                        # use your default browser instead
-mathengine render scene.mathengine -q 1080p -o scene.mp4   # headless render
-mathengine code scene.mathengine > scene.py # plain manim code
+manim-studio                                # open the editor (native window via pywebview)
+manim-studio examples/sine_tracker.manimstudio
+manim-studio --browser                      # use your default browser instead
+manim-studio render scene.manimstudio -q 1080p -o scene.mp4   # headless render
+manim-studio code scene.manimstudio > scene.py # plain manim code
 ```
 
 - **Timeline** (bottom, the main workspace): a Premiere Pro–style, non-linear editor. Clips sit on stacked
@@ -129,11 +143,22 @@ mathengine code scene.mathengine > scene.py # plain manim code
   Dragging an attached label changes its offset. Dragging a constrained point changes its parameter: its `x`
   on the graph or its angle on the circle. If that value is a parameter, the drag sets the parameter's starting
   value; in **Record** mode it adds a `.set_value` clip instead.
+- **Coupling existing objects**: select objects that already exist and pick from *Couple* (inspector or right-click):
+  put a point on a circle, graph or axes, make it a midpoint, intersection or foot, attach any object to another,
+  make a line connect two points, a circle go through them, or a polygon go through several. Each is built from where
+  things are now, so nothing jumps further than the relationship requires. An independent object's inspector also
+  has *couple to*.
+- **Uncouple, couple again, forget**: *Uncouple* pauses a relationship without losing it: the object stays where it
+  is and is edited and animated like any other. *Couple again* restores it; *Forget* removes it for good. Over time,
+  *Uncouple* and *Couple* clips switch a relationship during the video (a Couple clip with a duration glides the
+  object back into place); in the exported file these are `constraints.pause(…)`, `constraints.resume(…)` and
+  `constraints.couple(…)`. The Scene tab's *Relationships* view lists every relationship with its state, sources,
+  dependents and timeline switches.
 - **Who owns what**: a connection owns either an object's *position* (labels, constrained points, midpoints,
   intersections, feet, measurements) or its *shape* (segments, perpendicular and parallel lines, circles, angle
   marks, graphs, tangents, areas, braces). Animations
   keep everything else: color, opacity, scale, rotation, and Create/FadeIn/Write. An animation that would move
-  or reshape a connected object is flagged in its clip's Effect Controls.
+  or reshape a connected object is flagged in its clip's Effect Controls, unless the object is uncoupled meanwhile.
 - **Editing relationships**: the inspector's *Construction* section shows the sources (pickers limited to
   compatible objects), the expressions, the offset and the mode. **Detach** turns a connected object into an
   independent one at its current place or shape. Unticking *keep updated* freezes it: it is built once and
@@ -211,7 +236,7 @@ frontend/ (React)  ──HTTP (127.0.0.1 + session token)──▶  mathengine/s
                                                             └─ render.py     `manim render` subprocess for video
 ```
 
-A project (`.mathengine`) is JSON: objects, tracks and timed clips. Every argument is stored as Python
+A project (`.manimstudio`; `.mathengine` from earlier versions) is JSON: objects, tracks and timed clips. Every argument is stored as Python
 source, so anything manim accepts is representable. Format 3 adds optional fields, each upgraded explicitly
 and losslessly from older projects (`project.upgrade`):
 
@@ -236,7 +261,7 @@ mobject an animation is playing on (manim's `updating_suspended`). Segments beco
 rendering them, stops partway through at the requested time, and draws that moment with the scene's
 camera. This takes about 50 to 150 ms per frame, and the frame is exactly what the final render shows.
 
-Development: `cd frontend && npm run dev` rebuilds the UI on change, and `mathengine --serve --port 8765`
+Development: `cd frontend && npm run dev` rebuilds the UI on change, and `manim-studio --serve --port 8765`
 runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render real frames with manim,
 and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
 (Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in

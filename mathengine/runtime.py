@@ -13,12 +13,13 @@ import hashlib
 import io
 import linecache
 import math
+import re
 import time as _time
 import traceback
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import codegen
+from . import codegen, tex
 
 _manim = None
 
@@ -140,6 +141,17 @@ class PreviewMixin:
         self.animations = None
 
 
+def _needs_latex(exc: BaseException) -> bool:
+    """manim failed because LaTeX (or dvisvgm) isn't installed."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, FileNotFoundError) and re.search(r"\b(latex|dvisvgm|xelatex)\b", str(exc)) and not tex.latex_available():
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
 def _map_error(exc: BaseException, filename: str, gen: codegen.Generated) -> dict:
     line = None
     if isinstance(exc, SyntaxError) and exc.filename == filename:
@@ -150,6 +162,9 @@ def _map_error(exc: BaseException, filename: str, gen: codegen.Generated) -> dic
                 line = frame.lineno
     ref = gen.linemap.get(line) if line else None
     msg = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+    if _needs_latex(exc):
+        diag = next((d for d in gen.diagnostics if ref and d["id"] == ref[1] and d["level"] == "error"), None)
+        msg = diag["message"] if diag and "LaTeX" in diag["message"] else tex.missing_message("This object")
     return {
         "message": msg,
         "line": line,

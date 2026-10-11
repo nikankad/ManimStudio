@@ -16,6 +16,8 @@ const EQUATION = new Set(['MathTex', 'Tex', 'SingleStringMathTex']);
 const TEXT = new Set(['Text', 'MarkupText', 'DecimalNumber', 'Integer', 'Paragraph']);
 
 export const FOLLOW_KINDS = new Set<Link['kind']>(['attach', 'midpoint', 'on_graph', 'on_circle', 'coords', 'measure', 'intersection', 'projection']);
+/** Kinds whose object is an ordinary one while uncoupled; the others are built once from their sources (construct.STANDALONE_KINDS). */
+export const STANDALONE_KINDS = new Set<Link['kind']>([...FOLLOW_KINDS, 'segment', 'circle2', 'polygon', 'perpendicular', 'parallel', 'tangent', 'secant']);
 const KIND_TYPE: Partial<Record<Link['kind'], GeoType>> = {
   midpoint: 'point', on_graph: 'point', on_circle: 'point', coords: 'point', intersection: 'point', projection: 'point',
   segment: 'line', tangent: 'line', secant: 'line', perpendicular: 'line', parallel: 'line',
@@ -91,10 +93,14 @@ export function linkParams(link: Link | undefined, doc: SceneDoc): string[] {
   return [...out];
 }
 
-/** Everything an object structurally depends on: link sources, parameters and the owner of a factory constructor (axes in axes.plot). */
-export function objectDeps(o: SceneObject, doc: SceneDoc): string[] {
-  const ids = new Set(linkSources(o.link));
-  for (const p of linkParams(o.link, doc)) {
+/**
+ * Everything an object structurally depends on: link sources, parameters and the owner of a factory constructor (axes in axes.plot).
+ * `paused: false` leaves out the sources of uncoupled objects that stand alone (they don't need them).
+ */
+export function objectDeps(o: SceneObject, doc: SceneDoc, paused = true): string[] {
+  const link = paused || !standsAlone(o) ? o.link : undefined;
+  const ids = new Set(linkSources(link));
+  for (const p of linkParams(link, doc)) {
     const t = doc.objects.find((x) => x.name === p);
     if (t) ids.add(t.id);
   }
@@ -107,8 +113,8 @@ export function objectDeps(o: SceneObject, doc: SceneDoc): string[] {
   return [...ids];
 }
 
-/** Objects that (transitively) depend on any of `ids`. */
-export function dependentsOf(doc: SceneDoc, ids: Iterable<string>): SceneObject[] {
+/** Objects that (transitively) depend on any of `ids` (`paused: false`: not through uncoupled objects that stand alone). */
+export function dependentsOf(doc: SceneDoc, ids: Iterable<string>, paused = true): SceneObject[] {
   const hit = new Set(ids);
   const out: SceneObject[] = [];
   let grew = true;
@@ -116,7 +122,7 @@ export function dependentsOf(doc: SceneDoc, ids: Iterable<string>): SceneObject[
     grew = false;
     for (const o of doc.objects) {
       if (hit.has(o.id)) continue;
-      if (objectDeps(o, doc).some((d) => hit.has(d))) {
+      if (objectDeps(o, doc, paused).some((d) => hit.has(d))) {
         hit.add(o.id);
         out.push(o);
         grew = true;
@@ -174,8 +180,14 @@ export function remapLink(o: SceneObject, ids: Map<string, string>): void {
   if (o.link.kind === 'polygon') o.link.points = o.link.points.map((p) => ids.get(p) ?? p);
 }
 
-export const isFollow = (o: SceneObject) => !!o.link && FOLLOW_KINDS.has(o.link.kind) && !o.link.frozen;
-export const isRedraw = (o: SceneObject) => !!o.link && !FOLLOW_KINDS.has(o.link.kind) && !o.link.frozen;
+/** The relationship is in effect (not uncoupled, not frozen). */
+export const isCoupled = (o: SceneObject) => !!o.link && !o.link.off && !o.link.frozen;
+/** Uncoupled and an ordinary object meanwhile: edited like any other. */
+export const standsAlone = (o: SceneObject) => !!o.link?.off && STANDALONE_KINDS.has(o.link.kind);
+export type LinkState = 'coupled' | 'uncoupled' | 'frozen';
+export const linkState = (o: SceneObject): LinkState | null => (!o.link ? null : o.link.off ? 'uncoupled' : o.link.frozen ? 'frozen' : 'coupled');
+export const isFollow = (o: SceneObject) => isCoupled(o) && FOLLOW_KINDS.has(o.link!.kind);
+export const isRedraw = (o: SceneObject) => isCoupled(o) && !FOLLOW_KINDS.has(o.link!.kind);
 /** Whether the construction decides where the object is (a value label without an anchor keeps its own position). */
 export const ownsPosition = (o: SceneObject) => isRedraw(o) || (isFollow(o) && !(o.link!.kind === 'measure' && !o.link!.of));
 

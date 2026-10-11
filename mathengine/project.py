@@ -1,4 +1,4 @@
-"""Project (.mathengine) files: the scene document as pretty-printed JSON.
+"""Project files (.manimstudio; .mathengine from earlier versions): the scene document as pretty-printed JSON.
 
 Format history (each upgrade is explicit and lossless):
 
@@ -49,7 +49,7 @@ def upgrade(doc: dict) -> dict:
     """Bring a document of any supported version to FORMAT_VERSION."""
     version = doc.get("version", 1)
     if version > FORMAT_VERSION:
-        raise ValueError(f"This project was saved by a newer MathEngine (format {version}; this version reads up to {FORMAT_VERSION}).")
+        raise ValueError(f"This project was saved by a newer Manim Studio (format {version}; this version reads up to {FORMAT_VERSION}).")
     if version < 2:
         doc = upgrade_v1(doc)
     if doc.get("version", 1) < 3:

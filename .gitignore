@@ -9,3 +9,6 @@ dist/
 .claude/
 media/
 build/
+
+# Written by the release workflow into release builds only
+mathengine/_build.py

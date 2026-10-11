@@ -3,15 +3,15 @@
 // Every action builds a linked object (see construct.ts) from compatible selected objects, so the
 // result stays attached to its sources while editing, animating and in the exported code.
 
-import { geoType, graphAxes, sortByDependencies, type GeoType } from './construct';
+import { geoType, graphAxes, isCoupled, type GeoType } from './construct';
 import { meetPoints, MEETS, STRAIGHT } from './intersect';
-import { createLinked, getState, selectedObjectIds, selectObjects, setState, toast, updateDoc, type LinkedSpec } from './store';
-import type { Link, ObjInfo, SceneDoc, SceneObject } from './types';
+import { coupleTo, createLinked, getState, selectedObjectIds, selectObjects, setState, toast, updateDoc, type LinkedSpec } from './store';
+import type { Link, ObjInfo, Pt, SceneDoc, SceneObject } from './types';
 
 export interface Action {
   id: string;
   label: string;
-  group: 'Connect' | 'Annotate' | 'Measure' | 'Terms';
+  group: 'Connect' | 'Couple' | 'Annotate' | 'Measure' | 'Terms';
   hint: string;
   run: () => void;
 }
@@ -184,29 +184,112 @@ export function actionsFor(ids: string[], terms: string[] = []): Action[] {
         add({ group: 'Connect', label: 'Foot of perpendicular', hint: `The point of ${l.name} (extended) closest to ${p.name}.`, run: make({ ctor: 'Dot', name: `foot_${shortName(p)}`, link: { kind: 'projection', point: p.id, onto: l.id } }) });
       }
     }
-    const textIdx = types.findIndex((t) => t === 'text' || t === 'equation');
-    if (textIdx >= 0 && types[1 - textIdx] !== 'param') {
-      const label = objs[textIdx], target = objs[1 - textIdx];
-      add({ group: 'Connect', label: `Attach ${label.name} to ${target.name}`, hint: 'Keep the label where it is now, relative to the object.', run: () => attachExisting(label, target) });
-    }
   }
 
   if (objs.length >= 3 && all('point'))
     add({ group: 'Connect', label: 'Polygon', hint: 'Polygon through the points, in selection order.', run: make({ ctor: 'Polygon', name: 'polygon', link: { kind: 'polygon', points: objs.map((o) => o.id) } }) });
 
+  // Couple selected objects to each other: each one that isn't coupled yet, to the others.
+  if (objs.length >= 2 && objs.length <= 6)
+    for (const dep of objs) if (!isCoupled(dep)) for (const c of couplings(dep, objs.filter((o) => o !== dep))) out.push(c);
+
   return out;
 }
 
-/** Attach an existing label to another object, keeping its current offset. */
-function attachExisting(label: SceneObject, target: SceneObject) {
-  const li = info(label.id)?.center, ti = info(target.id)?.center;
-  const offset: [number, number] = li && ti ? [Math.round((li[0] - ti[0]) * 100) / 100, Math.round((li[1] - ti[1]) * 100) / 100] : [0.4, 0.4];
-  updateDoc((d) => {
-    const o = d.objects.find((x) => x.id === label.id)!;
-    o.link = { kind: 'attach', to: target.id, offset };
-    o.pos = null;
-    sortByDependencies(d);
-  });
+const round = (v: number, step = 1000) => Math.round(v * step) / step;
+
+/** Coordinates of a scene point in an axes' units (null when the axes aren't known). */
+function toCoords(axesId: string, p: Pt): Pt | null {
+  const a = info(axesId)?.axes;
+  if (!a) return null;
+  const det = a.ux[0] * a.uy[1] - a.ux[1] * a.uy[0];
+  if (Math.abs(det) < 1e-12) return null;
+  const dx = p[0] - a.origin[0], dy = p[1] - a.origin[1];
+  return [(dx * a.uy[1] - dy * a.uy[0]) / det, (a.ux[0] * dy - a.ux[1] * dx) / det];
+}
+
+const SHAPE_ARGS = ['*', 'side_length', 'width', 'height', 'n', 'radius', 'start_angle', 'corner_radius', 'vertex_groups'];
+
+/**
+ * Ways to couple an existing object (`dep`) to existing `srcs`, built from where things are now, so the
+ * object stays put (or moves only as far as the relationship requires, e.g. onto a circle).
+ */
+export function couplings(dep: SceneObject, srcs: SceneObject[]): Action[] {
+  const s = getState();
+  const doc = s.doc;
+  const dt = geoType(dep, doc);
+  const st = srcs.map((o) => geoType(o, doc));
+  const at = info(dep.id)?.center ?? dep.pos ?? null;
+  const out: Action[] = [];
+  const add = (label: string, hint: string, link: Link, patch?: (o: SceneObject) => void) =>
+    out.push({ id: `Couple:${dep.id}:${label}`, group: 'Couple', label, hint, run: () => coupleTo(dep.id, link, patch) });
+  const keepPos = (o: SceneObject) => void (o.pos = null);
+  if (dt === 'param' || dt === 'axes' || st.includes('param')) return out;
+
+  if (srcs.length === 1) {
+    const [src] = srcs;
+    const t = st[0];
+    const si = info(src.id);
+    if (dt === 'point' && t === 'circle' && si?.geom?.kind === 'circle' && at) {
+      const c = si.geom.center;
+      add(`Put ${dep.name} on ${src.name}`, `${dep.name} stays on the circle at its current angle; drag it along the circle.`,
+        { kind: 'on_circle', circle: src.id, angle: String(round(Math.atan2(at[1] - c[1], at[0] - c[0]))) }, keepPos);
+    }
+    if (dt === 'point' && t === 'graph' && at) {
+      const ax = graphAxes(src, doc);
+      const xy = ax ? toCoords(ax.id, at) : null;
+      if (xy) add(`Put ${dep.name} on ${src.name}`, `${dep.name} moves onto the curve at its current x and stays on it.`,
+        { kind: 'on_graph', graph: src.id, x: String(round(xy[0], 100)) }, keepPos);
+    }
+    if (dt === 'point' && t === 'axes' && at) {
+      const xy = toCoords(src.id, at);
+      if (xy) add(`Pin ${dep.name} to ${src.name}`, `${dep.name} keeps its coordinates (${round(xy[0], 100)}, ${round(xy[1], 100)}) when the axes move or scale.`,
+        { kind: 'coords', axes: src.id, x: String(round(xy[0], 100)), y: String(round(xy[1], 100)) }, keepPos);
+    }
+    if (dt === 'point' && t === 'line')
+      add(`Make ${dep.name} the midpoint of ${src.name}`, `${dep.name} stays at the middle of the segment.`, { kind: 'midpoint', a: src.id }, keepPos);
+    const sc = si?.center;
+    if (sc && at) {
+      const offset: [number, number] = [round(at[0] - sc[0], 100), round(at[1] - sc[1], 100)];
+      add(`Attach ${dep.name} to ${src.name}`, `${dep.name} moves with ${src.name}, keeping its current offset.`, { kind: 'attach', to: src.id, offset }, keepPos);
+    }
+  }
+
+  if (srcs.length === 2) {
+    const [a, b] = srcs;
+    if (dt === 'point' && st[0] === 'point' && st[1] === 'point')
+      add(`Make ${dep.name} the midpoint of ${a.name} and ${b.name}`, `${dep.name} stays halfway between them.`, { kind: 'midpoint', a: a.id, b: b.id }, keepPos);
+    if (dt === 'point' && MEETS.has(st[0]) && MEETS.has(st[1]) && !(STRAIGHT.has(st[0]) && st[0] !== 'line' && STRAIGHT.has(st[1]) && st[1] !== 'line')) {
+      const pts = meetPoints(doc, s.frame?.objects ?? [], a.id, b.id);
+      let which = 0;
+      if (at && pts.length) pts.forEach((p, i) => { if (Math.hypot(p[0] - at[0], p[1] - at[1]) < Math.hypot(pts[which][0] - at[0], pts[which][1] - at[1])) which = i; });
+      add(`Put ${dep.name} where ${a.name} and ${b.name} meet`, pts.length ? `${dep.name} moves to the nearest crossing and follows it.` : 'They don’t meet now; it moves there once they do.',
+        { kind: 'intersection', a: a.id, b: b.id, ...(which ? { which } : {}) }, (o) => void (o.pos = pts[which] ? [round(pts[which][0]), round(pts[which][1])] : o.pos));
+    }
+    for (const [p, l] of [[a, b], [b, a]] as const) {
+      const pt = geoType(p, doc), lt = geoType(l, doc);
+      if (dt === 'point' && pt === 'point' && STRAIGHT.has(lt) && lt !== 'axes')
+        add(`Make ${dep.name} the foot of ${p.name} on ${l.name}`, `${dep.name} stays at the point of ${l.name} closest to ${p.name}.`, { kind: 'projection', point: p.id, onto: l.id }, keepPos);
+      if (dt === 'line' && pt === 'point' && lt === 'line') {
+        add(`Make ${dep.name} parallel to ${l.name} through ${p.name}`, 'Its direction follows the line; it passes through the point.', { kind: 'parallel', line: l.id, through: p.id });
+        add(`Make ${dep.name} perpendicular to ${l.name} through ${p.name}`, 'At a right angle to the line, through the point.', { kind: 'perpendicular', line: l.id, through: p.id, length: '4' });
+      }
+    }
+    if (dt === 'line' && st[0] === 'point' && st[1] === 'point')
+      add(`Make ${dep.name} connect ${a.name} and ${b.name}`, `Its ends follow ${a.name} and ${b.name}.`, { kind: 'segment', a: a.id, b: b.id });
+    if (dt === 'circle' && st[0] === 'point' && st[1] === 'point') {
+      add(`Center ${dep.name} on ${a.name} through ${b.name}`, 'Center and radius follow the two points.', { kind: 'circle2', a: a.id, b: b.id });
+      add(`Make ${a.name}${b.name} a diameter of ${dep.name}`, 'The circle follows both ends of its diameter.', { kind: 'circle2', a: a.id, b: b.id, mode: 'diameter' });
+    }
+  }
+
+  if (srcs.length >= 3 && dt === 'polygon' && st.every((t) => t === 'point'))
+    add(`Make ${dep.name} go through ${srcs.map((o) => o.name).join(', ')}`, 'Its vertices follow the points, in selection order.',
+      { kind: 'polygon', points: srcs.map((o) => o.id) }, (o) => {
+        o.ctor = 'Polygon';
+        for (const k of SHAPE_ARGS) delete o.args[k];
+      });
+  return out;
 }
 
 export function colorTerms(eqId: string, parts: string[], color: string) {
