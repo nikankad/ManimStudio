@@ -97,7 +97,7 @@ const SHADES = ['BLUE', 'TEAL', 'GREEN', 'YELLOW', 'GOLD', 'RED', 'MAROON', 'PUR
 
 /** Color swatch that opens a picker with the manim palette, a hex field and the system picker. */
 export function ColorField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  const table = useStore((s) => s.catalog?.color_hex ?? {});
+  const table = useStore((s) => s.catalog?.color_hex) ?? {};
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const hex = colorHex(value || placeholder || '', table);

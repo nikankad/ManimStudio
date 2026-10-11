@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
-import { addAnimation, addObject, getState, setState, useStore } from '../store';
+import { api } from '../api';
+import { addAnimation, addObject, getState, selectedObjectIds, selectObjects, setState, toast, toggleObjectSelection, updateDoc, useStore } from '../store';
+import { syncInstances } from '../templates';
+import type { Template } from '../types';
 import type { CatalogEntry } from '../types';
 
 export const DND_TYPE = 'application/x-mathengine';
@@ -20,12 +23,12 @@ function group(entries: CatalogEntry[], query: string): [string, CatalogEntry[]]
 
 export function Library() {
   const catalog = useStore((s) => s.catalog);
-  const [tab, setTab] = useState<'mobject' | 'animation' | 'outline'>('mobject');
+  const [tab, setTab] = useState<'mobject' | 'animation' | 'outline' | 'constructions'>('mobject');
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState<Record<string, boolean>>({ Common: true, Results: true });
 
   const groups = useMemo(() => {
-    if (!catalog || tab === 'outline') return [];
+    if (!catalog || tab === 'outline' || tab === 'constructions') return [];
     return group(tab === 'mobject' ? catalog.mobjects : catalog.animations, query);
   }, [catalog, tab, query]);
 
@@ -46,10 +49,13 @@ export function Library() {
       <div className="tabs">
         <button className={tab === 'mobject' ? 'on' : ''} onClick={() => setTab('mobject')}>Objects</button>
         <button className={tab === 'animation' ? 'on' : ''} onClick={() => setTab('animation')}>Effects</button>
+        <button className={tab === 'constructions' ? 'on' : ''} onClick={() => setTab('constructions')} title="Reusable constructions">Build</button>
         <button className={tab === 'outline' ? 'on' : ''} onClick={() => setTab('outline')}>Scene</button>
       </div>
       {tab === 'outline' ? (
         <Outline />
+      ) : tab === 'constructions' ? (
+        <Constructions />
       ) : (
         <>
           <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -112,15 +118,48 @@ function Outline() {
         return (
           <div
             key={o.id}
-            className={`outline-row ${selection?.kind === 'object' && selection.id === o.id ? 'sel' : ''} ${error?.id === o.id ? 'err' : ''}`}
-            onClick={() => setState({ selection: { kind: 'object', id: o.id } })}
+            className={`outline-row ${selectedObjectIds(selection).includes(o.id) ? 'sel' : ''} ${error?.id === o.id ? 'err' : ''}`}
+            onClick={(e) => (e.shiftKey ? toggleObjectSelection(o.id) : selectObjects([o.id]))}
           >
             <span className={`dot ${info?.visible ? 'on' : ''}`} title={info?.visible ? 'on screen now' : 'not on screen now'} />
             <span className="mono">{o.name}</span>
-            <span className="muted">{o.ctor}</span>
+            <span className="muted">{o.link ? `⛓ ${o.link.kind}` : o.ctor}</span>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Reusable constructions: starters, this project's, and the user's library. */
+function Constructions() {
+  const starters = useStore((s) => s.starters);
+  const library = useStore((s) => s.library);
+  const project = useStore((s) => s.doc.constructions) ?? [];
+  const sel = selectedObjectIds(useStore((s) => s.selection));
+  const removeProject = (t: Template) => updateDoc((d) => void (d.constructions = (d.constructions ?? []).filter((x) => x.id !== t.id)));
+  const removeLibrary = async (t: Template) => {
+    const next = library.filter((x) => x.id !== t.id);
+    await api.saveLibrary(next);
+    setState({ library: next });
+  };
+  const row = (t: Template, remove?: () => void) => (
+    <div key={t.id} className="construction-row" title={t.description}>
+      <button className="construction-name" onClick={() => setState({ panel: 'insert', panelData: t })}>{t.name}</button>
+      <span className="muted small">{t.objects.length} objects</span>
+      {!t.builtin && <button className="x-btn" title="Update linked instances of this template" onClick={() => syncInstances(t.id)}>⟳</button>}
+      {remove && <button className="x-btn" title="Remove" onClick={() => { if (confirm(`Remove "${t.name}"?`)) remove(); }}>×</button>}
+    </div>
+  );
+  return (
+    <div className="scroll pad constructions">
+      <button disabled={!sel.length} onClick={() => setState({ panel: 'save-construction', panelData: sel })} title="Save the selected objects (and what they are built from)">Save selection as construction…</button>
+      <h4>Starters</h4>
+      {starters.length ? starters.map((t) => row(t)) : <span className="muted small">Loading…</span>}
+      <h4>This project</h4>
+      {project.length ? project.map((t) => row(t, () => removeProject(t))) : <span className="muted small">Select objects and save them to reuse them here.</span>}
+      <h4>My library</h4>
+      {library.length ? library.map((t) => row(t, () => void removeLibrary(t).catch((e) => toast(String(e))))) : <span className="muted small">Constructions saved to your library are available in every project.</span>}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { Panels, Toolbar, useShortcuts } from './components/Panels';
 import { Timeline } from './components/Timeline';
 import { Viewport } from './components/Viewport';
 import { getState, loadCatalog, loadDoc, toast, useStore } from './store';
+import { loadTemplates } from './templates';
 
 const TL_KEY = 'mathengine.timelineHeight';
 
@@ -26,6 +27,7 @@ export function App() {
   useShortcuts();
   useEffect(() => {
     api.initialProject().then((r) => loadDoc(r.doc, r.path)).then(loadCatalog).catch((e) => toast(String(e)));
+    void loadTemplates();
     const beforeUnload = (e: BeforeUnloadEvent) => {
       if (getState().dirty) e.preventDefault();
     };

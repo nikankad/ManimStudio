@@ -7,6 +7,10 @@ import {
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
 import type { Args, Clip, Param, SceneDoc, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
+import { ActionsSection, Diagnostics, GeometrySection, InstanceSection, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
+import { EquationSection, TermsClipEditor } from './EquationEditor';
+import { CONTROLLED_ARGS, isFollow, isRedraw } from '../construct';
+import { detachObjects, duplicateObjects, selectedObjectIds } from '../store';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
 const QUICK_ANIMS = ['Create', 'Write', 'FadeIn', 'FadeOut', 'Indicate', 'Circumscribe', 'Transform', 'ReplacementTransform', 'GrowFromCenter', 'Uncreate'];
@@ -19,6 +23,8 @@ export function Inspector() {
   if (selection?.kind === 'object') {
     const obj = doc.objects.find((o) => o.id === selection.id);
     body = obj ? <ObjectInspector key={obj.id} obj={obj} /> : null;
+  } else if (selection?.kind === 'objects') {
+    body = <MultiObjectInspector ids={selection.ids.filter((id) => doc.objects.some((o) => o.id === id))} />;
   } else if (selection?.kind === 'clips') {
     const clips = doc.clips.filter((c) => selection.ids.includes(c.id));
     if (clips.length === 1) body = <ClipInspector key={clips[0].id} clip={clips[0]} />;
@@ -26,8 +32,8 @@ export function Inspector() {
   }
   return (
     <aside className="panel inspector">
-      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' ? 'Properties' : 'Scene'}</div>
-      <div className="scroll">{body ?? <SceneInfo />}</div>
+      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : 'Scene'}</div>
+      <div className="scroll" tabIndex={-1}>{body ?? <SceneInfo />}</div>
     </aside>
   );
 }
@@ -41,8 +47,13 @@ function SceneInfo() {
         <b>{doc.scene.name}</b>({doc.scene.base}) · {doc.config.pixel_width}×{doc.config.pixel_height} @ {doc.config.frame_rate}fps
       </p>
       <button onClick={() => setState({ panel: 'settings' })}>Scene settings…</button>
+      <ParametersPanel />
       <h4>How it works</h4>
       <ul className="tips">
+        <li><b>Draw</b> with the tools above the canvas (keys 1–7): points, segments, arrows, circles, rectangles, polygons. Drawing between existing points connects to them.</li>
+        <li>Select objects (Shift-click for several) to <b>connect</b> them: segments, midpoints, angle marks, labels, points on graphs… They stay attached while you edit and animate.</li>
+        <li><b>ƒ Graph</b> builds axes and a graph from an expression like <code>y = a*x^2 + b</code>, with parameter sliders you can animate.</li>
+        <li>The <b>Constructions</b> tab holds reusable pieces: a labeled triangle, the unit circle, a number line, secant-to-tangent, and your own.</li>
         <li>Drag any manim class onto the <b>canvas</b> or straight onto a <b>timeline track</b>.</li>
         <li>Clips can sit anywhere on any track and overlap. Drag to move them, drag their edges to trim, and Alt-drag to duplicate.</li>
         <li>On the canvas, drag an object to move it. Corner handles scale it, edge handles stretch it, and the top knob rotates it. With <b>Record</b> on, each of these becomes an animation clip at the playhead.</li>
@@ -81,10 +92,14 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const chainCls = useChainClass(obj.name);
   const chainSig = useSignature(chainCls);
   const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
-  const content = TEXT_CTORS.has(obj.ctor) ? unquote(obj.args['*'] ?? '') : null;
+  const isEquation = obj.ctor === 'MathTex' || obj.ctor === 'Tex';
+  const content = TEXT_CTORS.has(obj.ctor) && !isEquation ? unquote(obj.args['*'] ?? '') : null;
+  const terms = useStore((s) => (s.selection?.kind === 'object' && s.selection.id === obj.id ? s.selection.terms : undefined));
   const isVector = sig?.vector ?? true;
   const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
   const styleKeys = STYLE_KEYS.filter((k) => paramNames.has(k) || obj.args[k] !== undefined);
+  // Arguments the construction supplies (a segment's start/end, a brace's mobject…) aren't edited here.
+  const controlled = new Set(obj.link ? CONTROLLED_ARGS[obj.link.kind] ?? [] : []);
 
   const commitName = (v: string) => {
     if (v === obj.name) return;
@@ -108,25 +123,31 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => void (o.ctor = v), 'ctor')} list="me-mobjects" className="mono" />
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
-      {sig?.unknown && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
+      {sig?.unknown && !obj.link && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
+      {!obj.link && <Diagnostics id={obj.id} />}
+      {obj.instance && <InstanceSection obj={obj} />}
+      {obj.link && <RelationshipSection obj={obj} />}
+      {obj.ctor === 'ValueTracker' && <ParamSection obj={obj} />}
+      {isEquation && <EquationSection obj={obj} />}
+      <GeometrySection obj={obj} />
 
-      {(content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
+      {!isEquation && (content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
         <section>
           <h4>{obj.ctor === 'Text' || obj.ctor === 'MarkupText' || obj.ctor === 'Paragraph' ? 'Text' : 'LaTeX'}</h4>
           <Field multiline className="mono content" value={content ?? ''} onChange={(v) => setObj(obj.id, (o) => void (o.args['*'] = quote(v)), 'content')} />
         </section>
       )}
 
-      <section className="fx-section">
-        <h4>Transform {obj.pos && <button className="ghost small" title="Let manim position it" onClick={() => setObj(obj.id, (o) => void (o.pos = null), 'pos')}>auto position</button>}</h4>
-        <div className="fx-row"><span>Position</span><ScrubNumber value={obj.pos?.[0] ?? center?.[0] ?? null} onChange={(v) => setPos(0, v)} step={0.02} /><ScrubNumber value={obj.pos?.[1] ?? center?.[1] ?? null} onChange={(v) => setPos(1, v)} step={0.02} /></div>
+      {isRedraw(obj) ? null : <section className="fx-section">
+        <h4>Transform {obj.pos && !isFollow(obj) && <button className="ghost small" title="Let manim position it" onClick={() => setObj(obj.id, (o) => void (o.pos = null), 'pos')}>auto position</button>}</h4>
+        {isFollow(obj) ? <p className="muted small">Position comes from the construction (drag it on the canvas to change it).</p> : <div className="fx-row"><span>Position</span><ScrubNumber value={obj.pos?.[0] ?? center?.[0] ?? null} onChange={(v) => setPos(0, v)} step={0.02} /><ScrubNumber value={obj.pos?.[1] ?? center?.[1] ?? null} onChange={(v) => setPos(1, v)} step={0.02} /></div>}
         <div className="fx-row"><span>Scale</span><ScrubNumber value={obj.scale ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.scale = v), 'scale')} /></div>
         <div className="fx-row"><span>Stretch</span>
           <ScrubNumber value={obj.stretch?.[0] ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.stretch = [v, o.stretch?.[1] ?? 1]), 'sx')} />
           <ScrubNumber value={obj.stretch?.[1] ?? 1} min={0.01} step={0.01} precision={3} onChange={(v) => setObj(obj.id, (o) => void (o.stretch = [o.stretch?.[0] ?? 1, v]), 'sy')} />
         </div>
         <div className="fx-row"><span>Rotation</span><ScrubNumber value={obj.rotation ?? 0} step={0.5} precision={1} suffix="°" onChange={(v) => setObj(obj.id, (o) => void (o.rotation = v), 'rot')} /></div>
-      </section>
+      </section>}
 
       {isVector && styleKeys.length > 0 && (
         <section className="fx-section">
@@ -151,7 +172,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         </section>
       )}
 
-      <ArgsEditor params={(sig?.params ?? []).filter((p) => !styleKeys.includes(p.name))} args={Object.fromEntries(Object.entries(obj.args).filter(([k]) => !styleKeys.includes(k)))} hideStar={content !== null} onChange={(k, v) => setObj(obj.id, (o) => setArg(o.args, k, v), 'arg:' + k)} />
+      <ArgsEditor params={(sig?.params ?? []).filter((p) => !styleKeys.includes(p.name) && !controlled.has(p.name))} args={Object.fromEntries(Object.entries(obj.args).filter(([k]) => !styleKeys.includes(k) && !controlled.has(k)))} hideStar={content !== null || (isEquation && !!obj.eq?.parts?.length)} onChange={(k, v) => setObj(obj.id, (o) => setArg(o.args, k, v), 'arg:' + k)} />
 
       <ChainEditor title="Method chain" cls={chainCls} chain={obj.chain} placeholder=".set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
 
@@ -164,16 +185,50 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         </section>
       )}
 
+      <ActionsSection ids={[obj.id]} terms={terms} />
+
       <section>
         <h4>Animate at playhead</h4>
         <div className="chips">
           {QUICK_ANIMS.map((a) => <button key={a} className="chip" onClick={() => addAnimation(a, obj.name)}>{a}</button>)}
           <button className="chip" onClick={() => addAnimation('animate', obj.name)}>.animate</button>
+          {obj.eq?.parts?.length ? <button className="chip" title="Transform into another equation term by term" onClick={() => addTermsTransform(obj)}>Transform terms…</button> : null}
         </div>
       </section>
 
       <div className="row actions">
         <button onClick={() => duplicateObject(obj.id)}>Duplicate</button>
+        <button title="Save as a reusable construction" onClick={() => setState({ panel: 'save-construction', panelData: [obj.id] })}>Save…</button>
+        <button className="danger" onClick={() => deleteSelection()}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
+/** A TransformTerms clip from this equation at the playhead; the destination and pairs are set in Effect Controls. */
+function addTermsTransform(obj: SceneObject) {
+  const { doc } = getState();
+  const other = doc.objects.find((o) => o.id !== obj.id && o.eq?.parts?.length);
+  addAnimation('TransformTerms', obj.name);
+  const sel = getState().selection;
+  if (sel?.kind === 'clips') updateDoc((d) => {
+    const c = d.clips.find((x) => x.id === sel.ids[0]);
+    if (c) c.terms = { to: other?.id ?? '', pairs: [] };
+  });
+}
+
+function MultiObjectInspector({ ids }: { ids: string[] }) {
+  const doc = useStore((s) => s.doc);
+  const objs = ids.map((id) => doc.objects.find((o) => o.id === id)!).filter(Boolean);
+  return (
+    <div className="pad">
+      <h3>{objs.length} objects</h3>
+      <p className="muted small mono">{objs.map((o) => o.name).join(', ')}</p>
+      <ActionsSection ids={ids} />
+      <div className="row actions">
+        <button onClick={() => duplicateObjects(ids)} title="Copies keep links among themselves">Duplicate</button>
+        {objs.some((o) => o.link) && <button onClick={() => detachObjects(ids)}>Detach</button>}
+        <button onClick={() => setState({ panel: 'save-construction', panelData: selectedObjectIds() })}>Save as construction…</button>
         <button className="danger" onClick={() => deleteSelection()}>Delete</button>
       </div>
     </div>
@@ -253,7 +308,7 @@ function useChainClass(name: string | undefined): string {
 /** Method chain as editable call cards, each with the method's real signature. */
 function ChainEditor({ chain, cls, onChange, title, placeholder }: { chain: string; cls: string; onChange: (v: string) => void; title: string; placeholder: string }) {
   const sig = useSignature(cls);
-  const common = useStore((s) => s.catalog?.methods ?? []);
+  const common = useStore((s) => s.catalog?.methods) ?? [];
   const [raw, setRaw] = useState(false);
   const calls = parseChain(chain);
   const methods = sig?.methods ?? common;
@@ -366,7 +421,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
   const objects = useStore((s) => s.doc.objects);
   const tracks = useStore((s) => s.doc.tracks);
   const timeline = useStore((s) => s.timeline);
-  const sig = useSignature(clip.kind === 'anim' && clip.cls !== 'animate' ? clip.cls ?? '' : '');
+  const sig = useSignature(clip.kind === 'anim' && clip.cls !== 'animate' && clip.cls !== 'TransformTerms' ? clip.cls ?? '' : '');
   const dur = clipDuration(clip, timeline);
   const targetCls = useChainClass(clip.target);
   const timed = clip.kind === 'anim' || clip.kind === 'hold';
@@ -383,6 +438,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
       )}
       {clip.kind !== 'anim' && <h3>{clip.kind === 'code' ? 'Code clip' : clip.kind === 'hold' ? 'Hold' : `self.${clip.kind}(…)`}</h3>}
       {sig?.doc && <p className="doc">{sig.doc}</p>}
+      <Diagnostics id={clip.id} />
 
       <section className="fx-section">
         <h4>Timing</h4>
@@ -404,7 +460,10 @@ function ClipInspector({ clip }: { clip: Clip }) {
           <ArgsEditor title="Animation" params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '' }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
         </>
       )}
-      {clip.kind === 'anim' && clip.cls !== 'animate' && (
+      {clip.kind === 'anim' && clip.cls === 'TransformTerms' && (
+        <TermsClipEditor clip={clip} onChange={(fn) => setClip(clip.id, fn, 'terms')} />
+      )}
+      {clip.kind === 'anim' && clip.cls !== 'animate' && clip.cls !== 'TransformTerms' && (
         <ArgsEditor params={(sig?.params ?? []).filter((p) => p.name !== 'run_time')} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
       )}
 
