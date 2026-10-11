@@ -67,7 +67,7 @@ function SceneInfo() {
         <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
       </ul>
       {catalog && !catalog.latex && (
-        <div className="warn">LaTeX was not found, so <code>MathTex</code> and <code>Tex</code> won't render. Install TeX Live, MacTeX or MiKTeX. <code>Text</code> works without it.</div>
+        <div className="warn">LaTeX was not found, so <code>MathTex</code>, <code>Tex</code> and <code>DecimalNumber</code> (measurements, value labels and the starter constructions) won't render. Install TeX Live, MacTeX or MiKTeX. <code>Text</code> works without it.</div>
       )}
       {catalog && <p className="muted small">manim {catalog.manim_version}</p>}
     </div>

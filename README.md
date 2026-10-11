@@ -15,8 +15,10 @@ uv venv --python 3.12 && uv pip install -e .     # or: pip install -e .
 cd frontend && npm install && npm run build        # builds the UI into mathengine/web
 ```
 
-manim's system requirements also apply:
-- **LaTeX** for `MathTex` / `Tex` (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
+MathEngine needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
+parts. manim's system requirements also apply:
+- **LaTeX** for `MathTex` / `Tex`, and for `DecimalNumber`, which measurements, value labels and the starter
+  constructions use (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
 - **ffmpeg** is bundled with manim via PyAV; no separate install is needed.
 
 ## Use
@@ -197,5 +199,6 @@ camera. This takes about 50 to 150 ms per frame, and the frame is exactly what t
 
 Development: `cd frontend && npm run dev` rebuilds the UI on change, and `mathengine --serve --port 8765`
 runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render real frames with manim,
-and the LaTeX tests skip when LaTeX isn't installed. Design notes on the visual construction tools are in
+and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
+(Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in
 [`docs/research/math-object-creation.md`](docs/research/math-object-creation.md).

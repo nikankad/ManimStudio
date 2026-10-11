@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
+import { renameIdentifiers } from './pyparse';
 import { dependentsOf, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import type { Args, Catalog, CatalogEntry, Clip, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Template, Tool, Track } from './types';
@@ -513,15 +514,13 @@ export function addTrack() {
   updateDoc((d) => void addTrackTo(d));
 }
 
-const wordRe = (name: string) => new RegExp(`\\b${name.replace(/[^\w]/g, '')}\\b`, 'g');
 
 export function renameObject(id: string, newName: string) {
   const obj = state.doc.objects.find((o) => o.id === id);
   if (!obj || obj.name === newName) return;
   if (RESERVED_NAMES.has(newName)) return toast(`"${newName}" is used by the generated code`);
-  const re = wordRe(obj.name);
-  const rep = (s: string) => s.replace(re, newName);
   const names = new Map([[obj.name, newName]]);
+  const rep = (s: string) => renameIdentifiers(s, names); // code outside string literals only
   updateDoc((d) => {
     for (const o of d.objects) {
       if (o.id === id) o.name = newName;

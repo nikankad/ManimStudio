@@ -9,7 +9,7 @@
 import { api } from './api';
 import { linkSources, objectDeps, remapLink, renameRefs, sortByDependencies } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
-import { pyQuote } from './pyparse';
+import { pyQuote, renameIdentifiers } from './pyparse';
 import { chooseTrack, frameSnap, getState, selectObjects, setState, toast, uid, uniqueName, updateDoc } from './store';
 import type { Clip, Pt, SceneDoc, SceneObject, Template, TemplateInput } from './types';
 
@@ -116,7 +116,7 @@ function addClip(d: SceneDoc, c: Partial<Clip>, nameMap: Map<string, string>, hi
     clip.targets = clip.targets.map((n) => nameMap.get(n) ?? n).filter((n) => !hidden.has(n));
     if (!clip.targets.length) return;
   }
-  if (clip.chain) for (const [from, to] of nameMap) clip.chain = clip.chain.replace(new RegExp(`\\b${from}\\b`, 'g'), to);
+  if (clip.chain) clip.chain = renameIdentifiers(clip.chain, nameMap);
   clip.track = chooseTrack(d, clip.start, clip.duration, { target: clip.target });
   d.clips.push(clip);
 }

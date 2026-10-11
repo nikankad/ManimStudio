@@ -220,3 +220,24 @@ def test_exported_file_renders_with_manim_cli(tmp_path):
                           str(path), "MainScene"], capture_output=True, text=True, timeout=300)
     assert res.returncode == 0, res.stderr[-3000:]
     assert list((tmp_path / "media").rglob("MainScene.mp4"))
+
+
+@needs_latex
+def test_transform_terms_inside_timed_animations():
+    """A TransformTerms clip overlapping another clip runs inside TimedAnimations."""
+    eq1 = obj("e1", "eq1", "MathTex", eq={"parts": [{"id": "p1", "tex": "x"}, {"id": "p2", "tex": "+"}, {"id": "p3", "tex": "1"}]})
+    eq2 = obj("e2", "eq2", "MathTex", eq={"parts": [{"id": "q1", "tex": "1"}, {"id": "q2", "tex": "+"}, {"id": "q3", "tex": "x"}]})
+    dot = obj("d", "dot", "Dot", pos=[0, -2])
+    d = doc([eq1, eq2, dot])
+    d["clips"] = [
+        {"id": "c0", "kind": "add", "track": "t1", "start": 0, "duration": 0, "targets": ["eq1", "dot"]},
+        {"id": "c1", "kind": "anim", "track": "t1", "start": 1, "duration": 1, "cls": "TransformTerms", "target": "eq1",
+         "terms": {"to": "e2", "pairs": [["p1", "q3"], ["p2", "q2"], ["p3", "q1"]]}, "args": {}},
+        {"id": "c2", "kind": "anim", "track": "t2", "start": 1.5, "duration": 1, "cls": "Indicate", "target": "dot", "args": {}},
+    ]
+    gen = codegen.generate(d)
+    assert "TimedAnimations(" in gen.source and "lambda: TransformTerms(eq1, eq2" in gen.source
+    for t in (1.5, 1.9):
+        run(d, t)
+    r, o = run(d, 10)
+    assert o["eq2"]["visible"] and not o["eq1"]["visible"]

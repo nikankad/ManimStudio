@@ -1,6 +1,7 @@
 // Constructions on the editor side: classification, dependencies and copying.
 // Mirrors mathengine/construct.py, which validates and compiles them.
 
+import { renameIdentifiers } from './pyparse';
 import type { Link, SceneDoc, SceneObject } from './types';
 
 export type GeoType =
@@ -147,16 +148,10 @@ export function sortByDependencies(doc: SceneDoc): void {
   doc.objects = out;
 }
 
-const wordRe = (name: string) => new RegExp(`\\b${name.replace(/[^\w]/g, '')}\\b`, 'g');
-
-/** Replace whole-word references to renamed objects in Python fields and link expressions. */
+/** Rename references to objects in Python fields and link expressions (never inside string literals). */
 export function renameRefs(o: SceneObject, names: Map<string, string>): void {
   if (!names.size) return;
-  const rep = (s: string) => {
-    let out = s;
-    for (const [from, to] of names) out = out.replace(wordRe(from), to);
-    return out;
-  };
+  const rep = (s: string) => renameIdentifiers(s, names);
   o.ctor = rep(o.ctor);
   o.chain = rep(o.chain);
   for (const k in o.args) o.args[k] = rep(o.args[k]);

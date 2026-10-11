@@ -142,7 +142,8 @@ undoes it.
 - *Duplication* copies a set of objects. Links inside the set are remapped to the copies; links to objects
   outside it are kept.
 - *Renames* are safe for sources, which are ids. Parameter names inside expressions are renamed along with
-  the parameter.
+  the parameter. Renaming rewrites identifiers only, never string literals, so renaming `theta` leaves the
+  label `r"\theta"` alone.
 
 **Dragging.**
 - Moving an attached label or measurement edits its `offset`.
@@ -289,13 +290,17 @@ Each starter compiles without diagnostics and renders in the test suite.
 - **Animation:**
   - parameters animate with `set_value` clips;
   - constructions follow their sources during animations and scrubbing;
-  - `TransformTerms` clips run through the normal timeline grouping, including `TimedAnimations`.
-- **Tests:** `tests/` holds 41 pytest cases rendering with the real manim:
+  - `TransformTerms` clips run through the normal timeline grouping, including `TimedAnimations` (tested).
+- **UI smoke test:** `scripts/ui_smoke.py` drives the real editor in Chromium. It covers drawing, connecting
+  two points, label-offset drags, undo, delete and detach, Record-mode parameter drags, the graph builder and
+  its error messages, equation terms with MathLive, `TransformTerms` pairing, and saving and inserting
+  constructions, including two instances of the same starter.
+- **Tests:** `tests/` holds 42 pytest cases rendering with the real manim:
   - the expression language;
   - every link kind, followed during animation;
   - style animations surviving redraws;
   - every diagnostic;
-  - equation terms and `TransformTerms` under LaTeX;
+  - equation terms and `TransformTerms` under LaTeX, including inside `TimedAnimations`;
   - v2 → v3 upgrade equivalence;
   - all starters;
   - an exported file rendered by the `manim` CLI.
