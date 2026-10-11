@@ -80,6 +80,7 @@ def _render(project: str, quality: str, output: str | None) -> int:
 
     doc = load_project(project)
     check = runtime.run(doc, None, render=False)
+    _print_diagnostics(check.diagnostics)
     if check.error:
         print(f"error: {check.error['message']}", file=sys.stderr)
         return 1
@@ -95,6 +96,12 @@ def _render(project: str, quality: str, output: str | None) -> int:
         return 1
     print(job.message)
     return 0
+
+
+def _print_diagnostics(diagnostics: list[dict]) -> None:
+    """Construction problems don't stop a render (broken links are emitted unconstrained); show them."""
+    for d in diagnostics:
+        print(f"{d['level']}: {d['kind']} {d['id']}: {d['message']}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -114,7 +121,9 @@ def main(argv: list[str] | None = None) -> int:
         from .codegen import generate
         from .project import load_project
 
-        print(generate(load_project(args.project)).source, end="")
+        gen = generate(load_project(args.project))
+        _print_diagnostics(gen.diagnostics)
+        print(gen.source, end="")
         return 0
 
     p = argparse.ArgumentParser(prog="mathengine", description="Visual editor for manim scenes.")

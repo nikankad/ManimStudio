@@ -13,8 +13,15 @@ dependencies = [
   "pywebview>=5.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 mathengine = "mathengine.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::SyntaxWarning"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mathengine"]

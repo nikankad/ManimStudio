@@ -1,4 +1,17 @@
-"""Project (.mathengine) files: the scene document as pretty-printed JSON."""
+"""Project (.mathengine) files: the scene document as pretty-printed JSON.
+
+Format history (each upgrade is explicit and lossless):
+
+* 1: a sequential list of steps.
+* 2: objects, tracks and timed clips.
+* 3: adds constructions. Objects may carry ``link`` (a relationship to other
+  objects by id, see construct.py), ``eq`` (an equation split into terms with
+  stable ids), ``param`` (slider bounds of a ValueTracker parameter) and
+  ``instance`` (membership of an inserted construction); clips may carry
+  ``terms`` (term correspondence of a TransformTerms clip); the document has
+  ``constructions`` (reusable templates saved with the project). Version 2
+  documents are valid version 3 documents without any of these.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +19,7 @@ import json
 import uuid
 from pathlib import Path
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 
 def _id(prefix: str) -> str:
@@ -22,13 +35,25 @@ def new_project() -> dict:
         "objects": [],
         "tracks": [{"id": f"t{i + 1}", "name": f"V{i + 1}"} for i in range(3)],
         "clips": [],
+        "markers": [],
+        "constructions": [],
     }
 
 
 def load_project(path: str | Path) -> dict:
     doc = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
-    if doc.get("version", 1) < 2:
+    return upgrade(doc)
+
+
+def upgrade(doc: dict) -> dict:
+    """Bring a document of any supported version to FORMAT_VERSION."""
+    version = doc.get("version", 1)
+    if version > FORMAT_VERSION:
+        raise ValueError(f"This project was saved by a newer MathEngine (format {version}; this version reads up to {FORMAT_VERSION}).")
+    if version < 2:
         doc = upgrade_v1(doc)
+    if doc.get("version", 1) < 3:
+        doc = upgrade_v2(doc)
     base = new_project()
     base.update(doc)
     base["config"] = {**new_project()["config"], **doc.get("config", {})}
@@ -41,6 +66,15 @@ def save_project(path: str | Path, doc: dict) -> None:
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
     tmp.replace(p)
+
+
+def upgrade_v2(doc: dict) -> dict:
+    """Version 3 only adds optional fields; existing objects, clips and Python sources are kept verbatim."""
+    out = dict(doc)
+    out["version"] = 3
+    out.setdefault("markers", [])
+    out.setdefault("constructions", [])
+    return out
 
 
 def upgrade_v1(doc: dict) -> dict:
@@ -77,7 +111,7 @@ def upgrade_v1(doc: dict) -> dict:
             clips.append({"id": step["id"], "kind": kind, "track": track_for("__code"), "start": t, "duration": 0,
                           "targets": step.get("targets", [])})
     out = {k: v for k, v in doc.items() if k != "steps"}
-    out.update(version=FORMAT_VERSION, clips=clips)
+    out.update(version=2, clips=clips)
     out["tracks"] = pack_tracks(clips)
     return out
 

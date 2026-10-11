@@ -19,8 +19,10 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, render, runtime
+from . import catalog, codegen, mathexpr, render, runtime, starters
 from .project import load_project, new_project, save_project
+
+LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
 
 WEB_DIR = Path(__file__).parent / "web"
 
@@ -107,6 +109,10 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/project/save"): self.api_project_save,
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
+            ("POST", "/api/expr"): self.api_expr,
+            ("POST", "/api/check_equation"): self.api_check_equation,
+            ("GET", "/api/constructions"): self.api_constructions,
+            ("POST", "/api/constructions"): self.api_save_constructions,
         }
         try:
             handler = routes.get((method, path))
@@ -243,10 +249,74 @@ class Handler(BaseHTTPRequestHandler):
         self.app.project_path = body["path"]
         return {"path": body["path"]}
 
+    def api_expr(self, _q: dict, body: dict) -> dict:
+        """Analyse a math expression: a function for the graph builder, or a value over parameters."""
+        if body.get("mode") == "value":
+            try:
+                py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []))
+                return {"ok": True, "python": py, "params": params, "literal": mathexpr.literal(str(body.get("expr", "")))}
+            except mathexpr.ExprError as exc:
+                return {"ok": False, "error": exc.message, "hint": exc.hint}
+        dom = body.get("domain") or [-5, 5]
+        yr = body.get("y_range")
+        return mathexpr.analyze_function(str(body.get("expr", "")), {k: float(v) for k, v in (body.get("params") or {}).items()},
+                                         (float(dom[0]), float(dom[1])), (float(yr[0]), float(yr[1])) if yr else None)
+
+    def api_check_equation(self, _q: dict, body: dict) -> dict:
+        """Compile an equation's terms with manim's own MathTex and report glyphs per term."""
+        with self.app.manim_lock:
+            return check_equation(body.get("parts") or [], body.get("ctor") or "MathTex")
+
+    def api_constructions(self, _q: dict, _b: dict) -> dict:
+        library: list = []
+        if LIBRARY_PATH.exists():
+            try:
+                library = json.loads(LIBRARY_PATH.read_text(encoding="utf-8")).get("constructions", [])
+            except (OSError, ValueError):
+                library = []
+        return {"starters": starters.starters(), "library": library, "path": str(LIBRARY_PATH)}
+
+    def api_save_constructions(self, _q: dict, body: dict) -> dict:
+        LIBRARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LIBRARY_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"version": 1, "constructions": body.get("library", [])}, indent=2), encoding="utf-8")
+        tmp.replace(LIBRARY_PATH)
+        return {"path": str(LIBRARY_PATH)}
+
     def api_dialog(self, _q: dict, body: dict) -> dict:
         if not self.app.dialogs:
             return {"path": None, "unsupported": True}
         return {"path": self.app.dialogs(body.get("kind", "open"), body.get("filename", ""), body.get("types", []))}
+
+
+def check_equation(parts: list[str], ctor: str = "MathTex") -> dict:
+    """Build ``ctor(*parts)`` with manim (real LaTeX) and count the glyphs of each term.
+
+    A term with no glyphs (e.g. a lone closing brace) can't be colored, braced or matched, so the
+    editor flags it. This checks rendering only, not mathematics.
+    """
+    import logging
+
+    m = runtime.manim()
+    texs = [str(p).replace("{{", "{ {") for p in parts if str(p).strip()]
+    if not texs:
+        return {"ok": False, "error": "The equation has no terms.", "glyphs": []}
+    cls = getattr(m, ctor, None) if ctor in ("MathTex", "Tex") else m.MathTex
+    logger = logging.getLogger("manim")
+    level = logger.level
+    logger.setLevel(logging.CRITICAL)
+    try:
+        with m.tempconfig({"verbosity": "CRITICAL"}):
+            mob = cls(*texs)
+        glyphs = [len(sm.family_members_with_points()) for sm in mob.submobjects]
+        return {"ok": len(glyphs) == len(texs), "glyphs": glyphs, "error": None if len(glyphs) == len(texs) else
+                f"manim made {len(glyphs)} groups for {len(texs)} terms."}
+    except Exception as exc:  # LaTeX errors are expected input errors
+        msg = str(exc)
+        log = re.findall(r"^! .*$", msg, flags=re.M)
+        return {"ok": False, "glyphs": [], "error": (log[0] if log else msg.splitlines()[0] if msg else type(exc).__name__)[:400]}
+    finally:
+        logger.setLevel(level)
 
 
 def make_server(project_path: str | None, port: int = 0) -> tuple[ThreadingHTTPServer, AppState]:

@@ -56,6 +56,8 @@ class RunResult:
     image: str | None = None  # data: URL
     error: dict | None = None
     elapsed_ms: float = 0.0
+    values: dict[str, float] = field(default_factory=dict)  # ValueTracker values at this time
+    diagnostics: list[dict] = field(default_factory=list)  # construction problems (see construct.py)
 
     def to_json(self) -> dict:
         return {
@@ -67,6 +69,8 @@ class RunResult:
             "image": self.image,
             "error": self.error,
             "elapsed_ms": round(self.elapsed_ms, 1),
+            "values": self.values,
+            "diagnostics": self.diagnostics,
         }
 
 
@@ -97,7 +101,9 @@ class PreviewMixin:
         self._me_steps.append(StepTiming(sid, start, self.renderer.time))
 
     def _me_needs_stepping(self) -> bool:
-        if self.always_update_mobjects or self.updaters:
+        # Constructions (construct.Constraints) depend only on the current state, not on dt, so
+        # updating once at the target time is exact; other updaters may integrate over time.
+        if self.always_update_mobjects or any(not getattr(u, "mathengine_constraints", False) for u in self.updaters):
             return True
         return any(m.has_time_based_updater() for m in self.get_mobject_family_members())
 
@@ -167,7 +173,61 @@ def _render_png(scene: Any, max_width: int) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
-def _object_boxes(scene: Any) -> list[dict]:
+def _pt(p: Any) -> list[float]:
+    return [round(float(p[0]), 4), round(float(p[1]), 4)]
+
+
+def _sample_path(mob: Any, limit: int = 160) -> list[list[float]] | None:
+    pts = [sm.points for sm in mob.family_members_with_points()]
+    if not pts:
+        return None
+    import numpy as np
+
+    allp = np.concatenate(pts)
+    step = max(1, len(allp) // limit)
+    return [_pt(p) for p in allp[::step]]
+
+
+def _geometry(mob: Any, oid: str, part_index: dict[str, dict[str, int]]) -> dict:
+    """Shape data the canvas needs for handles, snapping and hit testing (scene units)."""
+    m = manim()
+    out: dict[str, Any] = {}
+    try:
+        if isinstance(mob, m.Line):
+            out["geom"] = {"kind": "line", "start": _pt(mob.get_start()), "end": _pt(mob.get_end())}
+        elif isinstance(mob, m.Dot):
+            out["geom"] = {"kind": "point", "center": _pt(mob.get_center())}
+        elif isinstance(mob, m.Circle):
+            out["geom"] = {"kind": "circle", "center": _pt(mob.get_center()), "radius": round(float(mob.width) / 2, 4)}
+            out["path"] = _sample_path(mob, 64)
+        elif isinstance(mob, m.Polygram):
+            out["geom"] = {"kind": "polygon", "vertices": [_pt(v) for v in mob.get_vertices()]}
+        elif isinstance(mob, m.ParametricFunction):
+            out["path"] = _sample_path(mob)
+        if isinstance(mob, m.CoordinateSystem) and hasattr(mob, "c2p"):
+            o = mob.c2p(0, 0)
+            out["axes"] = {"origin": _pt(o), "ux": _pt(mob.c2p(1, 0) - o), "uy": _pt(mob.c2p(0, 1) - o),
+                           "x_range": [float(v) for v in mob.x_range[:2]], "y_range": [float(v) for v in mob.y_range[:2]]}
+        elif isinstance(mob, m.NumberLine):
+            o = mob.n2p(0)
+            out["axes"] = {"origin": _pt(o), "ux": _pt(mob.n2p(1) - o), "uy": [0.0, 0.0],
+                           "x_range": [float(v) for v in mob.x_range[:2]], "y_range": [0.0, 0.0]}
+        if oid in part_index:
+            parts = []
+            for pid, i in part_index[oid].items():
+                sub = mob.submobjects[i] if i < len(mob.submobjects) else None
+                if sub is not None and any(sm.has_points() for sm in sub.get_family()):
+                    ul, dr = sub.get_corner(m.UL), sub.get_corner(m.DR)
+                    parts.append({"id": pid, "box": [float(ul[0]), float(dr[1]), float(dr[0]), float(ul[1])]})
+                else:
+                    parts.append({"id": pid, "box": None})
+            out["parts"] = parts
+    except Exception:  # geometry is a convenience for the editor; never fail a frame over it
+        pass
+    return out
+
+
+def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = None) -> list[dict]:
     m = manim()
     on_screen = set(id(x) for x in scene.get_mobject_family_members())
     out = []
@@ -184,8 +244,15 @@ def _object_boxes(scene: Any) -> list[dict]:
                 center = None
         except Exception:
             center = None
-        out.append({"id": oid, "name": name, "visible": visible, "box": box, "center": center})
+        info = {"id": oid, "name": name, "visible": visible, "box": box, "center": center}
+        info.update(_geometry(mob, oid, part_index or {}))
+        out.append(info)
     return out
+
+
+def _tracker_values(scene: Any) -> dict[str, float]:
+    m = manim()
+    return {name: float(mob.get_value()) for name, (mob, _oid) in scene._me_registry.items() if isinstance(mob, m.ValueTracker)}
 
 
 def _media_dir():
@@ -200,6 +267,7 @@ def run(doc: dict, target: float | None = None, render: bool = True, preview_wid
     t_start = _time.perf_counter()
     result = RunResult()
     gen = codegen.generate(doc, preview=True)
+    result.diagnostics = gen.diagnostics
     digest = hashlib.sha1(gen.source.encode()).hexdigest()[:12]
     filename = f"<mathengine-scene-{digest}>"
     linecache.cache[filename] = (len(gen.source), None, gen.source.splitlines(True), filename)
@@ -247,7 +315,8 @@ def run(doc: dict, target: float | None = None, render: bool = True, preview_wid
             result.steps = scene._me_steps
             result.duration = scene.renderer.time
             result.plays = scene._me_plays
-            result.objects = _object_boxes(scene)
+            result.objects = _object_boxes(scene, gen.part_index)
+            result.values = _tracker_values(scene)
             cam = scene.camera
             fc = cam.frame_center
             result.camera = {

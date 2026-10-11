@@ -26,6 +26,7 @@ import re
 import textwrap
 from dataclasses import dataclass, field
 
+from . import construct
 from .timed import SOURCE as TIMED_SOURCE
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -37,6 +38,10 @@ class Generated:
     source: str
     # 1-based line number -> (kind, id) of the document element that produced it
     linemap: dict[int, tuple[str, str]] = field(default_factory=dict)
+    # problems with constructions (missing sources, cycles, conflicts…); the scene still compiles
+    diagnostics: list[dict] = field(default_factory=list)
+    # equation object id -> term id -> submobject index
+    part_index: dict[str, dict[str, int]] = field(default_factory=dict)
 
 
 def is_valid_name(name: str) -> bool:
@@ -75,9 +80,11 @@ def _join_chain(chain: str) -> str:
     return chain
 
 
-def anim_expr(clip: dict, run_time: float | None) -> str:
+def anim_expr(clip: dict, run_time: float | None, doc: dict | None = None, plan: construct.Plan | None = None) -> str:
     """Python expression for an animation clip; ``run_time`` None leaves it to self.play."""
     cls = (clip.get("cls") or "").strip()
+    if cls == "TransformTerms" and doc is not None and plan is not None:
+        return construct.terms_expr(clip, doc, plan, None if run_time is None else _num(run_time))
     target = (clip.get("target") or "").strip()
     args = {k: v for k, v in (clip.get("args") or {}).items() if k != "run_time"}
     extra = {"run_time": _num(run_time)} if run_time is not None and not _sets_run_time(cls) else {}
@@ -150,11 +157,11 @@ class _Writer:
                 self.linemap[len(self.lines)] = ref
 
 
-def _active_clips(doc: dict) -> list[dict]:
+def _active_clips(doc: dict, skip: set[str] = frozenset()) -> list[dict]:
     hidden = {t["id"] for t in doc.get("tracks", []) if t.get("hidden")}
     out = []
     for c in doc.get("clips", []):
-        if c.get("disabled") or c.get("track") in hidden:
+        if c.get("disabled") or c.get("track") in hidden or c["id"] in skip:
             continue
         if c.get("kind") == "anim" and not (c.get("cls") or "").strip():
             continue
@@ -178,13 +185,16 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     scene_name = scene.get("name") or "MainScene"
     base = scene.get("base") or "Scene"
     cfg = doc.get("config", {})
-    clips = _active_clips(doc)
+    plan = construct.plan(doc)
+    clips = _active_clips(doc, plan.invalid_clips)
     code_clips = sorted((c for c in clips if c.get("kind") == "code"), key=lambda c: float(c["start"]))
     timed_clips = [c for c in clips if c.get("kind") != "code"]
     groups = _groups(timed_clips)
     needs_helper = any(not _simple(g) for g in groups)
 
     emit("from manim import *")
+    if plan.uses_terms:
+        emit(construct.TERMS_IMPORT)
     # ease_* rate functions aren't in manim's star export; import the ones this scene uses.
     eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", json.dumps(doc))))
     if eases:
@@ -203,16 +213,29 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     if needs_helper:
         emit("")
         emit(TIMED_SOURCE.strip("\n"))
+    for used, src in ((plan.uses_constraints, construct.CONSTRAINTS_SOURCE), (plan.uses_geometry, construct.GEOMETRY_SOURCE),
+                      (plan.uses_terms, construct.TERMS_SOURCE)):
+        if used:
+            emit("")
+            emit(src.strip("\n"))
     emit("")
     emit("")
     emit(f"class {scene_name}({base}):")
     emit("def construct(self):", indent=4)
     B = 8
     start_len = len(w.lines)
+    if plan.uses_constraints:
+        emit(f"{plan.constraints_var} = Constraints(self)", None, B)
 
     for obj in doc.get("objects", []):
         ref = ("object", obj["id"])
         name = obj["name"]
+        if obj["id"] in plan.lines:
+            for line in plan.lines[obj["id"]]:
+                emit(line, ref, B)
+            if preview:
+                emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
+            continue
         emit(f"{name} = {(obj.get('ctor') or '').strip()}({_call_args(obj.get('args'), before_star=_leading((obj.get('ctor') or '').strip()))})", ref, B)
         chain = _join_chain(obj.get("chain", ""))
         if chain:
@@ -246,7 +269,7 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     for code in code_clips + [None]:
         limit = float(code["start"]) if code else float("inf")
         while gi < len(groups) and float(groups[gi][0]["start"]) < limit - EPS:
-            _emit_group(groups[gi], emit, wait_until, state, B, preview)
+            _emit_group(groups[gi], emit, wait_until, state, B, preview, doc, plan)
             gi += 1
         if code is None:
             break
@@ -264,7 +287,7 @@ def generate(doc: dict, preview: bool = False) -> Generated:
 
     if len(w.lines) == start_len:
         emit("pass", None, B)
-    return Generated("\n".join(w.lines) + "\n", w.linemap)
+    return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
 
 
 def _simple(group: list[dict]) -> bool:
@@ -282,7 +305,7 @@ def _simple(group: list[dict]) -> bool:
     return len(targets) == len(set(targets))
 
 
-def _emit_group(group, emit, wait_until, state, B, preview) -> None:
+def _emit_group(group, emit, wait_until, state, B, preview, doc=None, plan=None) -> None:
     start = float(group[0]["start"])
     end = max(_end(c) for c in group)
     first_ref = ("clip", group[0]["id"])
@@ -303,7 +326,7 @@ def _emit_group(group, emit, wait_until, state, B, preview) -> None:
             return
         durs = {round(float(c["duration"]), 4) for c in anims}
         shared = durs.pop() if len(durs) == 1 else None
-        exprs = [(anim_expr(c, None if shared is not None else float(c["duration"])), c) for c in anims]
+        exprs = [(anim_expr(c, None if shared is not None else float(c["duration"]), doc, plan), c) for c in anims]
         tail = f", run_time={_num(shared)}" if shared is not None else ""
         if len(exprs) == 1:
             emit(f"self.play({exprs[0][0]}{tail})", ("clip", exprs[0][1]["id"]), B)
@@ -323,7 +346,7 @@ def _emit_group(group, emit, wait_until, state, B, preview) -> None:
         ref = ("clip", c["id"])
         offset = _num(float(c["start"]) - start)
         if c.get("kind") == "anim":
-            emit(f"    ({offset}, lambda: {anim_expr(c, float(c['duration']))}),", ref, B)
+            emit(f"    ({offset}, lambda: {anim_expr(c, float(c['duration']), doc, plan)}),", ref, B)
         elif _is_instant(c):
             call = _instant_call(c)
             if call:
