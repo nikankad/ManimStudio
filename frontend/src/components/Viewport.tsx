@@ -634,7 +634,11 @@ export function Viewport() {
         if (recorded.length) recorded.forEach(([name, v]) => animateParam(name, v));
         else if (getState().record && ok) toast('Only parameters can be recorded; this edit changes the starting state');
         if (ok && !recorded.length) commitEdit((d) => void applyGeoDrag(d, geoDrag, geoDrag.last, null));
-      } else setState({ previewDoc: null });
+      } else {
+        setState({ previewDoc: null });
+        // A click (no drag) on a construction's source handle selects that source object.
+        if (geoDrag.handle.startsWith('src:')) selectObjects([geoDrag.handle.slice(4)]);
+      }
       setGeoDrag(null);
     }
     if (drag?.moved) commitTransform(drag.id, drag.delta, drag.center);
