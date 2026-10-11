@@ -302,3 +302,48 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .render-status.ok { color: #2ecc71; }
 .render-status.busy { color: #f1c40f; }
 .render-status.stale { color: #e57373; }
+
+/* ---- structured parameter controls ---- */
+.param > .pcontrol { display: flex; gap: 4px; align-items: flex-start; min-width: 0; }
+.param > .pcontrol > :first-child { flex: 1; min-width: 0; }
+.param.wide { grid-template-columns: 1fr; gap: 3px; }
+.param.wide > .pname { display: flex; align-items: center; gap: 4px; }
+.param .pname { display: flex; align-items: center; gap: 2px; }
+.pname.scrubbable, .scrubbable { cursor: ew-resize; user-select: none; }
+.pname.scrubbable { color: var(--blue); }
+.raw-toggle { flex: none; padding: 2px 5px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); background: transparent; border-color: transparent; }
+.raw-toggle:hover:not(:disabled), .raw-toggle.on { color: var(--text); border-color: var(--line); background: var(--panel-2); }
+.x-btn { padding: 0 5px; font-size: 12px; line-height: 16px; background: transparent; border-color: transparent; color: var(--muted); }
+.x-btn:hover { color: var(--text); border-color: var(--line); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.seg button { flex: 1 0 auto; border: 0; border-radius: 0; padding: 3px 5px; font-size: 11.5px; background: var(--panel-2); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--blue); color: #fff; }
+.rate-icon { width: 24px; height: 16px; flex: none; }
+.rate-icon path { fill: none; stroke: var(--blue); stroke-width: 1.5; }
+.field.narrow { max-width: 64px; }
+.vec-field { display: flex; flex-direction: column; gap: 3px; }
+.vec-xyz { gap: 10px; padding-left: 32px; font-size: 11.5px; }
+.vec-comp { display: inline-flex; gap: 4px; align-items: baseline; }
+.compass-btn { width: 26px; height: 24px; padding: 0; flex: none; }
+.compass-pop { position: fixed; z-index: 31; display: grid; grid-template-columns: repeat(3, 30px); gap: 3px; padding: 8px; background: var(--panel-2); border: 1px solid #45454c; border-radius: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+.compass-pop button { height: 28px; padding: 0; }
+.compass-pop button.on { background: var(--blue); color: #fff; }
+.compass-pop button.obj { grid-column: 1 / -1; height: auto; padding: 3px 6px; font-family: var(--mono); font-size: 11px; text-align: left; }
+.chip.on { background: var(--blue); border-color: var(--blue); color: #fff; }
+.numbox { display: inline-flex; align-items: center; gap: 3px; flex: 1; min-width: 0; }
+.numbox .field { min-width: 0; width: 100%; }
+.numbox > .scrubbable { font-size: 11px; }
+.range-field { gap: 8px; }
+.list-field, .dict-field { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+.list-field > button.ghost, .dict-field > .row { align-self: flex-start; }
+.list-row > :not(.idx):not(.x-btn) { flex: 1; min-width: 0; }
+.list-row .idx { width: 14px; text-align: right; font-family: var(--mono); }
+.dict-field { border-left: 2px solid var(--line); padding-left: 8px; }
+.dict-field .param { grid-template-columns: 110px 1fr; }
+.matrix-field { display: flex; flex-direction: column; gap: 4px; }
+.matrix-grid { display: grid; gap: 3px; padding: 4px 8px; border-left: 2px solid var(--muted); border-right: 2px solid var(--muted); border-radius: 4px; }
+.matrix-grid .field { text-align: center; }
+.call-card { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 6px 0; background: rgba(255, 255, 255, 0.015); }
+.call-head { display: flex; align-items: center; gap: 4px; color: var(--accent); }
+.call-card .doc { margin: 2px 0 4px; }

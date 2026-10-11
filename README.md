@@ -42,8 +42,22 @@ mathengine code scene.mathengine > scene.py # plain manim code
   nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
 - **Inspector** (right): *Properties* for objects (scrubbable Transform values, Style with color pickers
   and sliders, every constructor argument), or *Effect Controls* for clips (start, duration, track and all
-  animation arguments). Fields take Python (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names).
-  Constructors can be methods of other objects, such as `axes.plot`.
+  animation arguments). Constructors can be methods of other objects, such as `axes.plot`.
+- **Every parameter gets a control from its manim signature**:
+  - numbers: drag the parameter name to scrub them; opacity values also get a slider;
+  - colors: a picker;
+  - points and directions: compass presets plus draggable x/y/z, or another object where manim allows one;
+  - objects: an object picker, or toggle chips for several;
+  - enums (`CapStyleType`, `LineJointType`), `Literal`s, `type[...]` choices (`tip_shape=StealthTip`, `vertex_type`) and scales (`LogBase()`): dropdowns;
+  - ranges (`x_range`): min/max/step;
+  - lists of numbers, colors, strings or points: list editors;
+  - `t2c` / `tex_to_color_map`: substring → color rows;
+  - `Matrix` / `Table` data: a cell grid;
+  - config dicts: the target class's own fields (`axis_config` uses `NumberLine`'s parameters, `tip_style` uses the tip's);
+  - callables: a lambda template;
+  - file paths: a Browse button.
+- **Method chains**: each call is a card with its own signature. Pick from all of the object's chainable methods. This also covers the methods animated by `.animate` clips, such as `ValueTracker.set_value`.
+- **Raw Python**: every structured field has a `{}` toggle that shows the Python behind it. Anything manim accepts can be typed there (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names).
 - **Code clips** run any manim code inside `construct()` (updaters, ValueTrackers, loops…).
 - **</> Code**: the header (imports, helpers, custom Mobject classes) and the generated scene.
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**

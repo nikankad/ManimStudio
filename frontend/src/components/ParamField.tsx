@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useStore } from '../store';
-import type { Param } from '../types';
+import { askPath } from '../api';
+import { evalNumber, evalVector, fmtNum, formatDict, formatVector, parseDict, parseList, pyQuote, pyString, splitTop } from '../pyparse';
+import { getState, useSignature, useStore } from '../store';
+import type { Param, ParamKind } from '../types';
+import { ratePath } from './rates';
 
 /** Text input that keeps local state while typing and commits on every change. */
 export function Field({ value, onChange, placeholder, className, list, multiline, onBlur }: {
@@ -138,47 +141,388 @@ export function ColorField({ value, onChange, placeholder }: { value: string; on
 
 export const isColorKey = (name: string) => /(^|_)colou?r$/i.test(name);
 
-export function ParamField({ param, value, onChange }: { param: Param; value: string; onChange: (v: string) => void }) {
-  const catalog = useStore((s) => s.catalog);
-  const placeholder = param.default || (param.required ? 'required' : '');
-  let control;
-  const kind = isColorKey(param.name) && param.kind === 'expr' ? 'color' : param.kind;
-  switch (kind) {
-    case 'bool':
-      control = (
-        <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">default ({param.default})</option>
-          <option value="True">True</option>
-          <option value="False">False</option>
-        </select>
-      );
-      break;
-    case 'color':
-      control = <ColorField value={value} onChange={onChange} placeholder={placeholder} />;
-      break;
-    case 'rate_func':
-      control = (
-        <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">default ({param.default})</option>
-          {catalog?.rate_funcs.map((r) => <option key={r} value={r}>{r}</option>)}
-          {value && !catalog?.rate_funcs.includes(value) && <option value={value}>{value}</option>}
-        </select>
-      );
-      break;
-    case 'vector':
-      control = <Field value={value} onChange={onChange} placeholder={placeholder} list="me-directions" />;
-      break;
-    case 'number':
-      control = <Field value={value} onChange={onChange} placeholder={placeholder} className="num" />;
-      break;
-    default:
-      control = <Field value={value} onChange={onChange} placeholder={placeholder} className="mono" />;
+/** Kinds edited by a structured widget; all of them can flip to raw Python with the {} toggle. */
+const STRUCTURED = new Set<ParamKind>(['vector', 'choice', 'mobject', 'mobjects', 'range', 'numbers', 'strings', 'colors', 'colormap', 'dict', 'points', 'matrix', 'string', 'path']);
+
+/** Drag step for a numeric parameter, guessed from its name. */
+export function numStep(name: string, int?: boolean): number {
+  if (int || /(^|_)(n|num|count|index|resolution|font_size|tab_width|decimal_places|places)(_|$)/.test(name)) return 1;
+  if (/opacity|ratio|alpha|proportion|fraction|factor|lag|sheen/.test(name)) return 0.01;
+  if (/angle|arc|theta|phi|radians/.test(name)) return Math.PI / 180;
+  return 0.02;
+}
+
+/** Pointer handler that scrubs a number by dragging horizontally (Shift ×10, Alt ÷10). */
+export function scrubber(start: () => number, step: number, apply: (v: number) => void, int = false) {
+  return (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX;
+    const v0 = start();
+    const move = (ev: PointerEvent) => {
+      const k = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1;
+      const v = v0 + (ev.clientX - x0) * step * k;
+      apply(int ? Math.round(v) : Number(fmtNum(v, step < 0.01 ? 4 : 3)));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', () => window.removeEventListener('pointermove', move), { once: true });
+  };
+}
+
+function useObjectNames(): string[] {
+  const objects = useStore((s) => s.doc.objects);
+  const base = useStore((s) => s.doc.scene.base);
+  const names = objects.map((o) => o.name);
+  if (['MovingCameraScene', 'ZoomedScene'].includes(base)) names.push('self.camera.frame');
+  return names;
+}
+
+/** Whether `value` can be shown in the structured widget for `kind` (else raw Python is shown). */
+function structurable(param: Param, value: string): boolean {
+  const v = value.trim();
+  if (!v) return true;
+  const star = param.name === '*';
+  switch (param.kind) {
+    case 'string': case 'path': return pyString(v) !== null;
+    case 'vector': return true;
+    case 'range': { const l = parseList(v); return !!l && l.length <= 3; }
+    case 'mobjects': {
+      const names = new Set(snapshotNames());
+      const items = star ? splitTop(v) : parseList(v);
+      return !!items && items.every((x) => names.has(x));
+    }
+    case 'numbers': case 'colors': case 'points': case 'strings':
+      return (star ? splitTop(v) : parseList(v)) !== null && (param.kind !== 'strings' || (parseList(v) ?? []).every((x) => pyString(x) !== null));
+    case 'colormap': case 'dict': return parseDict(v) !== null;
+    case 'matrix': { const rows = parseList(v); return !!rows && rows.every((r) => parseList(r) !== null); }
+    default: return true;
   }
+}
+function snapshotNames() {
+  return getState().doc.objects.map((o) => o.name).concat('self.camera.frame');
+}
+
+export function ParamField({ param, value, onChange, onRemove }: { param: Param; value: string; onChange: (v: string) => void; onRemove?: () => void }) {
+  const [rawMode, setRaw] = useState(false);
+  const kind: ParamKind = isColorKey(param.name) && param.kind === 'expr' ? 'color' : param.kind;
+  const p = kind === param.kind ? param : { ...param, kind };
+  const canStructure = structurable(p, value);
+  const raw = STRUCTURED.has(kind) && (rawMode || !canStructure);
+  const placeholder = param.default || (param.required ? 'required' : '');
+  const step = numStep(param.name, param.int);
+  const scrub = kind === 'number' && !raw
+    ? scrubber(() => evalNumber(value) ?? evalNumber(param.default) ?? 0, step, (v) => onChange(String(v)), param.int || step === 1)
+    : undefined;
   return (
-    <label className={`param ${param.required && !value ? 'missing' : ''}`} title={param.annotation ? `${param.label}: ${param.annotation}` : param.label}>
-      <span className="pname">{param.label}</span>
-      {control}
-    </label>
+    <div className={`param ${param.required && !value ? 'missing' : ''} ${STRUCTURED.has(kind) && !['string', 'path', 'choice', 'mobject'].includes(kind) ? 'wide' : ''}`}
+      title={param.annotation ? `${param.label}: ${param.annotation}${param.from ? `  (from ${param.from})` : ''}` : param.label}>
+      <span className={`pname ${scrub ? 'scrubbable' : ''}`} onPointerDown={scrub} title={scrub ? 'Drag to change · Shift ×10 · Alt ÷10' : undefined}>
+        {param.label}
+        {onRemove && <button className="x-btn" title="Remove" onClick={onRemove}>×</button>}
+      </span>
+      <div className="pcontrol">
+        {raw ? <Field value={value} onChange={onChange} placeholder={placeholder} className="mono" /> : <Control param={p} value={value} onChange={onChange} placeholder={placeholder} />}
+        {STRUCTURED.has(kind) && (
+          <button className={`raw-toggle ${raw ? 'on' : ''}`} disabled={!canStructure} title={raw ? (canStructure ? 'Back to the visual editor' : 'This value is custom Python') : 'Edit as Python'} onClick={() => setRaw(!rawMode)}>{'{}'}</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Control({ param, value, onChange, placeholder }: { param: Param; value: string; onChange: (v: string) => void; placeholder: string }) {
+  const catalog = useStore((s) => s.catalog);
+  switch (param.kind) {
+    case 'bool':
+      return (
+        <div className="seg">
+          {(['', 'True', 'False'] as const).map((b) => (
+            <button key={b} className={value === b ? 'on' : ''} title={b ? undefined : `manim default${param.default ? ` (${param.default})` : ''}`} onClick={() => onChange(b)}>
+              {b || (param.default === 'True' || param.default === 'False' ? `auto·${param.default[0]}` : 'auto')}
+            </button>
+          ))}
+        </div>
+      );
+    case 'color':
+      return <ColorField value={value} onChange={onChange} placeholder={placeholder} />;
+    case 'rate_func':
+      return (
+        <div className="row">
+          <svg className="rate-icon" viewBox="0 0 24 16"><path d={ratePath(value || param.default || 'smooth', 24, 16)} /></svg>
+          <select className="field" value={value} onChange={(e) => onChange(e.target.value)}>
+            <option value="">default ({param.default || '—'})</option>
+            {catalog?.rate_funcs.map((r) => <option key={r} value={r}>{r}</option>)}
+            {value && !catalog?.rate_funcs.includes(value) && <option value={value}>{value}</option>}
+          </select>
+        </div>
+      );
+    case 'number':
+      return <NumberControl param={param} value={value} onChange={onChange} placeholder={placeholder} />;
+    case 'vector':
+      return <VectorField value={value} onChange={onChange} placeholder={placeholder} objects={param.objects} />;
+    case 'choice':
+      return <ChoiceField options={param.options ?? []} value={value} onChange={onChange} def={param.default} />;
+    case 'mobject':
+      return <MobjectField value={value} onChange={onChange} def={param.default} />;
+    case 'mobjects':
+      return <MobjectsField value={value} onChange={onChange} star={param.name === '*'} />;
+    case 'range':
+      return <RangeField value={value} onChange={onChange} def={param.default} />;
+    case 'numbers': case 'strings': case 'colors': case 'points':
+      return <ListField kind={param.kind} value={value} onChange={onChange} star={param.name === '*'} def={param.default} />;
+    case 'colormap':
+      return <ColorMapField value={value} onChange={onChange} />;
+    case 'dict':
+      return <DictField value={value} onChange={onChange} hint={param.hint} def={param.default} />;
+    case 'matrix':
+      return <MatrixField value={value} onChange={onChange} />;
+    case 'string':
+      return <Field value={pyString(value) ?? value} onChange={(t) => onChange(t === '' ? '' : pyQuote(t))} placeholder={pyString(param.default) ?? placeholder} />;
+    case 'path':
+      return (
+        <div className="row">
+          <Field value={pyString(value) ?? value} onChange={(t) => onChange(t === '' ? '' : pyQuote(t))} placeholder={placeholder || 'file path'} />
+          <button className="ghost small" onClick={async () => { const f = await askPath('open', '', [], 'File path:'); if (f) onChange(pyQuote(f)); }}>Browse</button>
+        </div>
+      );
+    case 'function':
+      return (
+        <div className="row">
+          <Field value={value} onChange={onChange} placeholder={param.template ?? placeholder} className="mono" />
+          {!value && param.template && <button className="ghost small" title={`Insert ${param.template}`} onClick={() => onChange(param.template!)}>λ</button>}
+        </div>
+      );
+    default:
+      return <Field value={value} onChange={onChange} placeholder={placeholder} className="mono" />;
+  }
+}
+
+function NumberControl({ param, value, onChange, placeholder }: { param: Param; value: string; onChange: (v: string) => void; placeholder: string }) {
+  const unit = /opacity|alpha|proportion/.test(param.name) && !param.int;
+  const n = evalNumber(value) ?? evalNumber(param.default);
+  return (
+    <div className="row">
+      {unit && <input type="range" className="slider" min={0} max={1} step={0.01} value={n ?? 0} onChange={(e) => onChange(e.target.value)} />}
+      <Field value={value} onChange={onChange} placeholder={placeholder} className={`num ${unit ? 'narrow' : ''}`} />
+    </div>
+  );
+}
+
+const COMPASS = [['UL', 'UP', 'UR'], ['LEFT', 'ORIGIN', 'RIGHT'], ['DL', 'DOWN', 'DR']];
+const ARROWS: Record<string, string> = { UL: '↖', UP: '↑', UR: '↗', LEFT: '←', ORIGIN: '•', RIGHT: '→', DL: '↙', DOWN: '↓', DR: '↘', IN: '⊗', OUT: '⊙' };
+
+/** Point/direction: compass presets, draggable x/y/z, raw expression, or (optionally) an object. */
+export function VectorField({ value, onChange, placeholder, objects }: { value: string; onChange: (v: string) => void; placeholder?: string; objects?: boolean }) {
+  const names = useObjectNames();
+  const [open, setOpen] = useState(false);
+  const btn = useRef<HTMLButtonElement>(null);
+  const vec = evalVector(value) ?? (value.trim() ? null : evalVector(placeholder ?? ''));
+  const isObj = names.includes(value.trim());
+  const set = (i: number, x: number) => {
+    const v = [...(vec ?? [0, 0, 0])];
+    while (v.length < 3) v.push(0);
+    v[i] = x;
+    onChange(formatVector(v));
+  };
+  const rect = btn.current?.getBoundingClientRect();
+  return (
+    <div className="vec-field">
+      <div className="row">
+        <button ref={btn} className="compass-btn" title="Direction presets" onClick={() => setOpen(!open)}>{ARROWS[value.trim()] ?? '✥'}</button>
+        <Field value={value} onChange={onChange} placeholder={placeholder} list={objects ? 'me-points' : 'me-directions'} className="mono" />
+      </div>
+      {vec && !isObj && (
+        <div className="row vec-xyz">
+          {['x', 'y', 'z'].map((axis, i) => (
+            <span key={axis} className="vec-comp"><span className="muted">{axis}</span><ScrubNumber value={vec[i] ?? 0} step={0.02} precision={3} onChange={(x) => set(i, x)} /></span>
+          ))}
+        </div>
+      )}
+      {open && rect && createPortal(
+        <>
+          <div className="popover-back" onPointerDown={() => setOpen(false)} />
+          <div className="compass-pop" style={{ top: Math.min(rect.bottom + 4, window.innerHeight - 200), left: Math.max(8, rect.left) }}>
+            {COMPASS.map((row) => row.map((d) => (
+              <button key={d} title={d} className={value.trim() === d ? 'on' : ''} onClick={() => { onChange(d); setOpen(false); }}>{ARROWS[d]}</button>
+            )))}
+            <button title="IN" onClick={() => { onChange('IN'); setOpen(false); }}>{ARROWS.IN}</button>
+            <button title="OUT" onClick={() => { onChange('OUT'); setOpen(false); }}>{ARROWS.OUT}</button>
+            <button title="default" onClick={() => { onChange(''); setOpen(false); }}>∅</button>
+            {objects && names.map((n) => (
+              <button key={n} className={`obj ${value.trim() === n ? 'on' : ''}`} onClick={() => { onChange(n); setOpen(false); }}>{n}</button>
+            ))}
+          </div>
+        </>,
+        document.body,
+      )}
+    </div>
+  );
+}
+
+export function ChoiceField({ options, value, onChange, def }: { options: string[]; value: string; onChange: (v: string) => void; def?: string }) {
+  return (
+    <select className="field mono" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">default{def ? ` (${def})` : ''}</option>
+      {options.map((o) => <option key={o} value={o}>{pyString(o) ?? o}</option>)}
+      {value && !options.includes(value) && <option value={value}>{value}</option>}
+    </select>
+  );
+}
+
+function MobjectField({ value, onChange, def }: { value: string; onChange: (v: string) => void; def?: string }) {
+  const names = useObjectNames();
+  return (
+    <select className="field mono" value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{def && def !== 'None' ? `default (${def})` : '— none —'}</option>
+      {names.map((n) => <option key={n} value={n}>{n}</option>)}
+      {value && !names.includes(value) && <option value={value}>{value}</option>}
+    </select>
+  );
+}
+
+function MobjectsField({ value, onChange, star }: { value: string; onChange: (v: string) => void; star: boolean }) {
+  const names = useObjectNames().filter((n) => n !== 'self.camera.frame');
+  const items = (star ? splitTop(value) : parseList(value) ?? []).filter(Boolean);
+  const toggle = (n: string) => {
+    const next = items.includes(n) ? items.filter((x) => x !== n) : [...items, n];
+    onChange(next.length ? (star ? next.join(', ') : `[${next.join(', ')}]`) : '');
+  };
+  return (
+    <div className="chips">
+      {names.length === 0 && <span className="muted small">no objects yet</span>}
+      {names.map((n) => <button key={n} className={`chip ${items.includes(n) ? 'on' : ''}`} onClick={() => toggle(n)}>{n}</button>)}
+    </div>
+  );
+}
+
+/** Small text box whose label scrubs it when the value is numeric. */
+function NumBox({ label, value, onChange, placeholder, step = 0.05 }: { label?: string; value: string; onChange: (v: string) => void; placeholder?: string; step?: number }) {
+  const start = () => evalNumber(value) ?? evalNumber(placeholder ?? '') ?? 0;
+  return (
+    <span className="numbox">
+      {label !== undefined && <span className="scrubbable muted" onPointerDown={scrubber(start, step, (v) => onChange(String(v)))}>{label}</span>}
+      <Field value={value} onChange={onChange} placeholder={placeholder} className="num" />
+    </span>
+  );
+}
+
+function RangeField({ value, onChange, def }: { value: string; onChange: (v: string) => void; def: string }) {
+  const items = parseList(value) ?? [];
+  const defs = parseList(def) ?? [];
+  const set = (i: number, v: string) => {
+    const next = [0, 1, 2].map((k) => (k === i ? v : items[k] ?? ''));
+    if (!next[2]) next.pop();
+    if (next.every((x) => !x)) return onChange('');
+    onChange(`[${next.map((x, k) => x || defs[k] || (k === 2 ? '1' : '0')).join(', ')}]`);
+  };
+  return (
+    <div className="row range-field">
+      {['min', 'max', 'step'].map((l, i) => <NumBox key={l} label={l} value={items[i] ?? ''} placeholder={defs[i] ?? (i === 2 ? 'auto' : '')} step={i === 2 ? 0.05 : 0.1} onChange={(v) => set(i, v)} />)}
+    </div>
+  );
+}
+
+function ListField({ kind, value, onChange, star, def }: { kind: 'numbers' | 'strings' | 'colors' | 'points'; value: string; onChange: (v: string) => void; star: boolean; def: string }) {
+  const items = (star ? splitTop(value) : parseList(value) ?? []).filter((x, i, a) => x || i < a.length - 1);
+  const write = (next: string[]) => onChange(next.length ? (star ? next.join(', ') : `[${next.join(', ')}]`) : '');
+  const set = (i: number, v: string) => write(items.map((x, k) => (k === i ? v : x)));
+  const fresh = { numbers: '0', strings: '""', colors: 'WHITE', points: 'ORIGIN' }[kind];
+  return (
+    <div className="list-field">
+      {items.length === 0 && <span className="muted small">{def && def !== 'None' ? `default ${def}` : 'empty'}</span>}
+      {items.map((it, i) => (
+        <div key={i} className="row list-row">
+          <span className="muted small idx">{i}</span>
+          {kind === 'numbers' && <NumBox value={it} onChange={(v) => set(i, v)} label="⇔" step={0.1} />}
+          {kind === 'strings' && <Field value={pyString(it) ?? it} onChange={(t) => set(i, pyQuote(t))} />}
+          {kind === 'colors' && <ColorField value={it} onChange={(v) => set(i, v || 'WHITE')} />}
+          {kind === 'points' && <VectorField value={it} onChange={(v) => set(i, v || 'ORIGIN')} />}
+          <button className="x-btn" title="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <button className="ghost small" onClick={() => write([...items, kind === 'points' && items.length ? items[items.length - 1] : fresh])}>+ add</button>
+    </div>
+  );
+}
+
+function ColorMapField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const items = parseDict(value) ?? [];
+  const write = (next: [string, string][]) => onChange(formatDict(next));
+  return (
+    <div className="list-field">
+      {items.map(([k, v], i) => (
+        <div key={i} className="row list-row">
+          <Field value={pyString(k) ?? k} placeholder="text" onChange={(t) => write(items.map((x, j) => (j === i ? [pyQuote(t), x[1]] : x)))} />
+          <ColorField value={v} onChange={(c) => write(items.map((x, j) => (j === i ? [x[0], c || 'WHITE'] : x)))} />
+          <button className="x-btn" onClick={() => write(items.filter((_, j) => j !== i))}>×</button>
+        </div>
+      ))}
+      <button className="ghost small" onClick={() => write([...items, ['"x"', 'YELLOW']])}>+ color a substring</button>
+    </div>
+  );
+}
+
+function DictField({ value, onChange, hint, def }: { value: string; onChange: (v: string) => void; hint?: string; def: string }) {
+  const sig = useSignature(hint ?? '');
+  const items = parseDict(value) ?? [];
+  const [newKey, setNewKey] = useState('');
+  const write = (next: [string, string][]) => onChange(formatDict(next));
+  const keyName = (k: string) => pyString(k) ?? k;
+  const used = new Set(items.map(([k]) => keyName(k)));
+  const hintParams = (sig?.params ?? []).filter((p) => p.name !== '*');
+  const add = (k: string) => {
+    if (!k || used.has(k)) return;
+    const p = hintParams.find((x) => x.name === k);
+    write([...items, [JSON.stringify(k), p?.default && p.default !== 'None' ? p.default : 'None']]);
+    setNewKey('');
+  };
+  return (
+    <div className="dict-field">
+      {items.length === 0 && <span className="muted small">{def && def !== 'None' && def !== '{}' ? `default ${def}` : 'no keys set'}</span>}
+      {items.map(([k, v], i) => {
+        const name = keyName(k);
+        const p = hintParams.find((x) => x.name === name) ?? { name, label: name, kind: 'expr' as ParamKind, default: '', required: false, annotation: '', from: '' };
+        return (
+          <ParamField key={k + i} param={{ ...p, required: false }} value={v} onChange={(nv) => write(items.map((x, j) => (j === i ? [x[0], nv || 'None'] : x)))}
+            onRemove={() => write(items.filter((_, j) => j !== i))} />
+        );
+      })}
+      <div className="row">
+        {hintParams.length > 0 ? (
+          <select className="field mono" value="" onChange={(e) => add(e.target.value)}>
+            <option value="">+ {hint} option…</option>
+            {hintParams.filter((p) => !used.has(p.name)).map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+          </select>
+        ) : (
+          <>
+            <input className="field mono" placeholder="key" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+            <button className="ghost small" disabled={!newKey.trim()} onClick={() => add(newKey.trim())}>+ key</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MatrixField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const rows = (parseList(value) ?? []).map((r) => parseList(r) ?? [r]);
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const grid = rows.length ? rows.map((r) => Array.from({ length: cols }, (_, j) => r[j] ?? '0')) : [];
+  const write = (g: string[][]) => onChange(g.length ? `[${g.map((r) => `[${r.join(', ')}]`).join(', ')}]` : '');
+  return (
+    <div className="matrix-field">
+      <div className="matrix-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+        {grid.map((r, i) => r.map((c, j) => (
+          <Field key={`${i}-${j}`} value={c} className="mono num" onChange={(v) => write(grid.map((rr, a) => rr.map((cc, b) => (a === i && b === j ? v || '0' : cc))))} />
+        )))}
+      </div>
+      <div className="row">
+        <button className="ghost small" onClick={() => write([...grid, Array(grid.length ? cols : 2).fill('0')])}>+ row</button>
+        <button className="ghost small" disabled={!grid.length} onClick={() => write(grid.map((r) => [...r, '0']))}>+ col</button>
+        <button className="ghost small" disabled={!grid.length} onClick={() => write(grid.slice(0, -1))}>− row</button>
+        <button className="ghost small" disabled={cols < 2} onClick={() => write(grid.map((r) => r.slice(0, -1)))}>− col</button>
+      </div>
+    </div>
   );
 }
 
@@ -198,6 +542,10 @@ export function SharedLists() {
     <>
       <datalist id="me-colors">{catalog?.colors.map((c) => <option key={c} value={c} />)}</datalist>
       <datalist id="me-directions">{catalog?.directions.map((c) => <option key={c} value={c} />)}</datalist>
+      <datalist id="me-points">
+        {catalog?.directions.map((c) => <option key={c} value={c} />)}
+        {objects.map((o) => <option key={o.id} value={o.name} />)}
+      </datalist>
       <datalist id="me-mobjects">{catalog?.mobjects.map((c) => <option key={c.name} value={c.name} />)}</datalist>
       <datalist id="me-animations">
         <option value="animate" />

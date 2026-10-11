@@ -62,12 +62,23 @@ export interface SceneDoc {
 export interface Param {
   name: string;
   label: string;
-  kind: 'number' | 'bool' | 'color' | 'string' | 'vector' | 'rate_func' | 'expr';
+  kind: ParamKind;
   default: string;
   required: boolean;
   annotation: string;
   from: string;
+  options?: string[]; // choice: Python expressions to pick from
+  hint?: string; // dict: class (or Class.method) whose kwargs are the keys
+  template?: string; // function: starter lambda
+  int?: boolean; // number: integer
+  objects?: boolean; // vector: also accepts a mobject
+  pos?: number; // positional index (the "*" arg fills pos 0 when the class has no *args)
+  kwonly?: boolean;
 }
+
+export type ParamKind =
+  | 'number' | 'bool' | 'color' | 'string' | 'vector' | 'rate_func' | 'expr' | 'choice' | 'mobject' | 'mobjects'
+  | 'range' | 'numbers' | 'strings' | 'colors' | 'colormap' | 'dict' | 'points' | 'function' | 'path' | 'matrix';
 
 export interface CatalogEntry {
   name: string;
@@ -101,6 +112,7 @@ export interface Signature {
   animation: boolean;
   vector: boolean;
   unknown?: boolean;
+  methods?: string[]; // chainable methods (mobject classes)
 }
 
 export interface RunError {

@@ -20,6 +20,7 @@ map variables to mobjects and to time code clips.
 
 from __future__ import annotations
 
+import json
 import keyword
 import re
 import textwrap
@@ -147,6 +148,10 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     needs_helper = any(not _simple(g) for g in groups)
 
     emit("from manim import *")
+    # ease_* rate functions aren't in manim's star export; import the ones this scene uses.
+    eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", json.dumps(doc))))
+    if eases:
+        emit(f"from manim.utils.rate_functions import {', '.join(eases)}")
     emit("import numpy as np")
     if not preview:
         bg = cfg.get("background_color")

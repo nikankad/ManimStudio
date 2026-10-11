@@ -3,6 +3,7 @@ import {
   addAnimation, clipDuration, deleteSelection, duplicateObject, fps, frameSnap, renameObject, setState, timecode, toast, updateDoc,
   useSignature, useStore,
 } from '../store';
+import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
 import type { Args, Clip, Param, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 
@@ -76,7 +77,7 @@ function setArg(args: Args, k: string, v: string) {
 function ObjectInspector({ obj }: { obj: SceneObject }) {
   const sig = useSignature(obj.ctor);
   const objects = useStore((s) => s.doc.objects);
-  const methods = useStore((s) => s.catalog?.methods ?? []);
+  const chainCls = useChainClass(obj.name);
   const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
   const content = TEXT_CTORS.has(obj.ctor) ? unquote(obj.args['*'] ?? '') : null;
   const isVector = sig?.vector ?? true;
@@ -132,7 +133,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
             const p = sig?.params.find((x) => x.name === k);
             const v = obj.args[k] ?? '';
             const set = (nv: string) => setObj(obj.id, (o) => setArg(o.args, k, nv), 'arg:' + k);
-            if (isColorKey(k)) return <label key={k} className="param"><span className="pname">{k}</span><ColorField value={v} onChange={set} placeholder={p?.default} /></label>;
+            if (isColorKey(k)) return <div key={k} className="param"><span className="pname">{k}</span><ColorField value={v} onChange={set} placeholder={p?.default} /></div>;
             const num = v === '' ? null : parseFloat(v);
             const isOpacity = k.endsWith('opacity');
             return (
@@ -150,16 +151,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
 
       <ArgsEditor params={(sig?.params ?? []).filter((p) => !styleKeys.includes(p.name))} args={Object.fromEntries(Object.entries(obj.args).filter(([k]) => !styleKeys.includes(k)))} hideStar={content !== null} onChange={(k, v) => setObj(obj.id, (o) => setArg(o.args, k, v), 'arg:' + k)} />
 
-      <section>
-        <h4>
-          Method chain{' '}
-          <select className="inline" value="" onChange={(e) => setObj(obj.id, (o) => void (o.chain = (o.chain ? o.chain + '\n' : '') + `.${e.target.value}()`), 'chain-add')}>
-            <option value="">+ method</option>
-            {methods.map((m) => <option key={m}>{m}</option>)}
-          </select>
-        </h4>
-        <Field multiline className="mono" value={obj.chain} placeholder=".set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
-      </section>
+      <ChainEditor title="Method chain" cls={chainCls} chain={obj.chain} placeholder=".set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
 
       <section>
         <h4>Animate at playhead</h4>
@@ -177,27 +169,31 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   );
 }
 
-function ArgsEditor({ params, args, onChange, hideStar }: { params: Param[]; args: Args; onChange: (k: string, v: string) => void; hideStar?: boolean }) {
+function ArgsEditor({ params, args, onChange, hideStar, title = 'Arguments' }: { params: Param[]; args: Args; onChange: (k: string, v: string) => void; hideStar?: boolean; title?: string }) {
   const [more, setMore] = useState(false);
   const [newKey, setNewKey] = useState('');
-  const shown = params.filter((p) => !(hideStar && p.name === '*'));
-  const primary = shown.filter((p) => !p.from || p.required || args[p.name] !== undefined);
+  // Starters like Text("Hello") store the first positional argument under "*"; show it in that parameter's field.
+  const alias = !params.some((p) => p.name === '*') && args['*'] !== undefined ? params.find((p) => p.pos === 0) : undefined;
+  const keyOf = (p: Param) => (p === alias ? '*' : p.name);
+  const shown = params.filter((p) => !(hideStar && (p.name === '*' || p === alias)));
+  const primary = shown.filter((p) => !p.from || p.required || p.kind === 'rate_func' || args[keyOf(p)] !== undefined);
   const inherited = shown.filter((p) => !primary.includes(p));
-  const known = new Set(params.map((p) => p.name));
+  const known = new Set(params.map(keyOf));
   const extra = Object.keys(args).filter((k) => !known.has(k) && !(hideStar && k === '*'));
+  const field = (p: Param) => <ParamField key={p.name} param={p} value={args[keyOf(p)] ?? ''} onChange={(v) => onChange(keyOf(p), v)} />;
   return (
     <section>
-      <h4>Arguments</h4>
-      {primary.map((p) => <ParamField key={p.name} param={p} value={args[p.name] ?? ''} onChange={(v) => onChange(p.name, v)} />)}
+      <h4>{title}</h4>
+      {primary.map(field)}
       {extra.map((k) => (
-        <ParamField key={k} param={{ name: k, label: k, kind: 'expr', default: '', required: false, annotation: '', from: '' }} value={args[k]} onChange={(v) => onChange(k, v)} />
+        <ParamField key={k} param={{ name: k, label: k, kind: 'expr', default: '', required: false, annotation: '', from: '' }} value={args[k]} onChange={(v) => onChange(k, v)} onRemove={() => onChange(k, '')} />
       ))}
       {inherited.length > 0 && (
         <>
           <button className="ghost small" onClick={() => setMore(!more)}>
             {more ? '▾' : '▸'} {inherited.length} more ({[...new Set(inherited.map((p) => p.from))].join(', ')})
           </button>
-          {more && inherited.map((p) => <ParamField key={p.name} param={p} value={args[p.name] ?? ''} onChange={(v) => onChange(p.name, v)} />)}
+          {more && inherited.map(field)}
         </>
       )}
       <div className="row">
@@ -205,6 +201,119 @@ function ArgsEditor({ params, args, onChange, hideStar }: { params: Param[]; arg
         <button className="ghost" disabled={!/^\w+$/.test(newKey)} onClick={() => { onChange(newKey, 'None'); setNewKey(''); }}>+ kwarg</button>
       </div>
     </section>
+  );
+}
+
+/** Class whose methods a chain on `name` calls: the object's constructor class, or a sensible base. */
+function useChainClass(name: string | undefined): string {
+  const obj = useStore((s) => s.doc.objects.find((o) => o.name === name));
+  if (name === 'self.camera.frame') return 'ScreenRectangle';
+  if (obj && /^[A-Za-z_]\w*$/.test(obj.ctor)) return obj.ctor;
+  return 'VMobject';
+}
+
+/** Method chain as editable call cards, each with the method's real signature. */
+function ChainEditor({ chain, cls, onChange, title, placeholder }: { chain: string; cls: string; onChange: (v: string) => void; title: string; placeholder: string }) {
+  const sig = useSignature(cls);
+  const common = useStore((s) => s.catalog?.methods ?? []);
+  const [raw, setRaw] = useState(false);
+  const calls = parseChain(chain);
+  const methods = sig?.methods ?? common;
+  const top = methods.filter((m) => common.includes(m));
+  const rest = methods.filter((m) => !common.includes(m));
+  const write = (next: Call[]) => onChange(formatChain(next));
+  return (
+    <section>
+      <h4>
+        {title}{' '}
+        <select className="inline" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
+          <option value="">+ method</option>
+          <optgroup label="Common">{top.map((m) => <option key={m}>{m}</option>)}</optgroup>
+          <optgroup label={`All ${cls} methods`}>{rest.map((m) => <option key={m}>{m}</option>)}</optgroup>
+        </select>
+        <span className="spacer" />
+        <button className={`raw-toggle ${raw || !calls ? 'on' : ''}`} disabled={!calls} title={calls ? 'Edit as Python' : 'This chain is custom Python'} onClick={() => setRaw(!raw)}>{'{}'}</button>
+      </h4>
+      {raw || !calls ? (
+        <Field multiline className="mono" value={chain} placeholder={placeholder} onChange={onChange} />
+      ) : (
+        <>
+          {calls.length === 0 && <p className="muted small">No methods. Add one from the list.</p>}
+          {calls.map((c, i) => (
+            <CallCard key={i} cls={cls} call={c} onChange={(nc) => write(calls.map((x, j) => (j === i ? nc : x)))}
+              onRemove={() => write(calls.filter((_, j) => j !== i))}
+              onUp={i > 0 ? () => write(calls.map((x, j) => (j === i - 1 ? calls[i] : j === i ? calls[i - 1] : x))) : undefined} />
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
+function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: Call; onChange: (c: Call) => void; onRemove: () => void; onUp?: () => void }) {
+  const sig = useSignature(`${cls}.${call.name}`);
+  const [newKey, setNewKey] = useState('');
+  const params = sig?.params ?? [];
+  const { pos, kw } = parseArgs(call.args);
+  // Map positional source onto parameters in order ("*" swallows the rest).
+  const args: Args = {};
+  const positional = params.filter((p) => !p.kwonly);
+  let overflow = false;
+  pos.forEach((src, i) => {
+    const p = positional[Math.min(i, positional.length - 1)];
+    if (!p || (p.name !== '*' && i >= positional.length)) overflow = true;
+    else if (p.name === '*') args['*'] = args['*'] ? `${args['*']}, ${src}` : src;
+    else args[p.name] = src;
+  });
+  for (const [k, v] of kw) args[k] = v;
+  const write = (next: Args) => {
+    const out: string[] = [];
+    const star = params.findIndex((p) => p.name === '*');
+    let i = 0;
+    // Leading required (or pre-*args) parameters stay positional, the rest become keywords.
+    for (; i < positional.length; i++) {
+      const p = positional[i];
+      if (p.name === '*') { if (next['*']) out.push(next['*']); i++; break; }
+      const v = next[p.name];
+      if (star > i && next['*']) { out.push(v || p.default || 'None'); continue; }
+      if (!v || !p.required) break;
+      out.push(v);
+    }
+    const done = new Set(positional.slice(0, i).map((p) => p.name));
+    for (const [k, v] of Object.entries(next)) if (v && k !== '*' && !done.has(k)) out.push(`${k}=${v}`);
+    onChange({ name: call.name, args: out.join(', ') });
+  };
+  const set = (k: string, v: string) => {
+    const next = { ...args };
+    if (v.trim()) next[k] = v;
+    else delete next[k];
+    write(next);
+  };
+  const known = new Set(params.map((p) => p.name));
+  return (
+    <div className="call-card">
+      <div className="call-head">
+        <span className="mono">.{call.name}</span>
+        <span className="spacer" />
+        {onUp && <button className="x-btn" title="Move up" onClick={onUp}>↑</button>}
+        <button className="x-btn" title="Remove" onClick={onRemove}>×</button>
+      </div>
+      {sig?.doc && <p className="doc small">{sig.doc}</p>}
+      {!sig || sig.unknown || overflow ? (
+        <Field className="mono" value={call.args} placeholder="arguments" onChange={(v) => onChange({ name: call.name, args: v })} />
+      ) : (
+        <>
+          {params.map((p) => <ParamField key={p.name} param={p} value={args[p.name] ?? ''} onChange={(v) => set(p.name, v)} />)}
+          {Object.keys(args).filter((k) => !known.has(k)).map((k) => (
+            <ParamField key={k} param={{ name: k, label: k, kind: 'expr', default: '', required: false, annotation: '', from: '' }} value={args[k]} onChange={(v) => set(k, v)} onRemove={() => set(k, '')} />
+          ))}
+          <div className="row">
+            <input className="field mono" placeholder="other_kwarg" value={newKey} onChange={(e) => setNewKey(e.target.value)} />
+            <button className="ghost small" disabled={!/^\w+$/.test(newKey)} onClick={() => { set(newKey, 'None'); setNewKey(''); }}>+ kwarg</button>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -221,6 +330,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
   const timeline = useStore((s) => s.timeline);
   const sig = useSignature(clip.kind === 'anim' && clip.cls !== 'animate' ? clip.cls ?? '' : '');
   const dur = clipDuration(clip, timeline);
+  const targetCls = useChainClass(clip.target);
   const timed = clip.kind === 'anim' || clip.kind === 'hold';
   const frames = (v: number) => Math.round(v * fps()) / fps();
   return (
@@ -251,11 +361,10 @@ function ClipInspector({ clip }: { clip: Clip }) {
       </section>
 
       {clip.kind === 'anim' && clip.cls === 'animate' && (
-        <section>
-          <h4>Methods to animate</h4>
-          <Field multiline className="mono" value={clip.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => setClip(clip.id, (c) => void (c.chain = v), 'chain')} />
-          <ArgsEditor params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '' }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
-        </section>
+        <>
+          <ChainEditor title="Methods to animate" cls={targetCls} chain={clip.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => setClip(clip.id, (c) => void (c.chain = v), 'chain')} />
+          <ArgsEditor title="Animation" params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '' }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
+        </>
       )}
       {clip.kind === 'anim' && clip.cls !== 'animate' && (
         <ArgsEditor params={(sig?.params ?? []).filter((p) => p.name !== 'run_time')} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
