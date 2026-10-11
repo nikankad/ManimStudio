@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from conftest import add_all, doc, needs_latex, obj
+from conftest import add_all, anim, animate, doc, needs_latex, obj, play, wait
 from mathengine import codegen, runtime
 
 
@@ -26,8 +26,7 @@ def test_segment_and_midpoint_follow_animation():
         obj("oM", "mid", "Dot", link={"kind": "midpoint", "a": "oA", "b": "oB"}),
         obj("oN", "mid2", "Dot", link={"kind": "midpoint", "a": "oS"}),
     ])
-    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate",
-                               "target": "B", "args": {"rate_func": "linear"}, "chain": ".shift(UP * 2)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "B", ".shift(UP * 2)", rate_func="linear"), run_time=1)]
     r, o = run(d, 0.5)
     assert o["seg"]["geom"]["end"] == pytest.approx([2, 2])
     assert o["mid"]["center"] == pytest.approx([0, 0.5])
@@ -39,9 +38,8 @@ def test_segment_and_midpoint_follow_animation():
 
 def test_style_animation_is_not_overwritten_by_redraw():
     d = doc(two_points() + [obj("oS", "seg", "Line", args={"color": "BLUE"}, link={"kind": "segment", "a": "oA", "b": "oB"})])
-    d["clips"] = [add_all(d),
-                  {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate", "target": "seg", "args": {}, "chain": ".set_color(RED)"},
-                  {"id": "c3", "kind": "anim", "track": "t3", "start": 1, "duration": 1, "cls": "animate", "target": "A", "args": {}, "chain": ".shift(LEFT)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "seg", ".set_color(RED)"), run_time=1),
+                     play(animate("c3", "A", ".shift(LEFT)"), run_time=1)]
     gen = codegen.generate(d)
     ns = {}
     from manim import tempconfig, RED
@@ -58,7 +56,7 @@ def test_style_animation_is_not_overwritten_by_redraw():
 def test_attached_label_offset_and_equation_terms():
     d = doc([obj("oA", "A", "Dot", pos=[1, 1]),
              obj("oL", "lab", "Text", args={"*": '"A"'}, link={"kind": "attach", "to": "oA", "offset": [0.3, 0.4]})])
-    d["clips"] = [add_all(d)]
+    d["timeline"] = [add_all(d)]
     r, o = run(d, 0)
     assert o["lab"]["center"] == pytest.approx([1.3, 1.4], abs=1e-6)
 
@@ -77,8 +75,7 @@ def test_graph_constructions_follow_parameter():
         obj("ok", "slope", "DecimalNumber", args={"*": "0"}, link={"kind": "measure", "what": "slope", "of": "ot"}),
         obj("ov", "aval", "DecimalNumber", args={"*": "0"}, pos=[3, 3], link={"kind": "measure", "what": "value", "expr": "2*a"}),
     ])
-    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 2, "cls": "animate",
-                               "target": "a", "args": {"rate_func": "linear"}, "chain": ".set_value(2)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "a", ".set_value(2)", rate_func="linear"), run_time=2)]
     r, o = run(d, 1.0)
     assert r.values["a"] == pytest.approx(1.5)
     # P sits on y = a x^2 - 1 at x = a (axes are 1 unit per unit, centered).
@@ -115,7 +112,7 @@ def test_circle_polygon_angle_coords_numberline():
         obj("np", "Q", "Dot", link={"kind": "coords", "axes": "nl", "x": "2"}),
         obj("ar", "arrow", "Arrow", link={"kind": "segment", "a": "oc", "b": "oV", "mode": "boundary"}),
     ])
-    d["clips"] = [add_all(d)]
+    d["timeline"] = [add_all(d)]
     r, o = run(d, 0)
     assert r.diagnostics == []
     assert o["circ"]["geom"]["radius"] == pytest.approx(2, abs=1e-3)
@@ -138,8 +135,7 @@ def test_diagnostics_missing_incompatible_order_cycle_and_conflict():
         obj("x4", "undef", "Dot", link={"kind": "coords", "axes": "oA", "x": "k"}),
         obj("ok", "seg", "Line", link={"kind": "segment", "a": "oA", "b": "oB"}),
     ])
-    d["clips"] = [add_all(d), {"id": "mv", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate", "target": "seg",
-                               "args": {}, "chain": ".shift(UP)"}]
+    d["timeline"] = [add_all(d), play(animate("mv", "seg", ".shift(UP)"), run_time=1)]
     gen = codegen.generate(d)
     by = {}
     for x in gen.diagnostics:
@@ -172,10 +168,10 @@ def test_equation_terms_braces_and_transform_terms():
     hl = obj("h1", "hl", "SurroundingRectangle", link={"kind": "highlight", "target": "e1", "parts": ["p5"]})
     lab = obj("l1", "lab", "MathTex", args={"*": 'r"\\text{sum}"'}, link={"kind": "attach", "to": "e1", "parts": ["p3"], "offset": [0, -0.8]})
     d = doc([eq1, eq2, br, hl, lab])
-    d["clips"] = [
-        {"id": "c0", "kind": "add", "track": "t1", "start": 0, "duration": 0, "targets": ["eq1", "br", "hl", "lab"]},
-        {"id": "c1", "kind": "anim", "track": "t1", "start": 1, "duration": 1, "cls": "TransformTerms", "target": "eq1",
-         "terms": {"to": "e2", "pairs": [["p1", "q1"], ["p3", "q5"], ["p4", "q2"], ["p5", "q3"]]}, "args": {}},
+    d["timeline"] = [
+        {"id": "c0", "kind": "add", "targets": ["eq1", "br", "hl", "lab"]},
+        wait(1),
+        play({**anim("c1", "TransformTerms", "eq1"), "terms": {"to": "e2", "pairs": [["p1", "q1"], ["p3", "q5"], ["p4", "q2"], ["p5", "q3"]]}}),
     ]
     gen = codegen.generate(d)
     assert 'eq1 = MathTex(r"a^2", r"+", r"b^2", r"=", r"c^2")' in gen.source
@@ -211,8 +207,7 @@ def test_exported_file_renders_with_manim_cli(tmp_path):
         obj("ot", "tan", "Line", link={"kind": "tangent", "graph": "og", "x": "1"}),
     ])
     d["config"].update(pixel_width=320, pixel_height=180, frame_rate=10)
-    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate", "target": "a",
-                               "args": {}, "chain": ".set_value(1)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "a", ".set_value(1)"), run_time=1)]
     src = codegen.generate(d).source
     path = tmp_path / "scene.py"
     path.write_text(src)
@@ -223,20 +218,20 @@ def test_exported_file_renders_with_manim_cli(tmp_path):
 
 
 @needs_latex
-def test_transform_terms_inside_timed_animations():
-    """A TransformTerms clip overlapping another clip runs inside TimedAnimations."""
+def test_transform_terms_in_a_play_with_other_animations():
+    """A TransformTerms animation inside a LaggedStart, next to another animation."""
     eq1 = obj("e1", "eq1", "MathTex", eq={"parts": [{"id": "p1", "tex": "x"}, {"id": "p2", "tex": "+"}, {"id": "p3", "tex": "1"}]})
     eq2 = obj("e2", "eq2", "MathTex", eq={"parts": [{"id": "q1", "tex": "1"}, {"id": "q2", "tex": "+"}, {"id": "q3", "tex": "x"}]})
     dot = obj("d", "dot", "Dot", pos=[0, -2])
     d = doc([eq1, eq2, dot])
-    d["clips"] = [
-        {"id": "c0", "kind": "add", "track": "t1", "start": 0, "duration": 0, "targets": ["eq1", "dot"]},
-        {"id": "c1", "kind": "anim", "track": "t1", "start": 1, "duration": 1, "cls": "TransformTerms", "target": "eq1",
-         "terms": {"to": "e2", "pairs": [["p1", "q3"], ["p2", "q2"], ["p3", "q1"]]}, "args": {}},
-        {"id": "c2", "kind": "anim", "track": "t2", "start": 1.5, "duration": 1, "cls": "Indicate", "target": "dot", "args": {}},
+    terms = {**anim("c1", "TransformTerms", "eq1"), "terms": {"to": "e2", "pairs": [["p1", "q3"], ["p2", "q2"], ["p3", "q1"]]}}
+    d["timeline"] = [
+        {"id": "c0", "kind": "add", "targets": ["eq1", "dot"]},
+        wait(1),
+        play({"id": "g", "cls": "LaggedStart", "target": "", "args": {"lag_ratio": "0.5"}, "anims": [terms, anim("c2", "Indicate", "dot")]}),
     ]
     gen = codegen.generate(d)
-    assert "TimedAnimations(" in gen.source and "lambda: TransformTerms(eq1, eq2" in gen.source
+    assert "self.play(LaggedStart(TransformTerms(eq1, eq2" in gen.source
     for t in (1.5, 1.9):
         run(d, t)
     r, o = run(d, 10)
@@ -265,8 +260,7 @@ def test_intersections_of_lines_and_circles_follow_animation():
         obj("cc0", "CC0", "Dot", link={"kind": "intersection", "a": "c1", "b": "c2", "which": 0}),
         obj("cc1", "CC1", "Dot", link={"kind": "intersection", "a": "c1", "b": "c2", "which": 1}),
     ])
-    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate",
-                               "target": "B", "args": {"rate_func": "linear"}, "chain": ".shift(UP * 2)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "B", ".shift(UP * 2)", rate_func="linear"), run_time=1)]
     r, o = run(d, 0)
     assert r.diagnostics == []
     assert o["X"]["center"] == pytest.approx([0, 0], abs=1e-6)
@@ -300,7 +294,7 @@ def test_graph_intersections_roots_and_asymptotes():
         obj("ai", "AI", "Dot", pos=[2, 2], link={"kind": "intersection", "a": "ogi", "b": "ox"}),
         obj("yi", "YI", "Dot", link={"kind": "intersection", "a": "og", "b": "ox", "axis": "y"}),
     ])
-    d["clips"] = [add_all(d)]
+    d["timeline"] = [add_all(d)]
     r, o = run(d, 0)
     assert r.diagnostics == []
     assert o["R0"]["center"] == pytest.approx([-1, 0], abs=1e-4)
@@ -326,8 +320,7 @@ def test_perpendicular_parallel_and_feet():
         obj("fy", "FY", "Dot", link={"kind": "projection", "point": "oC", "onto": "ox", "axis": "y"}),
         obj("pa", "pa", "Line", link={"kind": "perpendicular", "line": "ox", "through": "oC", "axis": "y", "mode": "foot"}),
     ])
-    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate",
-                               "target": "B", "args": {"rate_func": "linear"}, "chain": ".shift(UP * 4)"}]
+    d["timeline"] = [add_all(d), play(animate("c2", "B", ".shift(UP * 4)", rate_func="linear"), run_time=1)]
     r, o = run(d, 0)
     assert r.diagnostics == []
     assert o["alt"]["geom"]["start"] == pytest.approx([1, 2], abs=1e-4) and o["alt"]["geom"]["end"] == pytest.approx([1, 0], abs=1e-4)
@@ -362,7 +355,7 @@ def test_new_construction_diagnostics():
         obj("x6", "onto_pt", "Dot", link={"kind": "projection", "point": "oB", "onto": "oA"}),
         obj("x7", "perp_self", "Line", link={"kind": "perpendicular", "line": "ab", "through": "ab"}),
     ])
-    d["clips"] = [add_all(d)]
+    d["timeline"] = [add_all(d)]
     gen = codegen.generate(d)
     by = {x["id"]: x["message"] for x in gen.diagnostics}
     assert "two different" in by["x1"]

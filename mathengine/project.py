@@ -11,6 +11,12 @@ Format history (each upgrade is explicit and lossless):
   ``terms`` (term correspondence of a TransformTerms clip); the document has
   ``constructions`` (reusable templates saved with the project). Version 2
   documents are valid version 3 documents without any of these.
+* 4: the timeline is the ordered list of ``construct()`` statements (``timeline``, see timeline.py):
+  ``self.play`` with its animations, ``self.wait``, ``self.add``, ``self.remove`` and code, instead of
+  clips at free times on tracks. Each step is one manim statement, so the editor and the code match one
+  to one. Clips are converted to the statements the old editor compiled them to (overlapping clips
+  become one ``self.play``; a clip that started later inside it waits first with ``Succession(Wait(t), …)``).
+  Construction templates get a ``timeline`` too.
 """
 
 from __future__ import annotations
@@ -19,7 +25,9 @@ import json
 import uuid
 from pathlib import Path
 
-FORMAT_VERSION = 3
+from . import timeline
+
+FORMAT_VERSION = 4
 
 
 def _id(prefix: str) -> str:
@@ -33,8 +41,7 @@ def new_project() -> dict:
         "config": {"pixel_width": 1920, "pixel_height": 1080, "frame_rate": 60, "background_color": "#000000"},
         "header": "",
         "objects": [],
-        "tracks": [{"id": f"t{i + 1}", "name": f"V{i + 1}"} for i in range(3)],
-        "clips": [],
+        "timeline": [],
         "markers": [],
         "constructions": [],
     }
@@ -54,6 +61,8 @@ def upgrade(doc: dict) -> dict:
         doc = upgrade_v1(doc)
     if doc.get("version", 1) < 3:
         doc = upgrade_v2(doc)
+    if doc.get("version", 1) < 4:
+        doc = upgrade_v3(doc)
     base = new_project()
     base.update(doc)
     base["config"] = {**new_project()["config"], **doc.get("config", {})}
@@ -74,6 +83,28 @@ def upgrade_v2(doc: dict) -> dict:
     out["version"] = 3
     out.setdefault("markers", [])
     out.setdefault("constructions", [])
+    return out
+
+
+def upgrade_v3(doc: dict) -> dict:
+    """Clips at times on tracks become the statements they compiled to (timeline.from_clips)."""
+    out = {k: v for k, v in doc.items() if k not in ("clips", "tracks")}
+    out["version"] = 4
+    out["timeline"] = timeline.from_clips(doc.get("clips") or [], doc.get("tracks") or [])
+    out["constructions"] = [upgrade_template(t) for t in doc.get("constructions") or []]
+    return out
+
+
+def upgrade_template(t: dict) -> dict:
+    """A construction template with ``clips`` (relative times, format 3) gets the equivalent ``timeline``."""
+    if "clips" not in t:
+        return t
+    clips = [{"id": _id("c"), "track": "t1", **c} for c in t.get("clips") or []]
+    for c in clips:
+        c.setdefault("start", 0)
+        c.setdefault("duration", 1 if c.get("kind") in ("anim", "hold", "code") else 0)
+    out = {k: v for k, v in t.items() if k != "clips"}
+    out["timeline"] = timeline.from_clips(clips, [])
     return out
 
 

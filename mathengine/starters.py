@@ -1,9 +1,9 @@
 """Built-in reusable constructions (templates).
 
 A template is a self-contained set of objects whose links refer only to each
-other (template-local ids), optional clips (times relative to the insertion
-point, targets by template-local *name*), and ``inputs``: the parameters,
-labels, colors and visibility switches offered when inserting it.
+other (template-local ids), an optional ``timeline`` (manim statements inserted
+at the playhead, targets by template-local *name*), and ``inputs``: the
+parameters, labels, colors and visibility switches offered when inserting it.
 
 Inserting a template (frontend ``insertTemplate``) gives every object a new id
 and a unique name, so instances are independent of each other. An instance is
@@ -16,11 +16,13 @@ Input kinds:
 * ``param``: the initial value of a ValueTracker (``targets`` = that object).
 * ``text``: a label's text, written to each target's ``*`` argument as a raw string.
 * ``color``: a color written to ``key`` (default ``color``) of every target.
-* ``visible``: whether the targets get an intro clip (hidden objects are still
-  constructed, so things built from them keep working).
+* ``visible``: whether the targets are shown (hidden objects are left out of the
+  timeline but still constructed, so things built from them keep working).
 """
 
 from __future__ import annotations
+
+from .timeline import add, anim, animate, group, number, play, wait
 
 
 def _o(id: str, name: str, ctor: str, **kw) -> dict:
@@ -52,10 +54,11 @@ def labeled_triangle() -> dict:
             _label("lb", "label_B", "B", "B", [0.35, -0.35]),
             _label("lc", "label_C", "C", "C", [0, 0.4]),
         ],
-        "clips": [
-            {"kind": "anim", "cls": "Create", "target": n, "start": 0, "duration": 1} for n in ("side_c", "side_a", "side_b")
-        ] + [{"kind": "add", "targets": ["A", "B", "C"], "start": 0, "duration": 0}]
-          + [{"kind": "anim", "cls": "Write", "target": n, "start": 1, "duration": 0.6} for n in ("label_A", "label_B", "label_C")],
+        "timeline": number([
+            add("A", "B", "C"),
+            play(anim("Create", "side_c"), anim("Create", "side_a"), anim("Create", "side_b")),
+            play(anim("Write", "label_A"), anim("Write", "label_B"), anim("Write", "label_C"), run_time=0.6),
+        ]),
         "inputs": [
             {"id": "ta", "kind": "text", "label": "Label A", "default": "A", "targets": [{"object": "la"}]},
             {"id": "tb", "kind": "text", "label": "Label B", "default": "B", "targets": [{"object": "lb"}]},
@@ -93,14 +96,12 @@ def unit_circle() -> dict:
             _o("vs", "sin_value", "DecimalNumber", args={"*": "0", "color": "GREEN", "font_size": "30"},
                link={"kind": "measure", "what": "value", "expr": "sin(theta)", "of": "pf", "offset": [0.55, 0]}),
         ],
-        "clips": [
-            {"kind": "anim", "cls": "Create", "target": "axes", "start": 0, "duration": 1},
-            {"kind": "anim", "cls": "Create", "target": "circle", "start": 0.5, "duration": 1},
-            {"kind": "add", "targets": ["O", "P", "F", "radius", "sine", "cosine", "angle", "theta_label", "cos_value", "sin_value"],
-             "start": 1.5, "duration": 0},
-            {"kind": "anim", "cls": "animate", "target": "theta", "chain": ".set_value(PI / 4 + TAU)", "start": 2, "duration": 4,
-             "args": {"rate_func": "linear"}},
-        ],
+        "timeline": number([
+            play(group("LaggedStart", anim("Create", "axes"), anim("Create", "circle"), lag_ratio=0.5)),
+            add("O", "P", "F", "radius", "sine", "cosine", "angle", "theta_label", "cos_value", "sin_value"),
+            wait(0.5),
+            play(animate("theta", ".set_value(PI / 4 + TAU)", rate_func="linear"), run_time=4),
+        ]),
         "inputs": [
             {"id": "th", "kind": "param", "label": "θ (radians)", "default": "PI / 4", "targets": [{"object": "theta"}]},
             {"id": "cc", "kind": "color", "label": "Circle color", "default": "BLUE", "targets": [{"object": "circ", "key": "color"}]},
@@ -121,12 +122,11 @@ def number_line() -> dict:
             _o("val", "value", "DecimalNumber", args={"*": "0", "color": "YELLOW"},
                link={"kind": "measure", "what": "value", "expr": "x", "of": "pt", "offset": [0, 0.5]}),
         ],
-        "clips": [
-            {"kind": "anim", "cls": "Create", "target": "number_line", "start": 0, "duration": 1},
-            {"kind": "anim", "cls": "FadeIn", "target": "point", "start": 1, "duration": 0.5},
-            {"kind": "anim", "cls": "FadeIn", "target": "value", "start": 1, "duration": 0.5},
-            {"kind": "anim", "cls": "animate", "target": "x", "chain": ".set_value(-2)", "start": 1.5, "duration": 2},
-        ],
+        "timeline": number([
+            play(anim("Create", "number_line")),
+            play(anim("FadeIn", "point"), anim("FadeIn", "value"), run_time=0.5),
+            play(animate("x", ".set_value(-2)"), run_time=2),
+        ]),
         "inputs": [
             {"id": "xv", "kind": "param", "label": "Start value", "default": "1.5", "targets": [{"object": "x"}]},
             {"id": "pc", "kind": "color", "label": "Point color", "default": "YELLOW", "targets": [{"object": "pt", "key": "color"}, {"object": "val", "key": "color"}]},
@@ -154,14 +154,14 @@ def secant_to_tangent() -> dict:
             _o("ts", "tangent_slope", "DecimalNumber", args={"*": "0", "color": "GREEN", "font_size": "32"},
                link={"kind": "measure", "what": "slope", "of": "tan", "offset": [1.2, -0.4]}),
         ],
-        "clips": [
-            {"kind": "anim", "cls": "Create", "target": "axes", "start": 0, "duration": 1},
-            {"kind": "anim", "cls": "Create", "target": "curve", "start": 0.5, "duration": 1},
-            {"kind": "add", "targets": ["P", "Q", "secant", "secant_slope"], "start": 1.5, "duration": 0},
-            {"kind": "anim", "cls": "Create", "target": "tangent", "start": 1.5, "duration": 0.5},
-            {"kind": "add", "targets": ["tangent_slope"], "start": 2, "duration": 0},
-            {"kind": "anim", "cls": "animate", "target": "h", "chain": ".set_value(0.01)", "start": 2.5, "duration": 3},
-        ],
+        "timeline": number([
+            play(group("LaggedStart", anim("Create", "axes"), anim("Create", "curve"), lag_ratio=0.5)),
+            add("P", "Q", "secant", "secant_slope"),
+            play(anim("Create", "tangent"), run_time=0.5),
+            add("tangent_slope"),
+            wait(0.5),
+            play(animate("h", ".set_value(0.01)"), run_time=3),
+        ]),
         "inputs": [
             {"id": "px", "kind": "param", "label": "x at P", "default": "1", "targets": [{"object": "x0"}]},
             {"id": "ph", "kind": "param", "label": "Start h", "default": "1.5", "targets": [{"object": "h"}]},
@@ -182,15 +182,10 @@ def as_document(template: dict) -> dict:
     """A standalone project containing one instance of ``template`` with its default inputs (for tests and previews)."""
     import copy
 
-    from .project import new_project, pack_tracks
+    from .project import new_project, upgrade_template
 
     doc = new_project()
+    template = upgrade_template(template)
     doc["objects"] = copy.deepcopy(template["objects"])
-    clips = []
-    for i, c in enumerate(copy.deepcopy(template.get("clips", []))):
-        c.setdefault("args", {})
-        c["id"] = f"c{i}"
-        clips.append(c)
-    doc["tracks"] = pack_tracks(clips)
-    doc["clips"] = clips
+    doc["timeline"] = copy.deepcopy(template.get("timeline") or [])
     return doc

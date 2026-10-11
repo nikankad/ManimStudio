@@ -20,7 +20,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from . import catalog, codegen, mathexpr, recent, render, runtime, samples, starters, tex, version
-from .project import load_project, new_project, save_project
+from .project import load_project, new_project, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
 
@@ -299,7 +299,9 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def api_home(self, _q: dict, _b: dict) -> dict:
-        return {"recent": recent.listing(), "samples": samples.sample_list()}
+        with self.app.manim_lock:  # sample lengths are measured by running them once
+            listing = samples.sample_list()
+        return {"recent": recent.listing(), "samples": listing}
 
     def api_recent_remove(self, _q: dict, body: dict) -> dict:
         recent.remove(str(body.get("path", "")))
@@ -334,6 +336,7 @@ class Handler(BaseHTTPRequestHandler):
                 library = json.loads(LIBRARY_PATH.read_text(encoding="utf-8")).get("constructions", [])
             except (OSError, ValueError):
                 library = []
+        library = [upgrade_template(t) for t in library]  # saved with clips by earlier versions
         return {"starters": starters.starters(), "library": library, "path": str(LIBRARY_PATH)}
 
     def api_save_constructions(self, _q: dict, body: dict) -> dict:

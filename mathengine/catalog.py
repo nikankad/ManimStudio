@@ -77,7 +77,7 @@ FEATURED_ANIMATIONS = [
 ]
 
 # Animation classes that don't take a single mobject as first argument.
-SKIP_ANIMATIONS = {"Animation", "AnimationGroup", "LaggedStart", "LaggedStartMap", "Succession", "Wait", "Add",
+SKIP_ANIMATIONS = {"Animation",  # does nothing by itself
                    "ApplyPointwiseFunctionToCenter"}  # broken in manim itself: never passes its mobject on
 
 COMMON_METHODS = [
@@ -399,10 +399,34 @@ def _param(p: inspect.Parameter, name: str, label: str, source: str, required: b
 
 
 @functools.lru_cache(maxsize=None)
+def _kwargs_reads(klass: type) -> tuple[tuple[str, str], ...]:
+    """Options ``klass.__init__`` takes out of ``**kwargs`` itself, with their defaults.
+
+    ``Write`` reads ``run_time = kwargs.pop("run_time", None)`` (and computes it from the text's length when
+    it's None) before passing it on: the user's value still decides, so it is a real option.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(klass.__dict__["__init__"])))
+    except (OSError, TypeError, SyntaxError, KeyError):
+        return ()
+    fn = tree.body[0] if tree.body and isinstance(tree.body[0], ast.FunctionDef) else None
+    kw = fn.args.kwarg.arg if fn and fn.args.kwarg else None
+    out = {}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("pop", "get")
+                and isinstance(node.func.value, ast.Name) and node.func.value.id == kw and node.args
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            out.setdefault(node.args[0].value, ast.unparse(node.args[1]) if len(node.args) > 1 else "None")
+    return tuple(out.items())
+
+
+@functools.lru_cache(maxsize=None)
 def _super_call(klass: type) -> tuple[int, frozenset[str], bool, bool]:
     """What ``klass.__init__`` hands its parent.
 
     Returns (positional count, keyword names it sets itself, forwards **kwargs, forwards *args).
+    An option it reads out of **kwargs and then passes on (``Write``'s run_time) is the user's value,
+    so it isn't one it sets itself.
     Parent parameters the subclass fills in (``Square`` sets Rectangle's ``height``/``width``,
     ``Brace`` builds ``path_obj``) are not real options of the subclass, so the forms hide them;
     when **kwargs isn't forwarded to the parent at all (``Flash`` sends it to child animations),
@@ -432,8 +456,10 @@ def _super_call(klass: type) -> tuple[int, frozenset[str], bool, bool]:
                 break
             npos += 1
         # x=x only passes the user's value through when x is this __init__'s own parameter.
+        reads = dict(_kwargs_reads(klass))
         names = frozenset(k.arg for k in node.keywords
-                          if k.arg and not (isinstance(k.value, ast.Name) and k.value.id == k.arg and k.arg in own))
+                          if k.arg and k.arg not in reads
+                          and not (isinstance(k.value, ast.Name) and k.value.id == k.arg and k.arg in own))
         forwards = any(k.arg is None for k in node.keywords)
         return npos, names, forwards, star
     return 0, frozenset(), True, True  # no direct parent call: can't tell, keep following
@@ -449,9 +475,22 @@ def target_param(cls: type) -> str | None:
     for p in params:
         if p.kind is p.POSITIONAL_OR_KEYWORD and p.name in TARGET_PARAMS:
             return p.name
-    if params and params[0].kind is p.POSITIONAL_OR_KEYWORD:
+    # Wait(run_time=1, …) animates nothing: a first parameter with a default isn't a mobject.
+    if params and params[0].kind is p.POSITIONAL_OR_KEYWORD and params[0].default is inspect.Parameter.empty:
         return params[0].name
     return None
+
+
+def target_kind(cls: type) -> str:
+    """What an Animation class acts on: one ``mobject``, several ``mobjects`` (Add), other ``animations``
+    (AnimationGroup, LaggedStart, Succession: their children) or ``none`` (Wait)."""
+    try:
+        first = next(iter(list(inspect.signature(cls.__init__).parameters.values())[1:]), None)
+    except (TypeError, ValueError):
+        return "mobject"
+    if first is not None and first.kind is first.VAR_POSITIONAL:
+        return "animations" if "anim" in first.name else "mobjects"
+    return "mobject" if target_param(cls) else "none"
 
 
 @functools.lru_cache(maxsize=256)
@@ -515,6 +554,21 @@ def is_introducer(cls_name: str) -> bool:
 
 
 @functools.lru_cache(maxsize=256)
+def is_remover(cls_name: str) -> bool:
+    """True for animations that take their mobject off screen when they end (FadeOut, Uncreate, ShrinkToCenter…)."""
+    m = manim()
+    cls = vars(m).get(cls_name)
+    if not isinstance(cls, type) or not issubclass(cls, m.Animation):
+        return False
+    for extra in ((), (m.ORIGIN,)):
+        try:
+            return bool(cls(m.Square(), *extra).is_remover())
+        except Exception:
+            pass
+    return False
+
+
+@functools.lru_cache(maxsize=256)
 def target_keyword(cls_name: str) -> str | None:
     """Keyword the clip target must be passed as, when it isn't the first argument (ApplyMatrix(matrix, mobject))."""
     cls = vars(manim()).get(cls_name)
@@ -536,6 +590,7 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
     pos = 0
     target = target_param(cls) if skip_first else None
     fixed_pos, fixed_names = 0, frozenset()  # what the previous __init__ already passes up
+    read_defaults: dict[str, str] = {}  # options a subclass reads out of **kwargs itself, with its defaults
     docs = param_docs(cls)
     is_anim = issubclass(cls, manim().Animation)
     for level, klass in enumerate(cls.__mro__):
@@ -574,6 +629,8 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
             # Private bases (manim's _Fade etc.) hold the class's real parameters: treat them as its own.
             own = level == 0 or klass.__name__.startswith("_")
             entry = _param(p, p.name, p.name, "" if own else klass.__name__, p.default is inspect.Parameter.empty)
+            if p.name in read_defaults:
+                entry["default"] = read_defaults[p.name]
             entry.update(_special(cls, p.name, entry))
             entry["doc"] = _help(p.name, docs, is_anim)
             if level == 0 and p.kind is p.POSITIONAL_OR_KEYWORD and not star_done:
@@ -583,6 +640,8 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
         if not has_kwargs:
             break
         npos, names, forwards, star_fwd = _super_call(klass)
+        for name, default in _kwargs_reads(klass):
+            read_defaults.setdefault(name, default)
         if not forwards:
             break
         # Positionals we received into *args and pass on via *args reach the parent too (Vector -> Arrow -> Line).
@@ -718,6 +777,19 @@ def color_names() -> list[str]:
     names = [n for n in dir(m) if n.isupper() and isinstance(getattr(m, n), m.ManimColor)]
     # Prefer the short canonical names (BLUE over BLUE_C, PURE_BLUE...) first.
     return sorted(names, key=lambda n: (("_" in n), n))
+
+
+def rate_samples(n: int = 48) -> dict[str, list[float]]:
+    """Each rate function sampled by manim itself, for drawing its curve on timeline clips."""
+    from manim.utils import rate_functions as rf
+
+    out = {}
+    for name in rate_func_names():
+        try:
+            out[name] = [round(float(getattr(rf, name)(i / n)), 4) for i in range(n + 1)]
+        except Exception:  # higher-order helpers (squish_rate_func(func, a, b)…) aren't curves themselves
+            pass
+    return out
 
 
 def rate_func_names() -> list[str]:
@@ -860,7 +932,7 @@ def _doc(cls: type) -> str:
 
 
 def _entry(cls: type, kind: str) -> dict:
-    return {
+    out = {
         "name": cls.__name__,
         "kind": kind,
         "category": _category(cls),
@@ -869,6 +941,9 @@ def _entry(cls: type, kind: str) -> dict:
         "vector": _is_vmobject(cls),
         "starter": FEATURED_MOBJECTS.get(cls.__name__, {}),
     }
+    if kind == "animation":
+        out["target"] = target_kind(cls)
+    return out
 
 
 def _is_vmobject(cls: type) -> bool:
@@ -904,6 +979,7 @@ def build(extra_namespace: dict[str, Any] | None = None) -> dict:
         "color_hex": {n: getattr(m, n).to_hex().upper() for n in color_names()},
         "directions": DIRECTIONS,
         "rate_funcs": rate_func_names(),
+        "rate_samples": rate_samples(),
         "methods": COMMON_METHODS,
         "scene_bases": ["Scene", "MovingCameraScene", "ZoomedScene", "ThreeDScene", "VectorScene", "LinearTransformationScene"],
     }

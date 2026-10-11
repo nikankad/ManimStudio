@@ -1,7 +1,7 @@
 """Sample projects shown on the Home screen.
 
 Each sample is a complete project built from the editor's own features (constructions, parameters,
-timeline clips), so opening one shows how it was made. They only use Text for words, so they work
+timeline statements), so opening one shows how it was made. They only use Text for words, so they work
 without LaTeX. Thumbnails live next to this file (``samples/<id>.jpg``, made by
 scripts/sample_thumbnails.py).
 """
@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import base64
 import copy
+import functools
 from pathlib import Path
 
-from .project import new_project, pack_tracks
+from .project import new_project
+from .timeline import add as _add, anim as _a, animate as _animate, group as _group, number, play as _play, switch as _switch, wait as _wait
 
 THUMBS = Path(__file__).parent / "samples"
 
@@ -31,27 +33,11 @@ def _number(id: str, name: str, color: str, link: dict, size: int = 34, places: 
     return _o(id, name, "DecimalNumber", args={"*": "0", "num_decimal_places": str(places), "font_size": str(size), "color": color}, link=link)
 
 
-def _clip(kind: str, start: float, duration: float = 0, **kw) -> dict:
-    return {"kind": kind, "start": start, "duration": duration, **kw}
-
-
-def _anim(cls: str, target: str, start: float, duration: float = 1, **kw) -> dict:
-    return _clip("anim", start, duration, cls=cls, target=target, args=kw.pop("args", {}), **kw)
-
-
-def _animate(target: str, chain: str, start: float, duration: float, rate: str | None = None) -> dict:
-    return _clip("anim", start, duration, cls="animate", target=target, chain=chain, args={"rate_func": rate} if rate else {})
-
-
-def _doc(scene: str, objects: list[dict], clips: list[dict], end: float) -> dict:
+def _doc(scene: str, objects: list[dict], steps: list[dict]) -> dict:
     doc = new_project()
     doc["scene"]["name"] = scene
     doc["objects"] = objects
-    clips = [*clips, _clip("hold", 0, end)]  # the video's length
-    for i, c in enumerate(clips):
-        c["id"] = f"c{i + 1}"
-    doc["tracks"] = pack_tracks(clips)
-    doc["clips"] = clips
+    doc["timeline"] = number(steps)
     return doc
 
 
@@ -82,18 +68,19 @@ def derivative() -> dict:
            chain=".add_updater(lambda m: m.become(slope_axes.plot(lambda x: 0.75 * x**2 - 1, "
                  "x_range=[-2.5, max(-2.45, x0.get_value())], color=GREEN, stroke_width=5)))"),
     ]
-    clips = [
-        _anim("Write", "title", 0, 1),
-        _anim("Create", "axes", 0.5, 1), _anim("Create", "slope_axes", 0.5, 1),
-        _anim("FadeIn", "f_label", 1, 0.6), _anim("FadeIn", "slope_label", 1, 0.6),
-        _anim("Create", "curve", 1.2, 1.3),
-        _anim("GrowFromCenter", "tangent", 2.6, 0.6), _anim("FadeIn", "P", 2.6, 0.4),
-        _anim("FadeIn", "slope", 3, 0.4), _anim("FadeIn", "D", 3, 0.4),
-        _clip("add", 3.6, targets=["trace"]),
-        _animate("x0", ".set_value(2.4)", 3.6, 6),
-        _anim("Create", "derivative", 9.8, 1.5),
+    steps = [
+        _play(_a("Write", "title")),
+        _play(_group("LaggedStart", _a("Create", "axes"), _a("Create", "slope_axes"), _a("FadeIn", "f_label"),
+                     _a("FadeIn", "slope_label"), lag_ratio=0.25)),
+        _play(_a("Create", "curve"), run_time=1.3),
+        _play(_a("GrowFromCenter", "tangent"), _a("FadeIn", "P"), run_time=0.6),
+        _play(_a("FadeIn", "slope"), _a("FadeIn", "D"), run_time=0.4),
+        _add("trace"),
+        _play(_animate("x0", ".set_value(2.4)"), run_time=6),
+        _play(_a("Create", "derivative"), run_time=1.5),
+        _wait(),
     ]
-    return _doc("Derivative", objects, clips, 12)
+    return _doc("Derivative", objects, steps)
 
 
 def riemann() -> dict:
@@ -114,16 +101,17 @@ def riemann() -> dict:
         _text("la", "area_label", "area under the curve", 26, "YELLOW", pos=[4.6, -0.6]),
         _number("va", "area_value", "YELLOW", {"kind": "measure", "what": "integral", "of": "ar", "offset": [6.0, 0.1]}, places=3),
     ]
-    clips = [
-        _anim("Write", "title", 0, 1),
-        _anim("Create", "axes", 0.5, 1),
-        _anim("Create", "curve", 1.2, 1.2),
-        _anim("FadeIn", "rectangles", 2.6, 1),
-        _anim("FadeIn", "width_label", 3, 0.5), _anim("FadeIn", "width_value", 3, 0.5),
-        _anim("FadeIn", "area_label", 3.4, 0.5), _anim("FadeIn", "area_value", 3.4, 0.5),
-        _animate("width", ".set_value(0.05)", 4.5, 5, "smooth"),
+    steps = [
+        _play(_a("Write", "title")),
+        _play(_a("Create", "axes")),
+        _play(_a("Create", "curve"), run_time=1.2),
+        _play(_a("FadeIn", "rectangles")),
+        _play(_group("LaggedStart", _a("FadeIn", "width_label"), _a("FadeIn", "width_value"), _a("FadeIn", "area_label"),
+                     _a("FadeIn", "area_value"), lag_ratio=0.3)),
+        _play(_animate("width", ".set_value(0.05)"), run_time=5),
+        _wait(),
     ]
-    return _doc("RiemannSums", objects, clips, 11)
+    return _doc("RiemannSums", objects, steps)
 
 
 def orthocenter() -> dict:
@@ -149,18 +137,20 @@ def orthocenter() -> dict:
         label("la", "label_A", "A", "A", [-0.35, -0.3]), label("lb", "label_B", "B", "B", [0.35, -0.3]),
         label("lc", "label_C", "C", "C", [0, 0.4]), label("lh", "label_H", "H", "H", [0.35, 0.3], "RED"),
     ]
-    clips = [
-        _anim("Write", "title", 0, 1),
-        _clip("add", 0.6, targets=["A", "B", "C"]),
-        _anim("Create", "side_c", 0.6, 0.8), _anim("Create", "side_a", 0.9, 0.8), _anim("Create", "side_b", 1.2, 0.8),
-        _anim("FadeIn", "label_A", 1.2, 0.5), _anim("FadeIn", "label_B", 1.2, 0.5), _anim("FadeIn", "label_C", 1.2, 0.5),
-        _anim("Create", "altitude_c", 2.2, 0.8), _anim("Create", "altitude_a", 3, 0.8), _anim("Create", "altitude_b", 3.8, 0.8),
-        _anim("GrowFromCenter", "H", 4.7, 0.5), _anim("FadeIn", "label_H", 4.9, 0.4),
-        _animate("C", ".move_to(np.array([-2.2, 2.4, 0]))", 5.6, 2),
-        _animate("B", ".move_to(np.array([2.4, -1.2, 0]))", 7.8, 1.6),
-        _animate("C", ".move_to(np.array([1.8, 1.4, 0]))", 9.6, 2),
+    steps = [
+        _play(_a("Write", "title")),
+        _add("A", "B", "C"),
+        _play(_group("LaggedStart", _a("Create", "side_c"), _a("Create", "side_a"), _a("Create", "side_b"), lag_ratio=0.4),
+              _a("FadeIn", "label_A"), _a("FadeIn", "label_B"), _a("FadeIn", "label_C")),
+        _play(_group("Succession", _a("Create", "altitude_c"), _a("Create", "altitude_a"), _a("Create", "altitude_b")),
+              run_time=2.4),
+        _play(_a("GrowFromCenter", "H"), _a("FadeIn", "label_H"), run_time=0.5),
+        _play(_animate("C", ".move_to(np.array([-2.2, 2.4, 0]))"), run_time=2),
+        _play(_animate("B", ".move_to(np.array([2.4, -1.2, 0]))"), run_time=1.6),
+        _play(_animate("C", ".move_to(np.array([1.8, 1.4, 0]))"), run_time=2),
+        _wait(0.5),
     ]
-    return _doc("Orthocenter", objects, clips, 12.5)
+    return _doc("Orthocenter", objects, steps)
 
 
 def coupling() -> dict:
@@ -181,21 +171,22 @@ def coupling() -> dict:
         caption("c2", "caption_uncoupled", "Uncoupled: M moves on its own", "ORANGE"),
         caption("c3", "caption_again", "Coupled again: M glides back to the midpoint", "GREEN"),
     ]
-    clips = [
-        _anim("Write", "title", 0, 1),
-        _clip("add", 0.6, targets=["A", "B", "label_A", "label_B"]),
-        _anim("Create", "segment", 0.6, 0.8),
-        _anim("GrowFromCenter", "M", 1.4, 0.4), _anim("FadeIn", "label_M", 1.5, 0.4),
-        _anim("FadeIn", "caption_coupled", 1.6, 0.5),
-        _animate("B", ".shift(UP * 2.5)", 2.4, 1.4), _animate("A", ".shift(RIGHT * 1.5)", 3.9, 1.2),
-        _clip("uncouple", 5.4, targets=["M"]),
-        _anim("FadeOut", "caption_coupled", 5.4, 0.4), _anim("FadeIn", "caption_uncoupled", 5.6, 0.4),
-        _animate("M", ".shift(UP * 1.6 + RIGHT * 1.5)", 5.8, 1.2),
-        _animate("B", ".shift(DOWN * 2.5)", 7.2, 1.2),
-        _clip("couple", 8.8, 1.4, targets=["M"]),
-        _anim("FadeOut", "caption_uncoupled", 8.6, 0.4), _anim("FadeIn", "caption_again", 8.8, 0.4),
+    steps = [
+        _play(_a("Write", "title")),
+        _add("A", "B", "label_A", "label_B"),
+        _play(_a("Create", "segment"), run_time=0.8),
+        _play(_a("GrowFromCenter", "M"), _a("FadeIn", "label_M"), _a("FadeIn", "caption_coupled"), run_time=0.5),
+        _play(_animate("B", ".shift(UP * 2.5)"), run_time=1.4),
+        _play(_animate("A", ".shift(RIGHT * 1.5)"), run_time=1.2),
+        _switch("uncouple", "M"),
+        _play(_a("FadeOut", "caption_coupled"), _a("FadeIn", "caption_uncoupled"), run_time=0.5),
+        _play(_animate("M", ".shift(UP * 1.6 + RIGHT * 1.5)"), run_time=1.2),
+        _play(_animate("B", ".shift(DOWN * 2.5)"), run_time=1.2),
+        _play(_a("FadeOut", "caption_uncoupled"), _a("FadeIn", "caption_again"), run_time=0.5),
+        _switch("couple", "M", duration=1.4),
+        _wait(),
     ]
-    return _doc("Coupling", objects, clips, 11.5)
+    return _doc("Coupling", objects, steps)
 
 
 SAMPLES = [
@@ -214,10 +205,18 @@ def sample_list() -> list[dict]:
         thumb = THUMBS / f"{sid}.jpg"
         out.append({
             "id": sid, "name": name, "description": description,
-            "duration": max(float(c["start"]) + float(c["duration"]) for c in doc["clips"]),
+            "duration": _duration(sid),
             "thumbnail": "data:image/jpeg;base64," + base64.b64encode(thumb.read_bytes()).decode() if thumb.is_file() else None,
         })
     return out
+
+
+@functools.lru_cache(maxsize=None)
+def _duration(sid: str) -> float:
+    """The sample's length as manim plays it (measured once)."""
+    from . import runtime
+
+    return round(runtime.run(sample(sid), None, render=False).duration, 2)
 
 
 def sample(sid: str) -> dict:

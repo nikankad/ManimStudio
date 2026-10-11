@@ -37,7 +37,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from . import mathexpr
+from . import mathexpr, timeline
 
 # ----------------------------------------------------------------------------- classification
 
@@ -285,8 +285,6 @@ class Constraints:
         return mob.copy()
 
     class Glide(Animation):
-        _me_exclusive = True  # (not combined with other animations of the mobject by TimedAnimations)
-
         def __init__(self, constraints, mob, **kwargs):
             super().__init__(mob, **kwargs)
             self.constraints = constraints
@@ -596,7 +594,7 @@ class TransformTerms(TransformMatchingAbstractBase):
         return mobject.mathengine_key
 '''
 # Names the generated code defines at module level; objects can't use them.
-RESERVED_NAMES = {"Constraints", "Geometry", "TransformTerms", "TimedAnimations", "TransformMatchingAbstractBase", "np", "self"}
+RESERVED_NAMES = {"Constraints", "Geometry", "TransformTerms", "TransformMatchingAbstractBase", "np", "self"}
 TERMS_IMPORT = "from manim.animation.transform_matching_parts import TransformMatchingAbstractBase"
 
 
@@ -604,7 +602,7 @@ TERMS_IMPORT = "from manim.animation.transform_matching_parts import TransformMa
 
 @dataclass
 class Diagnostic:
-    id: str  # object or clip id
+    id: str  # object, step or animation id
     level: str  # "error" | "warning"
     message: str
     kind: str = "object"
@@ -619,7 +617,7 @@ class Plan:
 
     lines: dict[str, list[str]] = field(default_factory=dict)  # object id -> statements (replaces the generic ones)
     after: dict[str, list[str]] = field(default_factory=dict)  # object id -> statements after its ordinary ones
-    switchable: set[str] = field(default_factory=set)  # names of objects couple/uncouple clips can switch
+    switchable: set[str] = field(default_factory=set)  # names of objects couple/uncouple steps can switch
     diagnostics: list[Diagnostic] = field(default_factory=list)
     part_index: dict[str, dict[str, int]] = field(default_factory=dict)  # equation id -> part id -> submobject index
     eq_ctor: dict[str, str] = field(default_factory=dict)  # equation id -> constructor expression
@@ -628,8 +626,9 @@ class Plan:
     uses_geometry: bool = False
     uses_terms: bool = False
     constraints_var: str = "constraints"
-    invalid_clips: set[str] = field(default_factory=set)
+    invalid_anims: set[str] = field(default_factory=set)  # animations that can't be compiled (left out)
     trackers: set[str] = field(default_factory=set)
+    mobject_names: set[str] = field(default_factory=set)  # objects that are drawn (not ValueTrackers)
 
     def diag(self, oid: str, level: str, message: str, kind: str = "object") -> None:
         self.diagnostics.append(Diagnostic(oid, level, message, kind))
@@ -825,6 +824,7 @@ def plan(doc: dict) -> Plan:
     p = Plan()
     ctx = _Ctx(doc, p)
     p.trackers = ctx.trackers
+    p.mobject_names = {o["name"] for o in ctx.objects if not re.fullmatch(r"(Complex)?ValueTracker", base_ctor(o))}
     taken = {o["name"] for o in ctx.objects}
     while p.constraints_var in taken:
         p.constraints_var += "_"
@@ -871,60 +871,39 @@ def plan(doc: dict) -> Plan:
             p.lines[obj["id"]] = fallback
 
     _check_conflicts(doc, ctx)
-    _check_term_clips(doc, ctx)
-    _check_switch_clips(doc, ctx)
+    _check_term_anims(doc, ctx)
+    _check_switch_steps(doc, ctx)
     return p
 
 
-def _active(doc: dict) -> list[dict]:
-    hidden = {t["id"] for t in doc.get("tracks", []) if t.get("hidden")}
-    return [c for c in doc.get("clips", []) if not c.get("disabled") and c.get("track") not in hidden]
+def _switches(doc: dict) -> list[dict]:
+    return [s for s in timeline.steps(doc) if s.get("kind") in SWITCH_CLIPS]
 
 
 def _switch_targets(doc: dict, ctx: _Ctx) -> set[str]:
-    """Names of constructed objects that couple / uncouple clips switch."""
+    """Names of constructed objects that couple / uncouple steps switch."""
     out = set()
-    for c in _active(doc):
-        if c.get("kind") in SWITCH_CLIPS:
-            for n in c.get("targets") or []:
-                obj = ctx.by_name.get(n)
-                if obj and obj.get("link"):
-                    out.add(n)
+    for c in _switches(doc):
+        for n in c.get("targets") or []:
+            obj = ctx.by_name.get(n)
+            if obj and obj.get("link"):
+                out.add(n)
     return out
 
 
-def _check_switch_clips(doc: dict, ctx: _Ctx) -> None:
-    for c in _active(doc):
-        if c.get("kind") not in SWITCH_CLIPS:
-            continue
+def _check_switch_steps(doc: dict, ctx: _Ctx) -> None:
+    for c in _switches(doc):
         for n in c.get("targets") or []:
             obj = ctx.by_name.get(n)
             if obj is None:
                 continue
             if not obj.get("link"):
-                ctx.plan.diag(c["id"], "warning", f"{n} has no relationship to {c['kind']}; it is skipped.", "clip")
+                ctx.plan.diag(c["id"], "warning", f"{n} has no relationship to {c['kind']}; it is skipped.", "step")
             elif obj["link"].get("frozen"):
                 ctx.plan.diag(c["id"], "warning", f"{n}'s construction is frozen (built once), so it can't be "
-                              f"{c['kind']}d; it is skipped.", "clip")
+                              f"{c['kind']}d; it is skipped.", "step")
             elif n not in ctx.plan.switchable:
-                ctx.plan.diag(c["id"], "warning", f"{n}'s construction has an error, so it can't be {c['kind']}d.", "clip")
-
-
-def uncoupled_spans(doc: dict, obj: dict) -> list[tuple[float, float]]:
-    """Times during which the object is uncoupled by its own setting and couple / uncouple clips."""
-    name = obj["name"]
-    events = sorted((float(c["start"]), c["kind"], float(c.get("duration") or 0)) for c in _active(doc)
-                    if c.get("kind") in SWITCH_CLIPS and name in (c.get("targets") or []))
-    spans, since = [], 0.0 if (obj.get("link") or {}).get("off") else None
-    for t, kind, dur in events:
-        if kind == "uncouple" and since is None:
-            since = t
-        elif kind == "couple" and since is not None:
-            spans.append((since, t + dur))
-            since = None
-    if since is not None:
-        spans.append((since, float("inf")))
-    return spans
+                ctx.plan.diag(c["id"], "warning", f"{n}'s construction has an error, so it can't be {c['kind']}d.", "step")
 
 
 def _fallback_lines(obj: dict, ctx: _Ctx) -> list[str] | None:
@@ -1009,11 +988,11 @@ def _equation(obj: dict, p: Plan) -> bool:
 
 
 def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
-    """Statements that build a constructed object. ``switched``: couple / uncouple clips switch it.
+    """Statements that build a constructed object. ``switched``: couple / uncouple steps switch it.
 
     An uncoupled (``off``) standalone object is emitted as an ordinary object; these are then the
     statements that register its construction, paused. Other uncoupled kinds are built once from their
-    sources (and registered paused when clips couple them later).
+    sources (and registered paused when steps couple them later).
     """
     link = obj["link"]
     kind = link["kind"]
@@ -1299,31 +1278,37 @@ def _chain_methods(chain: str) -> list[str]:
 
 
 def _check_conflicts(doc: dict, ctx: _Ctx) -> None:
-    """Animations that would fight a construction over the same property."""
+    """Animations that would fight a construction over the same property.
+
+    Walks the timeline in order: an object is uncoupled from an ``uncouple`` step until a ``couple`` step
+    (or for the whole scene by its own setting), and animating it meanwhile is fine.
+    """
     linked = {o["name"]: o for o in ctx.objects if o.get("link") and not o["link"].get("frozen")
               and (not o["link"].get("off") or o["name"] in ctx.plan.switchable)}
-    spans = {n: uncoupled_spans(doc, o) for n, o in linked.items()}
-    for c in doc.get("clips", []):
-        if c.get("kind") != "anim" or c.get("disabled"):
+    off = {n for n, o in linked.items() if o["link"].get("off")}
+    for step in timeline.steps(doc):
+        if step.get("kind") == "uncouple":
+            off.update(step.get("targets") or [])
+        elif step.get("kind") == "couple":
+            off.difference_update(step.get("targets") or [])
+        if step.get("kind") != "play":
             continue
-        obj = linked.get((c.get("target") or "").strip())
-        if not obj:
-            continue
-        start, end = float(c.get("start", 0)), float(c.get("start", 0)) + float(c.get("duration") or 0)
-        if any(a - 1e-6 <= start and end <= b + 1e-6 for a, b in spans[obj["name"]]):
-            continue  # it is uncoupled meanwhile
-        kind = obj["link"]["kind"]
-        owned = POSITION_METHODS if kind in FOLLOW_KINDS else GEOMETRY_METHODS
-        what = "position" if kind in FOLLOW_KINDS else "shape and position"
-        if c.get("cls") == "animate":
-            bad = [m for m in _chain_methods(c.get("chain", "")) if m in owned]
-            if bad:
-                ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s {what} is controlled by its construction, so .{bad[0]}() is undone "
-                              "when the animation ends. Animate its sources (or a parameter) instead, or uncouple it during "
-                              "this clip.", "clip")
-        elif c.get("cls") in GEOMETRY_ANIMATIONS and kind in REDRAW_KINDS:
-            ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s shape is controlled by its construction; it returns to the constructed "
-                          f"shape after {c['cls']} ends.", "clip")
+        for c in timeline.walk(step.get("anims") or []):
+            obj = linked.get((c.get("target") or "").strip())
+            if not obj or obj["name"] in off:
+                continue
+            kind = obj["link"]["kind"]
+            owned = POSITION_METHODS if kind in FOLLOW_KINDS else GEOMETRY_METHODS
+            what = "position" if kind in FOLLOW_KINDS else "shape and position"
+            if c.get("cls") == "animate":
+                bad = [m for m in _chain_methods(c.get("chain", "")) if m in owned]
+                if bad:
+                    ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s {what} is controlled by its construction, so .{bad[0]}() is undone "
+                                  "when the animation ends. Animate its sources (or a parameter) instead, or uncouple it before "
+                                  "this animation.", "anim")
+            elif c.get("cls") in GEOMETRY_ANIMATIONS and kind in REDRAW_KINDS:
+                ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s shape is controlled by its construction; it returns to the constructed "
+                              f"shape after {c['cls']} ends.", "anim")
     for o in linked.values():
         kind = o["link"]["kind"]
         if o["link"].get("off"):
@@ -1364,9 +1349,9 @@ def term_keys(source_parts: list[str], target_parts: list[str], pairs: list[list
     return [key("s:" + s) for s in source_parts], [key("t:" + t) for t in target_parts]
 
 
-def _check_term_clips(doc: dict, ctx: _Ctx) -> None:
-    for c in doc.get("clips", []):
-        if c.get("kind") != "anim" or c.get("cls") != "TransformTerms" or c.get("disabled"):
+def _check_term_anims(doc: dict, ctx: _Ctx) -> None:
+    for _step, c in timeline.all_anims(doc):
+        if c.get("cls") != "TransformTerms":
             continue
         src = ctx.by_name.get((c.get("target") or "").strip())
         terms = c.get("terms") or {}
@@ -1377,26 +1362,24 @@ def _check_term_clips(doc: dict, ctx: _Ctx) -> None:
         elif not tgt or tgt["id"] not in ctx.plan.part_index:
             why = "Pick a destination equation split into terms."
         if why:
-            ctx.plan.diag(c["id"], "error", why + " This clip is skipped.", "clip")
-            ctx.plan.invalid_clips.add(c["id"])
+            ctx.plan.diag(c["id"], "error", why + " This animation is left out.", "anim")
+            ctx.plan.invalid_anims.add(c["id"])
         else:
             ctx.plan.uses_terms = True
 
 
-def terms_expr(clip: dict, doc: dict, plan_: Plan, run_time: str | None) -> str:
-    """``TransformTerms(source, target, source_keys=…, target_keys=…)`` for a term-correspondence clip."""
+def terms_expr(anim: dict, doc: dict, plan_: Plan) -> str:
+    """``TransformTerms(source, target, source_keys=…, target_keys=…)`` for a term-correspondence animation."""
     by_name = {o["name"]: o for o in doc.get("objects", [])}
     by_id = {o["id"]: o for o in doc.get("objects", [])}
-    src = by_name[clip["target"].strip()]
-    tgt = by_id[clip["terms"]["to"]]
+    src = by_name[anim["target"].strip()]
+    tgt = by_id[anim["terms"]["to"]]
     si, ti = plan_.part_index[src["id"]], plan_.part_index[tgt["id"]]
     s_order = sorted(si, key=si.get)
     t_order = sorted(ti, key=ti.get)
-    sk, tk = term_keys(s_order, t_order, clip["terms"].get("pairs") or [])
+    sk, tk = term_keys(s_order, t_order, anim["terms"].get("pairs") or [])
     args = [f"source_keys={json.dumps(sk)}".replace("null", "None"), f"target_keys={json.dumps(tk)}".replace("null", "None")]
-    for k, v in (clip.get("args") or {}).items():
-        if k != "run_time" and str(v).strip():
+    for k, v in (anim.get("args") or {}).items():
+        if str(v).strip():
             args.append(f"{k}={v}")
-    if run_time:
-        args.append(f"run_time={run_time}")
     return f"TransformTerms({src['name']}, {tgt['name']}, {', '.join(args)})"

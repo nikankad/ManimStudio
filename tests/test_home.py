@@ -19,7 +19,7 @@ def _app_dir(tmp_path, monkeypatch):
 def test_samples_run_without_errors_or_warnings(sid):
     doc = samples.sample(sid)
     assert not codegen.generate(doc).diagnostics
-    end = max(c["start"] + c["duration"] for c in doc["clips"])
+    end = runtime.run(doc, None, render=False).duration
     for t in (end * 0.5, end):
         r = runtime.run(doc, t, render=False)
         assert r.error is None, r.error and r.error["trace"]

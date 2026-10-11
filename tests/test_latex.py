@@ -20,8 +20,7 @@ def no_latex(monkeypatch, tmp_path):
 
 def show(objects):
     d = doc(objects)
-    d["clips"] = [{"id": "add", "kind": "add", "track": "t1", "start": 0, "duration": 0,
-                   "targets": [o["name"] for o in objects if o["ctor"] != "ValueTracker"]}]
+    d["timeline"] = [{"id": "add", "kind": "add", "targets": [o["name"] for o in objects if o["ctor"] != "ValueTracker"]}]
     return d
 
 

@@ -7,16 +7,17 @@ from mathengine import codegen, runtime, starters
 from mathengine.project import FORMAT_VERSION, load_project, save_project, upgrade
 
 
-def test_v2_project_upgrades_losslessly(tmp_path):
+def test_v2_project_upgrades(tmp_path):
     src = json.loads(open(__file__.replace("tests/test_project_and_starters.py", "examples/sine_tracker.manimstudio")).read())
     assert src["version"] == 2
     up = upgrade(json.loads(json.dumps(src)))
-    assert up["version"] == FORMAT_VERSION == 3
-    assert up["constructions"] == []
-    # Objects, clips and Python sources are untouched.
-    assert up["objects"] == src["objects"] and up["clips"] == src["clips"] and up["header"] == src["header"]
-    # Same generated code before and after.
-    assert codegen.generate(src).source == codegen.generate(up).source
+    assert up["version"] == FORMAT_VERSION == 4
+    assert up["constructions"] == [] and "clips" not in up and "tracks" not in up
+    # Objects and Python sources are untouched; clips became the statements they compiled to.
+    assert up["objects"] == src["objects"] and up["header"] == src["header"]
+    assert [s["kind"] for s in up["timeline"]][:2] == ["play", "play"]
+    r = runtime.run(up, None, render=False)
+    assert r.error is None, r.error and r.error["trace"]
     p = tmp_path / "x.mathengine"
     save_project(p, up)
     assert load_project(p) == up
@@ -24,7 +25,7 @@ def test_v2_project_upgrades_losslessly(tmp_path):
 
 def test_v1_steps_still_upgrade():
     up = upgrade({"version": 1, "objects": [], "steps": [{"id": "s1", "kind": "wait", "duration": 2}]})
-    assert up["version"] == 3 and up["clips"][0]["kind"] == "hold"
+    assert up["version"] == 4 and up["timeline"] == [{"id": up["timeline"][0]["id"], "kind": "wait", "args": {"duration": "2"}}]
 
 
 def test_newer_format_is_refused():

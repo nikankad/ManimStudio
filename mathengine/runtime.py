@@ -4,6 +4,11 @@ Seeking works by executing the generated ``construct()`` with a replacement
 ``play`` that skips through animations without rendering, stopping mid-play
 when the requested time is reached. The frame is then drawn with the scene's
 own camera, so the preview is pixel-identical to the final render.
+
+The same run measures the timeline: when each statement starts and ends, and
+when manim runs each animation, including the ones inside AnimationGroup,
+LaggedStart and Succession (read from manim's own ``anims_with_timings``). The
+editor draws the timeline from these times, so it shows what manim does.
 """
 
 from __future__ import annotations
@@ -51,6 +56,7 @@ class StepTiming:
 class RunResult:
     duration: float = 0.0
     steps: list[StepTiming] = field(default_factory=list)
+    anims: list[StepTiming] = field(default_factory=list)  # when manim runs each animation
     objects: list[dict] = field(default_factory=list)
     camera: dict | None = None
     plays: int = 0
@@ -64,6 +70,7 @@ class RunResult:
         return {
             "duration": float(self.duration),
             "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end)} for s in self.steps],
+            "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6)} for s in self.anims],
             "objects": self.objects,
             "camera": self.camera,
             "plays": self.plays,
@@ -86,6 +93,7 @@ class PreviewMixin:
         self._me_registry: dict[str, tuple[Any, str]] = {}
         self._me_open: dict[str, float] = {}
         self._me_steps: list[StepTiming] = []
+        self._me_anims: list[StepTiming] = []
         self._me_current_step: str | None = None
         self._me_plays = 0
 
@@ -101,6 +109,29 @@ class PreviewMixin:
         start = self._me_open.pop(sid, self.renderer.time)
         self._me_steps.append(StepTiming(sid, start, self.renderer.time))
 
+    def _me_tag(self, anim: Any, aid: str) -> Any:
+        """Mark an animation of the timeline so its timing can be reported (manim's own prepare_animation)."""
+        from manim.animation.animation import prepare_animation
+
+        anim = prepare_animation(anim)
+        anim._me_id = aid
+        return anim
+
+    def _me_time(self, anim: Any, start: float, duration: float) -> None:
+        """Record when manim runs ``anim`` and, inside compositions, each child (scene seconds)."""
+        aid = getattr(anim, "_me_id", None)
+        if aid:
+            self._me_anims.append(StepTiming(aid, start, start + duration))
+        timings = getattr(anim, "anims_with_timings", None)
+        total = float(getattr(anim, "max_end_time", 0) or 0)
+        if timings is None or total <= 0:
+            return
+        # AnimationGroup.interpolate: group time = rate_func(alpha) * max_end_time.
+        for row in timings:
+            a = _inverse(anim.rate_func, float(row["start"]) / total)
+            b = _inverse(anim.rate_func, float(row["end"]) / total)
+            self._me_time(row["anim"], start + a * duration, (b - a) * duration)
+
     def _me_needs_stepping(self) -> bool:
         # Constructions (construct.Constraints) depend only on the current state, not on dt, so
         # updating once at the target time is exact; other updaters may integrate over time.
@@ -115,6 +146,8 @@ class PreviewMixin:
         duration = self.duration
         t0 = self.renderer.time
         self.begin_animations()
+        for anim in animations:
+            self._me_time(anim, t0, float(anim.run_time))
 
         stop_at = None
         if self._me_target is not None and self._me_target < t0 + duration - 1e-9:
@@ -139,6 +172,27 @@ class PreviewMixin:
         self.update_mobjects(0)
         self.renderer.time = t0 + duration
         self.animations = None
+
+
+def _inverse(rate_func: Any, value: float) -> float:
+    """The first alpha at which ``rate_func(alpha)`` reaches ``value`` (when a child of a group starts or ends)."""
+    if value <= 0:
+        return 0.0
+    if value >= 1:
+        return 1.0
+    n = 400
+    prev = 0.0
+    try:
+        for i in range(1, n + 1):
+            alpha = i / n
+            y = float(rate_func(alpha))
+            if y >= value - 1e-12:
+                y0 = float(rate_func(prev))
+                return prev + (alpha - prev) * ((value - y0) / (y - y0) if y > y0 else 1)
+            prev = alpha
+    except Exception:
+        return value
+    return 1.0
 
 
 def _needs_latex(exc: BaseException) -> bool:
@@ -328,6 +382,7 @@ def run(doc: dict, target: float | None = None, render: bool = True, preview_wid
             for sid, start in scene._me_open.items():
                 scene._me_steps.append(StepTiming(sid, start, scene.renderer.time))
             result.steps = scene._me_steps
+            result.anims = scene._me_anims
             result.duration = scene.renderer.time
             result.plays = scene._me_plays
             result.objects = _object_boxes(scene, gen.part_index)
