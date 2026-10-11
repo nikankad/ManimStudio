@@ -1,19 +1,20 @@
 // Inspector sections for constructions: relationships, exact geometry, parameters, actions, instances.
 
 import { useEffect, useState } from 'react';
-import { actionsFor, type Action } from '../actions';
+import { actionsFor, couplings, type Action } from '../actions';
 import { api } from '../api';
-import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geoType, isFollow, literal, SOURCE_FIELDS } from '../construct';
+import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geoType, isFollow, linkState, literal, SOURCE_FIELDS, STANDALONE_KINDS } from '../construct';
 import { countMeets } from '../intersect';
 import { fmtPt, freeShape, writeShape, type Shape } from '../geometry';
 import {
-  animateParam, createParam, detachObjects, getState, params, recheckLatex, selectObjects, setLink, setParamValue, setState, toast, updateDoc, useStore,
+  addClip, animateParam, coupleObjects, createParam, detachObjects, getState, params, recheckLatex, selectClips, selectObjects, setLink, setParamValue, setState,
+  timecode, toast, uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { allTemplates, detachInstance, syncInstances, updateTemplateFromInstance } from '../templates';
 import type { Link, Pt, SceneObject } from '../types';
 import { Field, ScrubNumber } from './ParamField';
 
-const GROUP_ORDER = ['Connect', 'Measure', 'Annotate', 'Terms'] as const;
+const GROUP_ORDER = ['Couple', 'Connect', 'Measure', 'Annotate', 'Terms'] as const;
 
 /** Problems the backend found with this object or clip (missing sources, cycles, conflicts…). */
 export function Diagnostics({ id }: { id: string }) {
@@ -118,7 +119,74 @@ function SourcePicker({ value, types, required, self, onChange }: { value: strin
   );
 }
 
-/** The object's relationship: its sources, expressions and offset, editable; detach. */
+/** Couple / Uncouple / Forget buttons for an object's relationship. */
+export function CouplingButtons({ obj }: { obj: SceneObject }) {
+  const state = linkState(obj);
+  if (!state) return null;
+  return (
+    <>
+      {state === 'coupled'
+        ? <button className="ghost small" title="Pause the relationship: the object stays where it is and can be edited freely. Couple again restores it." onClick={() => uncoupleObjects([obj.id])}>Uncouple</button>
+        : <button className="ghost small" title="Restore the relationship: it takes over the object's place or shape again" onClick={() => coupleObjects([obj.id])}>Couple again</button>}
+      <button className="ghost small" title="Remove the relationship for good: the object becomes independent where it is now" onClick={() => detachObjects([obj.id])}>Forget</button>
+    </>
+  );
+}
+
+const STATE_TEXT = {
+  coupled: 'Coupled',
+  uncoupled: 'Uncoupled',
+  frozen: 'Frozen',
+} as const;
+
+/** Couple / uncouple clips that switch this object on the timeline, and buttons to add them at the playhead. */
+function OverTime({ obj }: { obj: SceneObject }) {
+  const clips = useStore((s) => s.doc.clips);
+  const time = useStore((s) => s.time);
+  const mine = clips.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(obj.name)).sort((a, b) => a.start - b.start);
+  return (
+    <div className="fx-row wide-row">
+      <span>over time</span>
+      <div className="chips">
+        {mine.map((c) => (
+          <button key={c.id} className={`chip ${c.disabled ? 'off' : ''}`} title="Select the clip" onClick={() => selectClips([c.id])}>
+            {c.kind === 'couple' ? 'couple' : 'uncouple'} {timecode(c.start)}{c.kind === 'couple' && c.duration > 0 ? ` (glide ${Math.round(c.duration * 100) / 100}s)` : ''}
+          </button>
+        ))}
+        <button className="ghost small" title={`Add a clip that uncouples it at the playhead (${timecode(time)}): from then on it stays where it is and can be animated freely`} onClick={() => addClip('uncouple', { targets: [obj.name] })}>+ Uncouple at playhead</button>
+        <button className="ghost small" title={`Add a clip that couples it again at the playhead (${timecode(time)}); give the clip a duration to glide back into place`} onClick={() => addClip('couple', { targets: [obj.name] })}>+ Couple at playhead</button>
+      </div>
+    </div>
+  );
+}
+
+/** An object without a relationship: couple it to another existing object. */
+export function CoupleSection({ obj }: { obj: SceneObject }) {
+  const doc = useStore((s) => s.doc);
+  useStore((s) => s.frame);
+  const [to, setTo] = useState('');
+  const src = doc.objects.find((o) => o.id === to);
+  const options = src ? couplings(obj, [src]) : [];
+  const candidates = doc.objects.filter((o) => o.id !== obj.id && o.ctor !== 'ValueTracker');
+  if (obj.ctor === 'ValueTracker' || geoType(obj, doc) === 'axes' || !candidates.length) return null;
+  return (
+    <section className="fx-section">
+      <h4>Relationship <span className="tag">independent</span></h4>
+      <div className="fx-row wide-row">
+        <span>couple to</span>
+        <select className="field mono" value={src ? to : ''} onChange={(e) => setTo(e.target.value)}>
+          <option value="">— choose an object —</option>
+          {candidates.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+        </select>
+      </div>
+      {src && (options.length
+        ? <div className="chips">{options.map((a) => <button key={a.id} className="chip" title={a.hint} onClick={a.run}>{a.label}</button>)}</div>
+        : <p className="muted small">No relationship from {obj.name} to {src.name}. Select more objects (shift-click) for midpoints, intersections, segments and polygons.</p>)}
+    </section>
+  );
+}
+
+/** The object's relationship: its state, sources, expressions and offset, editable; uncouple, couple again, forget. */
 export function RelationshipSection({ obj }: { obj: SceneObject }) {
   const doc = useStore((s) => s.doc);
   const link = obj.link!;
@@ -133,14 +201,21 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
   const isTermLink = (link.kind === 'attach' || link.kind === 'brace' || link.kind === 'highlight');
   const targetId = (l.to ?? l.target) as string | undefined;
   const target = doc.objects.find((o) => o.id === targetId);
+  const state = linkState(obj)!;
+  const owns = FOLLOW_KINDS.has(link.kind) ? 'position' : 'shape';
   return (
-    <section className="fx-section construction">
-      <h4>
-        Construction <span className="tag">{isFollow(obj) || link.frozen && FOLLOW_KINDS.has(link.kind) ? 'owns position' : 'owns shape'}</span>
-        <span className="spacer" />
-        <button className="ghost small" title="Make it an independent object (keeps its current place or shape)" onClick={() => detachObjects([obj.id])}>Detach</button>
-      </h4>
-      <p className="muted small">{describeLink(obj, doc)}{link.frozen ? ' · frozen (built once, not updated)' : ''}</p>
+    <section className={`fx-section construction ${state}`}>
+      <h4>Relationship <span className={`tag link-${state}`}>{STATE_TEXT[state]}</span></h4>
+      <p className="muted small">{describeLink(obj, doc)}</p>
+      <div className="row rel-actions"><CouplingButtons obj={obj} /></div>
+      {state === 'uncoupled' && (
+        <p className="muted small">
+          {STANDALONE_KINDS.has(link.kind)
+            ? `Paused: ${obj.name} stays where it is and is edited like any other object. Couple again and the relationship takes over its ${owns} again.`
+            : `Paused: ${obj.name} keeps the ${owns} it had (built once, not updated). Couple again and it follows its sources again.`}
+        </p>
+      )}
+      {state === 'frozen' && <p className="muted small">Frozen: built once from its sources, not updated. Couple again to keep it updated.</p>}
       <Diagnostics id={obj.id} />
       {sources.map(([f, label, types, required]) => (
         <div key={f} className="fx-row wide-row">
@@ -255,11 +330,9 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
           <ScrubNumber value={link.offset?.[1] ?? 0} step={0.02} onChange={(v) => set((x) => void (x.offset = [(link.offset ?? [0, 0])[0], v]), 'oy')} />
         </div>
       )}
-      <label className="check" title="A frozen construction is built once from its sources and then left alone (no updates while things move).">
-        <input type="checkbox" checked={!link.frozen} onChange={(e) => set((x) => { if (e.target.checked) delete x.frozen; else x.frozen = true; }, 'frozen')} /> keep updated while sources change
-      </label>
+      {state !== 'frozen' && <OverTime obj={obj} />}
       {users.length > 0 && <p className="muted small">Used by {users.map((u) => u.name).join(', ')}.</p>}
-      <p className="muted small">{isFollow(obj) ? 'Animations can change its color, opacity, scale and rotation; movement comes from the construction.' : 'Animations can change its color and opacity, and Create/FadeIn it; its shape comes from the construction.'}</p>
+      {state === 'coupled' && <p className="muted small">{isFollow(obj) ? 'Animations can change its color, opacity, scale and rotation; movement comes from the relationship (uncouple it over time to move it yourself).' : 'Animations can change its color and opacity, and Create/FadeIn it; its shape comes from the relationship.'}</p>}
     </section>
   );
 }

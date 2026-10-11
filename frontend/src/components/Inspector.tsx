@@ -9,10 +9,10 @@ import type { Args, Clip, Param, SceneDoc, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
-import { ActionsSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
+import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
-import { CONTROLLED_ARGS, isFollow, isRedraw } from '../construct';
-import { detachObjects, duplicateObjects, selectedObjectIds } from '../store';
+import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, standsAlone } from '../construct';
+import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
 const QUICK_ANIMS = ['Create', 'Write', 'FadeIn', 'FadeOut', 'Indicate', 'Circumscribe', 'Transform', 'ReplacementTransform', 'GrowFromCenter', 'Uncreate'];
@@ -103,7 +103,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
   const styleKeys = STYLE_KEYS.filter((k) => paramNames.has(k) || obj.args[k] !== undefined);
   // Arguments the construction supplies (a segment's start/end, a brace's mobject…) aren't edited here.
-  const controlled = new Set(obj.link ? CONTROLLED_ARGS[obj.link.kind] ?? [] : []);
+  const controlled = new Set(obj.link && !standsAlone(obj) ? CONTROLLED_ARGS[obj.link.kind] ?? [] : []);
 
   const commitName = (v: string) => {
     if (v === obj.name) return;
@@ -130,7 +130,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
       {sig?.unknown && !obj.link && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
       {!obj.link && <Diagnostics id={obj.id} />}
       {obj.instance && <InstanceSection obj={obj} />}
-      {obj.link && <RelationshipSection obj={obj} />}
+      {obj.link ? <RelationshipSection obj={obj} /> : <CoupleSection obj={obj} />}
       {obj.ctor === 'ValueTracker' && <ParamSection obj={obj} />}
       {isEquation && <EquationSection obj={obj} />}
       <GeometrySection obj={obj} />
@@ -231,7 +231,9 @@ function MultiObjectInspector({ ids }: { ids: string[] }) {
       <ActionsSection ids={ids} />
       <div className="row actions">
         <button onClick={() => duplicateObjects(ids)} title="Copies keep links among themselves">Duplicate</button>
-        {objs.some((o) => o.link) && <button onClick={() => detachObjects(ids)}>Detach</button>}
+        {objs.some(isCoupled) && <button title="Pause their relationships: they stay where they are and can be edited freely" onClick={() => uncoupleObjects(ids)}>Uncouple</button>}
+        {objs.some((o) => o.link && !isCoupled(o)) && <button title="Restore their paused relationships" onClick={() => coupleObjects(ids)}>Couple again</button>}
+        {objs.some((o) => o.link) && <button title="Remove their relationships for good" onClick={() => detachObjects(ids)}>Forget relationships</button>}
         <button onClick={() => setState({ panel: 'save-construction', panelData: selectedObjectIds() })}>Save as construction…</button>
         <button className="danger" onClick={() => deleteSelection()}>Delete</button>
       </div>
@@ -429,6 +431,7 @@ const CLIP_HELP: Record<string, TipContent> = {
     notes: ['Same as dragging the clip’s right edge on the timeline.'],
   },
   holdDuration: { title: 'Duration', text: 'How long the scene keeps running here (self.wait). Nothing moves except objects with updaters. Use it to pause, or to extend the end of the video.' },
+  glide: { title: 'Glide', text: 'How long the objects take to move back into their constructed place or shape. 0 snaps them back at once.', notes: ['While gliding, the target keeps updating, so it lands where the relationship is at the end.'] },
   measured: { title: 'Measured', text: 'A code clip lasts as long as the self.play and self.wait calls inside it take; this is measured by running the scene. Edit the code to change it.' },
   track: {
     title: 'Track',
@@ -469,7 +472,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
           <span className="muted">)</span>
         </div>
       )}
-      {clip.kind !== 'anim' && <h3>{clip.kind === 'code' ? 'Code clip' : clip.kind === 'hold' ? 'Hold' : `self.${clip.kind}(…)`}</h3>}
+      {clip.kind !== 'anim' && <h3>{clip.kind === 'code' ? 'Code clip' : clip.kind === 'hold' ? 'Hold' : clip.kind === 'couple' ? 'Couple' : clip.kind === 'uncouple' ? 'Uncouple' : `self.${clip.kind}(…)`}</h3>}
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       <Diagnostics id={clip.id} />
 
@@ -477,6 +480,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
         <h4>Timing</h4>
         <div className="fx-row"><Tip tip={CLIP_HELP.start}>Start</Tip><ScrubNumber value={clip.start} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.start = frames(v)), 'start')} /><span className="muted small mono">{timecode(clip.start)}</span></div>
         {timed && <div className="fx-row"><Tip tip={clip.kind === 'hold' ? CLIP_HELP.holdDuration : CLIP_HELP.duration}>Duration</Tip><ScrubNumber value={clip.duration} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.duration = frames(v)), 'dur')} /><span className="muted small mono">→ {timecode(clip.start + clip.duration)}</span></div>}
+        {clip.kind === 'couple' && <div className="fx-row"><Tip tip={CLIP_HELP.glide}>Glide</Tip><ScrubNumber value={clip.duration} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.duration = Math.max(0, frames(v))), 'dur')} /><span className="muted small">{clip.duration > 0 ? `→ ${timecode(clip.start + clip.duration)}` : 'snaps at once'}</span></div>}
         {clip.kind === 'code' && <div className="fx-row"><Tip tip={CLIP_HELP.measured}>Measured</Tip><span className="mono">{dur.toFixed(2)}s</span></div>}
         <div className="fx-row">
           <Tip tip={CLIP_HELP.track}>Track</Tip>
@@ -520,6 +524,24 @@ function ClipInspector({ clip }: { clip: Clip }) {
               <span className="mono">{o.name}</span>
             </label>
           ))}
+        </section>
+      )}
+
+      {(clip.kind === 'couple' || clip.kind === 'uncouple') && (
+        <section>
+          <p className="muted small">{clip.kind === 'uncouple'
+            ? 'From this instant, ticked objects stop following their relationships: they stay where they are and can be animated freely.'
+            : 'From this instant, ticked objects follow their relationships again. With a glide they move back into place over that time; without one they snap.'}</p>
+          {objects.filter((o) => o.link).map((o) => (
+            <label key={o.id} className="check">
+              <input type="checkbox" checked={clip.targets?.includes(o.name) ?? false} onChange={(e) => setClip(clip.id, (c) => {
+                const t = c.targets ?? [];
+                c.targets = e.target.checked ? [...t, o.name] : t.filter((x) => x !== o.name);
+              }, 'targets')} />
+              <span className="mono">{o.name}</span>
+            </label>
+          ))}
+          {!objects.some((o) => o.link) && <p className="muted small">No object has a relationship yet.</p>}
         </section>
       )}
 

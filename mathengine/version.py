@@ -17,7 +17,7 @@ try:
 except ImportError:
     _build = None
 
-REPOSITORY = getattr(_build, "REPOSITORY", "nikankad/MathEngine")
+REPOSITORY = getattr(_build, "REPOSITORY", "nikankad/ManimStudio")
 CHANNEL = getattr(_build, "CHANNEL", "dev")
 COMMIT = getattr(_build, "COMMIT", "")
 

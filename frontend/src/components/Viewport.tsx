@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { currentActions, type Action } from '../actions';
-import { FOLLOW_KINDS, geoType, graphAxes, isFollow, isRedraw, literal, ownsPosition, soleParam } from '../construct';
+import { FOLLOW_KINDS, geoType, graphAxes, isCoupled, isFollow, isRedraw, literal, ownsPosition, soleParam, standsAlone } from '../construct';
 import { dist, dragHandle, freeShape, handlesOf, nearestOnPath, nearestOnSegment, shapeCenter, writeShape, type Shape } from '../geometry';
 import { meetSnaps, type MeetSnap } from '../intersect';
 import {
-  addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, editPoints, fmt, fps,
+  addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, coupleObjects, uncoupleObjects, editPoints, fmt, fps,
   frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
   timecode, toast, toggleObjectSelection, type TransformDelta, useStore,
 } from '../store';
@@ -464,7 +464,7 @@ export function Viewport() {
     const o = d.objects.find((x) => x.id === g.id);
     if (!o) return false;
     const delta: Pt = [p[0] - g.start[0], p[1] - g.start[1]];
-    if (!o.link) {
+    if (!o.link || standsAlone(o)) {
       // Free shape: edit the defining parameter behind the handle.
       const shape = freeShape(o);
       if (!shape) return false;
@@ -540,7 +540,7 @@ export function Viewport() {
   /** Handles shown for the selected object: its defining parameters or its construction's inputs. */
   const geoHandles = (o: SceneObject | undefined, info: ObjInfo | undefined): { id: string; pt: Pt; title: string; kind: 'geo' | 'src' | 'bound' }[] => {
     if (!o || !info) return [];
-    if (!o.link) {
+    if (!o.link || standsAlone(o)) {
       const shape = freeShape(o);
       if (!shape || shape.kind === 'point') return [];
       const off = frameOffset(shape, info);
@@ -673,7 +673,7 @@ export function Viewport() {
       }
       return;
     }
-    if (getState().record && !o?.link) return toast('Handles edit the starting shape; turn off Record to use them');
+    if (getState().record && o && (!o.link || standsAlone(o))) return toast('Handles edit the starting shape; turn off Record to use them');
     const p = localPoint(e, svg);
     setGeoDrag({ id, handle, start: p, moved: false, last: p });
   };
@@ -912,8 +912,10 @@ function CanvasMenu({ x, y, onClose }: { x: number; y: number; onClose: () => vo
   const s = getState();
   const ids = selectedObjectIds();
   const actions = currentActions();
-  const groups = ['Connect', 'Measure', 'Annotate', 'Terms'] as const;
-  const linked = ids.some((id) => !!s.doc.objects.find((o) => o.id === id)?.link);
+  const groups = ['Couple', 'Connect', 'Measure', 'Annotate', 'Terms'] as const;
+  const objs = ids.map((id) => s.doc.objects.find((o) => o.id === id)).filter(Boolean) as SceneObject[];
+  const coupled = objs.filter(isCoupled).map((o) => o.id);
+  const uncoupled = objs.filter((o) => o.link && !isCoupled(o)).map((o) => o.id);
   const item = (label: string, fn: () => void, hint?: string, key?: string) => (
     <div key={key ?? label} className="menu-item" title={hint} onPointerDown={(e) => { e.stopPropagation(); fn(); onClose(); }}>
       <span>{label}</span>
@@ -933,7 +935,9 @@ function CanvasMenu({ x, y, onClose }: { x: number; y: number; onClose: () => vo
       })}
       <div className="menu-sep" />
       {item('Duplicate', () => duplicateObjects(ids), undefined, 'dup')}
-      {linked && item('Detach', () => detachObjects(ids), 'Make it an independent object (keeps its current place)', 'det')}
+      {coupled.length > 0 && item('Uncouple', () => uncoupleObjects(coupled), 'Pause the relationship: it stays where it is and can be edited freely; Couple again restores it', 'unc')}
+      {uncoupled.length > 0 && item('Couple again', () => coupleObjects(uncoupled), 'Restore the paused relationship', 'cpl')}
+      {objs.some((o) => o.link) && item('Forget relationship', () => detachObjects(ids), 'Make it an independent object for good (keeps its current place)', 'det')}
       {item('Save as construction…', () => setState({ panel: 'save-construction', panelData: ids }), 'Reuse these objects (with what they are built from) later', 'save')}
       {item('Delete', () => deleteSelection(), undefined, 'del')}
     </div>

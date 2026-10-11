@@ -53,6 +53,10 @@ FOLLOW_KINDS = {"attach", "midpoint", "on_graph", "on_circle", "coords", "measur
 REDRAW_KINDS = {"segment", "circle2", "polygon", "angle", "graph", "tangent", "secant", "area", "riemann", "brace", "highlight",
                 "perpendicular", "parallel"}
 KINDS = FOLLOW_KINDS | REDRAW_KINDS
+# Kinds whose object is an ordinary one while uncoupled (a point at its position, a line with its own ends…);
+# the others are built once from their sources while uncoupled.
+STANDALONE_KINDS = FOLLOW_KINDS | {"segment", "circle2", "polygon", "perpendicular", "parallel", "tangent", "secant"}
+SWITCH_CLIPS = ("couple", "uncouple")
 
 # What each link kind makes, for compatibility checks and context menus.
 KIND_TYPE = {
@@ -182,11 +186,14 @@ class Constraints:
     except while an animation is playing on its mobject: manim suspends updating then, so
     Create, FadeIn and .animate work as usual. A construction owns either the position
     (follow) or the shape (redraw) of its mobject; color and opacity stay with the mobject and
-    its animations.
+    its animations. ``pause`` uncouples mobjects (they stay where they are and can be animated
+    freely), ``resume`` couples them again at once and ``couple`` is an animation that moves them
+    back into place.
     """
 
     def __init__(self, scene):
         self.items = []
+        self.paused = set()
 
         def step(dt):
             self.update()
@@ -200,44 +207,110 @@ class Constraints:
         self.carrier.add_updater(lambda m: self.update())
         scene.add(self.carrier)
 
-    def redraw(self, build, *sources):
-        """A mobject rebuilt by ``build()`` whenever one of ``sources`` changes."""
-        mob = build()
+    def redraw(self, build, *sources, mob=None, paused=False):
+        """A mobject rebuilt by ``build()`` whenever one of ``sources`` changes (``mob``: an existing one to reshape)."""
+        if mob is None:
+            mob = build()
         state = {"key": self._key(sources)}
 
-        def update(m):
+        def target(m):
+            new = build()
+            new.match_style(m)
+            return new
+
+        def update(m, force=False):
             key = self._key(sources)
-            if key == state["key"]:
+            if key == state["key"] and not force:
                 return
             state["key"] = key
             try:
-                new = build()
+                new = target(m)
             except Exception:  # e.g. an Angle while its lines are parallel: keep the last shape
                 return
-            new.match_style(m)
             m.become(new)
 
-        self.items.append((mob, update))
-        return mob
+        return self._add(mob, update, target, paused)
 
-    def follow(self, mob, place, *sources):
+    def follow(self, mob, place, *sources, paused=False):
         """Position ``mob`` with ``place(mob)`` whenever one of ``sources`` changes."""
-        place(mob)
+        if not paused:
+            place(mob)
         state = {"key": self._key(sources)}
 
-        def update(m):
+        def target(m):
+            new = m.copy()
+            place(new)
+            return new
+
+        def update(m, force=False):
             key = self._key(sources)
-            if key != state["key"]:
+            if key != state["key"] or force:
                 state["key"] = key
                 place(m)
 
-        self.items.append((mob, update))
+        return self._add(mob, update, target, paused)
+
+    def _add(self, mob, update, target, paused):
+        self.items.append((mob, update, target))
+        if paused:
+            self.paused.add(id(mob))
         return mob
 
     def update(self):
-        for mob, update in self.items:
-            if not mob.updating_suspended:
+        for mob, update, _ in self.items:
+            if not mob.updating_suspended and id(mob) not in self.paused:
                 update(mob)
+
+    def pause(self, *mobs):
+        """Uncouple: the mobjects keep their current place and shape until resumed."""
+        self.paused.update(id(m) for m in mobs)
+
+    def resume(self, *mobs):
+        """Couple again: the mobjects snap back to their constructions."""
+        for m in mobs:
+            self.paused.discard(id(m))
+        for mob, update, _ in self.items:
+            if any(mob is m for m in mobs):
+                update(mob, force=True)
+
+    def couple(self, *mobs, **kwargs):
+        """Animation that moves the mobjects back into their constructed place or shape, then couples them."""
+        glides = [Constraints.Glide(self, m, **kwargs) for m in mobs]
+        return glides[0] if len(glides) == 1 else AnimationGroup(*glides, **kwargs)
+
+    def target_of(self, mob):
+        for m, _, target in self.items:
+            if m is mob:
+                return target(mob)
+        return mob.copy()
+
+    class Glide(Animation):
+        _me_exclusive = True  # (not combined with other animations of the mobject by TimedAnimations)
+
+        def __init__(self, constraints, mob, **kwargs):
+            super().__init__(mob, **kwargs)
+            self.constraints = constraints
+
+        def begin(self):
+            self.constraints.pause(self.mobject)
+            self.start = self.mobject.copy()
+            super().begin()
+
+        def interpolate_mobject(self, alpha):
+            alpha = self.rate_func(alpha)
+            try:
+                end = self.constraints.target_of(self.mobject)
+            except Exception:
+                return
+            start = self.start.copy()
+            start.align_data(end)
+            now = start.copy()
+            now.interpolate(start, end, alpha)
+            self.mobject.become(now)
+
+        def finish(self):
+            super().finish()
+            self.constraints.resume(self.mobject)
 
     @staticmethod
     def _key(sources):
@@ -521,6 +594,8 @@ class Plan:
     """What codegen needs to emit the constructed parts of a document."""
 
     lines: dict[str, list[str]] = field(default_factory=dict)  # object id -> statements (replaces the generic ones)
+    after: dict[str, list[str]] = field(default_factory=dict)  # object id -> statements after its ordinary ones
+    switchable: set[str] = field(default_factory=set)  # names of objects couple/uncouple clips can switch
     diagnostics: list[Diagnostic] = field(default_factory=list)
     part_index: dict[str, dict[str, int]] = field(default_factory=dict)  # equation id -> part id -> submobject index
     eq_ctor: dict[str, str] = field(default_factory=dict)  # equation id -> constructor expression
@@ -620,7 +695,7 @@ def _check_link(obj: dict, ctx: _Ctx, cyclic: set[str]) -> str | None:
     if kind not in KINDS:
         return f"Unknown construction kind {kind!r}."
     if obj["id"] in cyclic:
-        return "This construction depends on itself (a dependency cycle). Detach one of the objects in the cycle."
+        return "This construction depends on itself (a dependency cycle). Uncouple or forget one of the relationships in the cycle."
     me = ctx.index[obj["id"]]
     checks = list(SOURCES.get(kind, []))
     if kind == "polygon":
@@ -740,19 +815,32 @@ def plan(doc: dict) -> Plan:
             p.diag(obj["id"], "error", f"{obj['name']!r} is a name the generated code uses; rename this object.")
 
     cyclic = _cycles(ctx)
+    switched = _switch_targets(doc, ctx)
     for obj in ctx.objects:
         link = obj.get("link")
         if not link:
             continue
+        off = bool(link.get("off"))
+        if off and link.get("kind") in STANDALONE_KINDS and obj["name"] not in switched:
+            continue  # uncoupled for the whole scene: an ordinary object
         why = _check_link(obj, ctx, cyclic)
         if why is None:
             try:
-                p.lines[obj["id"]] = _link_lines(obj, ctx)
+                lines = _link_lines(obj, ctx, switched=obj["name"] in switched)
+                if off and link["kind"] in STANDALONE_KINDS:
+                    p.after[obj["id"]] = lines  # the ordinary object, then its construction (paused)
+                else:
+                    p.lines[obj["id"]] = lines
+                if obj["name"] in switched and not link.get("frozen"):
+                    p.switchable.add(obj["name"])
                 continue
             except mathexpr.ExprError as exc:
                 why = exc.message
             except KeyError as exc:
                 why = f"Missing source ({exc})."
+        if off and link.get("kind") in STANDALONE_KINDS:
+            p.diag(obj["id"], "warning", f"{why} It stays uncoupled.")
+            continue
         p.diag(obj["id"], "error", why)
         fallback = _fallback_lines(obj, ctx)
         if fallback is not None:
@@ -760,7 +848,59 @@ def plan(doc: dict) -> Plan:
 
     _check_conflicts(doc, ctx)
     _check_term_clips(doc, ctx)
+    _check_switch_clips(doc, ctx)
     return p
+
+
+def _active(doc: dict) -> list[dict]:
+    hidden = {t["id"] for t in doc.get("tracks", []) if t.get("hidden")}
+    return [c for c in doc.get("clips", []) if not c.get("disabled") and c.get("track") not in hidden]
+
+
+def _switch_targets(doc: dict, ctx: _Ctx) -> set[str]:
+    """Names of constructed objects that couple / uncouple clips switch."""
+    out = set()
+    for c in _active(doc):
+        if c.get("kind") in SWITCH_CLIPS:
+            for n in c.get("targets") or []:
+                obj = ctx.by_name.get(n)
+                if obj and obj.get("link"):
+                    out.add(n)
+    return out
+
+
+def _check_switch_clips(doc: dict, ctx: _Ctx) -> None:
+    for c in _active(doc):
+        if c.get("kind") not in SWITCH_CLIPS:
+            continue
+        for n in c.get("targets") or []:
+            obj = ctx.by_name.get(n)
+            if obj is None:
+                continue
+            if not obj.get("link"):
+                ctx.plan.diag(c["id"], "warning", f"{n} has no relationship to {c['kind']}; it is skipped.", "clip")
+            elif obj["link"].get("frozen"):
+                ctx.plan.diag(c["id"], "warning", f"{n}'s construction is frozen (built once), so it can't be "
+                              f"{c['kind']}d; it is skipped.", "clip")
+            elif n not in ctx.plan.switchable:
+                ctx.plan.diag(c["id"], "warning", f"{n}'s construction has an error, so it can't be {c['kind']}d.", "clip")
+
+
+def uncoupled_spans(doc: dict, obj: dict) -> list[tuple[float, float]]:
+    """Times during which the object is uncoupled by its own setting and couple / uncouple clips."""
+    name = obj["name"]
+    events = sorted((float(c["start"]), c["kind"], float(c.get("duration") or 0)) for c in _active(doc)
+                    if c.get("kind") in SWITCH_CLIPS and name in (c.get("targets") or []))
+    spans, since = [], 0.0 if (obj.get("link") or {}).get("off") else None
+    for t, kind, dur in events:
+        if kind == "uncouple" and since is None:
+            since = t
+        elif kind == "couple" and since is not None:
+            spans.append((since, t + dur))
+            since = None
+    if since is not None:
+        spans.append((since, float("inf")))
+    return spans
 
 
 def _fallback_lines(obj: dict, ctx: _Ctx) -> list[str] | None:
@@ -844,12 +984,19 @@ def _equation(obj: dict, p: Plan) -> bool:
     return True
 
 
-def _link_lines(obj: dict, ctx: _Ctx) -> list[str]:
+def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
+    """Statements that build a constructed object. ``switched``: couple / uncouple clips switch it.
+
+    An uncoupled (``off``) standalone object is emitted as an ordinary object; these are then the
+    statements that register its construction, paused. Other uncoupled kinds are built once from their
+    sources (and registered paused when clips couple them later).
+    """
     link = obj["link"]
     kind = link["kind"]
     name = obj["name"]
     p = ctx.plan
     frozen = bool(link.get("frozen"))
+    off = bool(link.get("off")) and not frozen
     uses: list[str] = []  # parameters read
     srcs = [ctx.name(s) for s in link_sources(obj)]
     args = obj.get("args") or {}
@@ -873,15 +1020,21 @@ def _link_lines(obj: dict, ctx: _Ctx) -> list[str]:
         p.uses_constraints = True
         if extra:
             p.uses_geometry = True
+        if off:
+            return [f"{cvar}.follow({name}, {place}{deps()}, paused=True)"]
         return pre + [f"{cvar}.follow({name}, {place}{deps()})"]
 
     # ---------------- redraw kinds: geometry rebuilt from sources
     build = _builder(obj, ctx, uses)
     chain = _join_chain(obj.get("chain", ""))
     build = build + chain
-    if frozen:
+    if frozen or (off and not switched):
         return [f"{name} = {build}"]
     p.uses_constraints = True
+    if off and kind in STANDALONE_KINDS:
+        return [f"{cvar}.redraw(lambda: {build}{deps()}, mob={name}, paused=True)"]
+    if off:
+        return [f"{name} = {cvar}.redraw(lambda: {build}{deps()}, paused=True)"]
     return [f"{name} = {cvar}.redraw(lambda: {build}{deps()})"]
 
 
@@ -1123,13 +1276,18 @@ def _chain_methods(chain: str) -> list[str]:
 
 def _check_conflicts(doc: dict, ctx: _Ctx) -> None:
     """Animations that would fight a construction over the same property."""
-    linked = {o["name"]: o for o in ctx.objects if o.get("link") and not o["link"].get("frozen")}
+    linked = {o["name"]: o for o in ctx.objects if o.get("link") and not o["link"].get("frozen")
+              and (not o["link"].get("off") or o["name"] in ctx.plan.switchable)}
+    spans = {n: uncoupled_spans(doc, o) for n, o in linked.items()}
     for c in doc.get("clips", []):
         if c.get("kind") != "anim" or c.get("disabled"):
             continue
         obj = linked.get((c.get("target") or "").strip())
         if not obj:
             continue
+        start, end = float(c.get("start", 0)), float(c.get("start", 0)) + float(c.get("duration") or 0)
+        if any(a - 1e-6 <= start and end <= b + 1e-6 for a, b in spans[obj["name"]]):
+            continue  # it is uncoupled meanwhile
         kind = obj["link"]["kind"]
         owned = POSITION_METHODS if kind in FOLLOW_KINDS else GEOMETRY_METHODS
         what = "position" if kind in FOLLOW_KINDS else "shape and position"
@@ -1137,12 +1295,15 @@ def _check_conflicts(doc: dict, ctx: _Ctx) -> None:
             bad = [m for m in _chain_methods(c.get("chain", "")) if m in owned]
             if bad:
                 ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s {what} is controlled by its construction, so .{bad[0]}() is undone "
-                              "when the animation ends. Animate its sources (or a parameter) instead, or detach it.", "clip")
+                              "when the animation ends. Animate its sources (or a parameter) instead, or uncouple it during "
+                              "this clip.", "clip")
         elif c.get("cls") in GEOMETRY_ANIMATIONS and kind in REDRAW_KINDS:
             ctx.plan.diag(c["id"], "warning", f"{obj['name']}'s shape is controlled by its construction; it returns to the constructed "
                           f"shape after {c['cls']} ends.", "clip")
     for o in linked.values():
         kind = o["link"]["kind"]
+        if o["link"].get("off"):
+            continue
         moved = o.get("pos") is not None
         if kind in REDRAW_KINDS and (moved or o.get("scale") not in (None, 1, 1.0) or o.get("rotation")
                                      or (o.get("stretch") or [1, 1]) != [1, 1]):

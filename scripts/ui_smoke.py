@@ -260,13 +260,13 @@ def connections_records_constructions(p):
     seg = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "segment")
     page.wait_for_timeout(1000)
 
-    # Delete point A: the dialog offers detach; the segment becomes a plain Line, the label is detached.
+    # Delete point A: the dialog offers to keep what was built from it; the segment becomes a plain Line, the label independent.
     click_scene(page, -3, -1)
     page.wait_for_timeout(300)
     page.keyboard.press("Delete")
     page.wait_for_selector(".modal", timeout=5000)
     shot(page, "1_delete_dialog")
-    page.locator(".modal button", has_text="Detach and delete").click()
+    page.locator(".modal button", has_text="Keep them").click()
     page.wait_for_timeout(1500)
     doc = saved(page)
     names = by_name(doc)
@@ -623,12 +623,102 @@ def timeline_editing(p):
     browser.close()
 
 
+def coupling_relationships(p):
+    """Couple existing objects, uncouple without losing the relationship, couple again, switch over time."""
+    browser, page, requests = open_page(p)
+    page.goto(URL)
+    page.wait_for_selector(".lib-item", timeout=60000)
+    page.locator(".toolbar button", has_text="New").click()
+    page.wait_for_timeout(500)
+    page.locator("body").click(position={"x": 5, "y": 5})
+
+    # Three free points and a free line.
+    page.keyboard.press("2")
+    for pt in ((-2, 0), (2, 0), (1, 2)):
+        click_scene(page, *pt)
+        wait_frame(page, 800)
+    page.keyboard.press("3")
+    click_scene(page, -3, -2.5)
+    click_scene(page, -1, -2.5)
+    wait_frame(page, 800)
+    page.keyboard.press("1")
+    wait_frame(page)
+    names = sorted(by_name(saved(page)))
+    print("objects:", names)
+    dots = [n for n in names if n.startswith("dot")]
+    line = next(n for n in names if n.startswith("line"))
+    a, b, m = dots
+
+    # Couple the third point to the first two: midpoint.
+    click_scene(page, 1, 2)
+    click_scene(page, -2, 0, shift=True)
+    click_scene(page, 2, 0, shift=True)
+    page.wait_for_timeout(400)
+    chips = page.locator(".inspector .chip").all_inner_texts()
+    print("couple chips:", [c for c in chips if c.startswith(("Make", "Put", "Attach", "Pin", "Center"))])
+    page.locator(".inspector .chip", has_text=f"Make {m} the midpoint of {a} and {b}").click()
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert d[m]["link"] == {"kind": "midpoint", "a": d[a]["id"], "b": d[b]["id"]}, d[m]
+    assert page.locator(".inspector .tag.link-coupled").count() == 1
+
+    # Uncouple: kept but paused, at its current place; drag it freely.
+    page.locator(".inspector button", has_text="Uncouple").first.click()
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert d[m]["link"].get("off") is True and d[m]["pos"] == [0, 0], d[m]
+    drag_scene(page, (0, 0), (1, 1))
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert d[m]["link"].get("off") and abs(d[m]["pos"][0] - 1) < 0.1 and abs(d[m]["pos"][1] - 1) < 0.1, d[m]
+    shot(page, "coupling_paused")
+
+    # Couple again: the relationship takes over.
+    page.locator(".inspector button", has_text="Couple again").click()
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert "off" not in d[m]["link"], d[m]
+
+    # Over time: uncouple at 1s, couple at 2s with a glide.
+    page.locator(".inspector button", has_text="+ Uncouple at playhead").click()
+    page.wait_for_timeout(300)
+    d = saved(page)
+    clips = [c for c in d["clips"] if c["kind"] in ("couple", "uncouple")]
+    assert clips and clips[0]["targets"] == [m], clips
+    assert page.locator(".timeline .clip.uncouple").count() == 1
+
+    # Couple the free line to the two points.
+    click_scene(page, -2, -2.5)
+    click_scene(page, -2, 0, shift=True)
+    click_scene(page, 2, 0, shift=True)
+    page.wait_for_timeout(400)
+    page.locator(".inspector .chip", has_text=f"Make {line} connect {a} and {b}").click()
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert d[line]["link"]["kind"] == "segment", d[line]
+
+    # The overview lists both relationships; its switch uncouples.
+    page.locator(".library .tabs button", has_text="Scene").click()
+    page.locator(".outline-view button", has_text="Relationships").click()
+    rows = page.locator(".rel-row").all_inner_texts()
+    print("relationships:", [r.replace("\n", " | ") for r in rows])
+    assert len(rows) == 2
+    page.locator(".rel-row", has_text=line).locator(".rel-switch").click()
+    wait_frame(page)
+    d = by_name(saved(page))
+    assert d[line]["link"].get("off") and d[line]["args"].get("start"), d[line]
+    assert page.locator(".rel-row", has_text=line).locator(".rel-switch.uncoupled").count() == 1
+    shot(page, "coupling_overview")
+    browser.close()
+
+
 SAVE = os.path.join(OUT, "smoke.manimstudio")
 with sync_playwright() as p:
     drawing_graphs_equations(p)
     connections_records_constructions(p)
     intersections_and_perpendiculars(p)
     timeline_editing(p)
+    coupling_relationships(p)
 print("screenshots in", OUT)
 print("ERRORS:", errors)
 sys.exit(1 if errors else 0)

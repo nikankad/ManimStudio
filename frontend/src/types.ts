@@ -41,8 +41,12 @@ export interface InstanceRef {
   offset?: [number, number]; // where it was placed relative to the template
 }
 
-/** Follow links own an object's position; redraw links own its shape. Sources are object ids; expressions are math text. */
-export type Link =
+/**
+ * Follow links own an object's position; redraw links own its shape. Sources are object ids; expressions are math text.
+ * `off`: uncoupled: the relationship is kept but paused (the object is edited freely) until it is coupled again.
+ */
+export type Link = LinkSpec & { off?: boolean };
+type LinkSpec =
   | { kind: 'attach'; to: string; parts?: string[]; offset: [number, number]; frozen?: boolean }
   | { kind: 'midpoint'; a: string; b?: string; frozen?: boolean }
   | { kind: 'on_graph'; graph: string; x: string; frozen?: boolean }
@@ -94,7 +98,7 @@ export interface Track {
   locked?: boolean;
 }
 
-export type ClipKind = 'anim' | 'code' | 'hold' | 'add' | 'remove';
+export type ClipKind = 'anim' | 'code' | 'hold' | 'add' | 'remove' | 'couple' | 'uncouple';
 
 export interface Clip {
   id: string;
@@ -111,7 +115,7 @@ export interface Clip {
   // code
   code?: string;
   label?: string;
-  // add / remove
+  // add / remove / couple / uncouple (couple: a duration glides the objects back into place)
   targets?: string[];
   // TransformTerms: destination equation (object id) and term pairs [source part id, target part id]
   terms?: { to: string; pairs: [string, string][] };

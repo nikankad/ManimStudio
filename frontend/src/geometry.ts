@@ -7,6 +7,7 @@
 // generic transform fields (pos / scale / stretch / rotation).
 
 import { evalNumber, evalVector, fmtNum, splitTop } from './pyparse';
+import { standsAlone } from './construct';
 import type { Pt, SceneObject } from './types';
 
 export type Shape =
@@ -28,7 +29,7 @@ export const fmtPt = (p: Pt) => `np.array([${fmtNum(p[0])}, ${fmtNum(p[1])}, 0])
 
 /** Defining geometry of a free shape, or null when it isn't one (linked, custom Python, transformed…). */
 export function freeShape(o: SceneObject): Shape | null {
-  if (o.link) return null;
+  if (o.link && !standsAlone(o)) return null;
   const c = o.ctor.trim();
   const a = o.args;
   if (c === 'Dot' || c === 'SmallDot') {

@@ -28,7 +28,7 @@ def build(monkeypatch):
 
 
 def test_stable_sees_newer_stable_only(build):
-    rel = {"latest": {"tag_name": "v0.10.0", "html_url": "https://github.com/nikankad/MathEngine/releases/tag/v0.10.0"}}
+    rel = {"latest": {"tag_name": "v0.10.0", "html_url": "https://github.com/nikankad/ManimStudio/releases/tag/v0.10.0"}}
     build("stable", "0.9.3", releases=rel)
     u = version.check_for_update()
     assert u["available"] and u["latest"] == "0.10.0" and u["url"].endswith("v0.10.0")  # numeric, not text, comparison
@@ -38,7 +38,7 @@ def test_stable_sees_newer_stable_only(build):
 
 def test_nightly_sees_a_build_of_another_commit(build):
     rel = {"nightly": {"name": "Manim Studio nightly 0.2.0-nightly.9", "body": f"> Built from {SHA_B}.",
-                       "html_url": "https://github.com/nikankad/MathEngine/releases/tag/nightly"}}
+                       "html_url": "https://github.com/nikankad/ManimStudio/releases/tag/nightly"}}
     build("nightly", "0.2.0-nightly.8", commit=SHA_A, releases=rel)
     u = version.check_for_update()
     assert u["available"] and u["latest"] == "nightly 0.2.0-nightly.9"
@@ -60,6 +60,6 @@ def test_offline_is_no_update(build):
 
 
 def test_only_this_projects_release_pages_open():
-    assert version.release_page("https://github.com/nikankad/MathEngine/releases/tag/v1.0.0")
+    assert version.release_page("https://github.com/nikankad/ManimStudio/releases/tag/v1.0.0")
     assert not version.release_page("https://example.com/releases")
     assert not version.release_page("file:///etc/passwd")

@@ -206,7 +206,7 @@ const TOPICS: Topic[] = [
   {
     id: 'connect',
     title: 'Connecting objects',
-    keywords: 'connect link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
+    keywords: 'connect couple uncouple pause forget relationship relationships link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
     body: (
       <>
         <p>Connected objects are built from other objects and stay attached to them while you edit, animate and scrub.</p>
@@ -216,7 +216,10 @@ const TOPICS: Topic[] = [
           <li><b>Intersections</b>: select two lines, circles, graphs or axes and pick <i>Intersection</i> (one point per crossing), or click the crossing with the point tool. A graph offers <i>Mark roots</i> and <i>y-intercept</i>. Lines count as extended both ways; while the objects don't meet, the point stays where it was.</li>
           <li><b>Right angles and parallels</b>: select a point and a line for <i>Perpendicular</i>, <i>Parallel</i>, <i>Altitude</i> (dashed, from the point to the line) or <i>Foot of perpendicular</i>; a point and axes for <i>Drop to x-axis</i> / <i>Drop to y-axis</i>. A segment offers <i>Perpendicular bisector</i>. These chain: the altitudes of a triangle meet at an intersection that moves with the vertices.</li>
           <li>Drag an attached label to change its offset. Drag a constrained point to move it along its curve or circle.</li>
-          <li>The inspector's <b>Construction</b> section shows the sources and values; <b>Detach</b> makes the object independent. Deleting a source asks whether to delete or detach what was built from it.</li>
+          <li><b>Couple existing objects</b>: select two or more objects that already exist; the <b>Couple</b> group offers what fits, built from where things are now: <i>Put P on circle</i>, <i>Pin P to axes</i>, <i>Attach label to A</i>, <i>Make line connect A and B</i>, <i>Make polygon go through A, B, C</i>… An object without a relationship also has <i>couple to</i> in its inspector.</li>
+          <li>The inspector's <b>Relationship</b> section shows the sources and values. <b>Uncouple</b> pauses it: the object stays where it is and is edited or animated like any other, and the relationship is remembered. <b>Couple again</b> restores it; <b>Forget</b> removes it for good. Deleting a source asks whether to delete what was built from it or keep it as independent objects.</li>
+          <li><b>Over time</b>: <i>+ Uncouple at playhead</i> / <i>+ Couple at playhead</i> (inspector, or the timeline's + Uncouple / + Couple) add clips that switch a relationship during the video. Between them the object can be moved by its own animations; give a Couple clip a duration and it glides back into place.</li>
+          <li>The <b>Scene</b> tab's <b>Relationships</b> view lists every relationship with its state, what it's built from, what's built from it and its timeline switches; couple, uncouple or forget them from there.</li>
           <li>A connection controls either an object's <i>position</i> or its <i>shape</i>; animations still control color, opacity and appearance.</li>
         </ul>
       </>
@@ -358,8 +361,8 @@ const TOPICS: Topic[] = [
     body: (
       <ul>
         <li><b>A red error bar under the canvas</b>: click it to jump to the object or clip that failed. The last good frame stays visible, dimmed.</li>
-        <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source or <b>Detach</b>.</li>
-        <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or detach it.</li>
+        <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source, or <b>Uncouple</b> / <b>Forget</b> the relationship.</li>
+        <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or uncouple it during the clip (+ Uncouple at playhead / + Couple at playhead).</li>
         <li><b>“Needs LaTeX”</b> on an equation: install LaTeX (MiKTeX on Windows, MacTeX or BasicTeX on macOS, TeX Live on Linux), then click <b>Check again</b> in the scene panel; no restart needed. Until then, numbers and simple labels are drawn with plain text.</li>
         <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
       </ul>

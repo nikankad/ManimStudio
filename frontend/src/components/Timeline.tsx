@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, clipDuration, deleteSelection, docKey, fps, previewFresh,
   frameSnap, getState, isLocked, parseTimecode, selectClips, sequenceEnd, setPlaying, setState, timecode, toast, trackIsFree, uid,
-  updateDoc, useStore,
+  selectedObjectIds, updateDoc, useStore,
 } from '../store';
 import type { Clip, SceneDoc } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
@@ -232,7 +232,7 @@ export function Timeline() {
     selectClips(ids);
     if (multi && !ids.includes(c.id)) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const trimmable = c.kind === 'anim' || c.kind === 'hold';
+    const trimmable = c.kind === 'anim' || c.kind === 'hold' || (c.kind === 'couple' && c.duration > 0);
     if (trimmable && e.clientX - rect.left < 7 && rect.width > 18) return setDrag({ mode: 'trim-start', id: c.id, x0: e.clientX, dt: 0 });
     if (trimmable && rect.right - e.clientX < 7) return setDrag({ mode: 'trim-end', id: c.id, x0: e.clientX, dt: 0 });
     setDrag({ mode: 'move', ids, x0: e.clientX, y0: e.clientY, dt: 0, drow: 0, alt: e.altKey, moved: false });
@@ -316,7 +316,7 @@ export function Timeline() {
 
   const renderClip = (c: Clip, l: ReturnType<typeof layout>, key: string, extraClass = '') => {
     const w = Math.max(l.dur * pps, 0);
-    const instant = c.kind === 'add' || c.kind === 'remove';
+    const instant = c.kind === 'add' || c.kind === 'remove' || c.kind === 'uncouple' || (c.kind === 'couple' && !(c.duration > 0));
     const left = x(l.start);
     if (left + w < -40 || left > laneW + 40) return null;
     const color = clipColor(c, catalog?.animations);
@@ -373,6 +373,8 @@ export function Timeline() {
           <button className="ghost small" onClick={() => addClip('hold')} title="Hold (extends the scene, like self.wait)">+ Hold</button>
           <button className="ghost small" onClick={() => addClip('add')} title="self.add(...) at the playhead">+ Add</button>
           <button className="ghost small" onClick={() => addClip('remove')} title="self.remove(...) at the playhead">+ Remove</button>
+          <button className="ghost small" onClick={() => addClip('uncouple', { targets: selectedObjectIds().map((id) => doc.objects.find((o) => o.id === id)?.name ?? '').filter(Boolean) })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
+          <button className="ghost small" onClick={() => addClip('couple', { targets: selectedObjectIds().map((id) => doc.objects.find((o) => o.id === id)?.name ?? '').filter(Boolean) })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
         </div>
         <div className="spacer" />
         <span className="muted small mono">{timecode(end)}</span>
@@ -598,6 +600,10 @@ export function clipLabel(c: Clip): { name: string; sub: string; title: string }
       return { name: c.label || 'Code', sub: '', title: c.code ?? '' };
     case 'hold':
       return { name: 'Hold', sub: '', title: 'Hold: keeps the scene running (self.wait)' };
+    case 'couple':
+      return { name: 'Couple', sub: (c.targets ?? []).join(', '), title: `Couple ${(c.targets ?? []).join(', ')} again${c.duration > 0 ? ', gliding back into place' : ''}` };
+    case 'uncouple':
+      return { name: 'Uncouple', sub: (c.targets ?? []).join(', '), title: `Uncouple ${(c.targets ?? []).join(', ')}: they stay where they are and can be animated freely` };
     default:
       return { name: c.kind, sub: (c.targets ?? []).join(', '), title: `self.${c.kind}(${(c.targets ?? []).join(', ')})` };
   }
@@ -608,6 +614,8 @@ function clipColor(c: Clip, anims?: { name: string; category: string }[]): strin
   if (c.kind === 'hold') return '#3a3e4a';
   if (c.kind === 'add') return '#3f6b4a';
   if (c.kind === 'remove') return '#7a4040';
+  if (c.kind === 'couple') return '#2f7a74';
+  if (c.kind === 'uncouple') return '#8a6a2f';
   if (c.cls === 'animate') return '#2f5c8c';
   const cat = anims?.find((a) => a.name === c.cls)?.category ?? '';
   if (/^(FadeOut|Uncreate|Unwrite|ShrinkToCenter|FadeOutAndShift)/.test(c.cls ?? '')) return '#7a4545';

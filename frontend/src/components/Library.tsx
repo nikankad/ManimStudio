@@ -1,6 +1,10 @@
 import { useMemo, useState } from 'react';
 import { api } from '../api';
-import { addAnimation, addObject, getState, selectedObjectIds, selectObjects, setState, toast, toggleObjectSelection, updateDoc, useStore } from '../store';
+import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
+import {
+  addAnimation, addObject, coupleObjects, detachObjects, getState, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
+  uncoupleObjects, updateDoc, useStore,
+} from '../store';
 import { syncInstances } from '../templates';
 import type { Template } from '../types';
 import type { CatalogEntry } from '../types';
@@ -129,7 +133,18 @@ function Outline() {
   const selection = useStore((s) => s.selection);
   const frame = useStore((s) => s.frame);
   const error = frame?.error;
+  const [view, setView] = useState<'objects' | 'relationships'>('objects');
+  const count = objects.filter((o) => o.link).length;
+  const toggle = (
+    <div className="seg outline-view">
+      <button className={view === 'objects' ? 'on' : ''} onClick={() => setView('objects')}>Objects</button>
+      <button className={view === 'relationships' ? 'on' : ''} onClick={() => setView('relationships')} title="Every relationship in the scene: what is coupled to what, and whether it is in effect">Relationships{count ? ` (${count})` : ''}</button>
+    </div>
+  );
+  if (view === 'relationships') return <div className="outline-wrap">{toggle}<Relationships /></div>;
   return (
+    <div className="outline-wrap">
+    {toggle}
     <div className="scroll outline">
       {objects.length === 0 && <div className="muted pad">Drag objects from the library onto the canvas.</div>}
       {objects.map((o) => {
@@ -142,7 +157,67 @@ function Outline() {
           >
             <span className={`dot ${info?.visible ? 'on' : ''}`} title={info?.visible ? 'on screen now' : 'not on screen now'} />
             <span className="mono">{o.name}</span>
-            <span className="muted">{o.link ? `⛓ ${o.link.kind}` : o.ctor}</span>
+            <span className={`muted ${o.link?.off ? 'paused' : ''}`} title={o.link ? (o.link.off ? 'Relationship paused (uncoupled)' : 'Coupled') : undefined}>{o.link ? `⛓ ${o.link.kind}${o.link.off ? ' · paused' : ''}` : o.ctor}</span>
+          </div>
+        );
+      })}
+    </div>
+    </div>
+  );
+}
+
+const STATE_LABEL: Record<LinkState, string> = { coupled: 'coupled', uncoupled: 'paused', frozen: 'frozen' };
+
+/** Overview of every relationship: state, sources, timeline switches; couple, uncouple and forget from here. */
+function Relationships() {
+  const doc = useStore((s) => s.doc);
+  const selection = useStore((s) => s.selection);
+  const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
+  const [filter, setFilter] = useState<'all' | LinkState>('all');
+  const linked = doc.objects.filter((o) => o.link);
+  const shown = linked.filter((o) => filter === 'all' || linkState(o) === filter);
+  const name = (id: string) => doc.objects.find((o) => o.id === id)?.name ?? '(deleted)';
+  const sel = new Set(selectedObjectIds(selection));
+  if (!linked.length)
+    return <div className="muted pad small">No relationships yet. Select two objects and pick one under Couple (Effect Controls or right-click), or build new objects from existing ones under Connect.</div>;
+  const coupled = shown.filter((o) => linkState(o) === 'coupled').map((o) => o.id);
+  const paused = shown.filter((o) => linkState(o) !== 'coupled').map((o) => o.id);
+  return (
+    <div className="scroll relationships">
+      <div className="rel-bar">
+        <select className="field" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+          <option value="all">All ({linked.length})</option>
+          <option value="coupled">Coupled</option>
+          <option value="uncoupled">Paused</option>
+          <option value="frozen">Frozen</option>
+        </select>
+        <button className="ghost small" disabled={!coupled.length} title="Pause every listed relationship" onClick={() => uncoupleObjects(coupled)}>Uncouple all</button>
+        <button className="ghost small" disabled={!paused.length} title="Restore every listed relationship" onClick={() => coupleObjects(paused)}>Couple all</button>
+      </div>
+      {shown.map((o) => {
+        const state = linkState(o)!;
+        const sources = linkSources(o.link);
+        const users = dependentsOf(doc, [o.id]);
+        const switches = doc.clips.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(o.name)).sort((a, b) => a.start - b.start);
+        const problem = diagnostics?.find((d) => d.id === o.id && d.level === 'error');
+        return (
+          <div key={o.id} className={`rel-row ${state} ${sel.has(o.id) ? 'sel' : ''} ${problem ? 'err' : ''}`} title={problem?.message}>
+            <div className="rel-head">
+              <button className={`rel-switch ${state}`} title={state === 'coupled' ? 'Coupled: click to uncouple (pause) it' : 'Paused: click to couple it again'}
+                onClick={() => (state === 'coupled' ? uncoupleObjects([o.id]) : coupleObjects([o.id]))}>{STATE_LABEL[state]}</button>
+              <button className="rel-name mono" title="Select it" onClick={(e) => (e.shiftKey ? toggleObjectSelection(o.id) : selectObjects([o.id]))}>{o.name}</button>
+              <span className="spacer" />
+              <button className="x-btn" title="Select it with what it is built from" onClick={() => selectObjects([o.id, ...sources.filter((id) => doc.objects.some((x) => x.id === id))])}>⇢</button>
+              <button className="x-btn" title="Forget the relationship (it becomes an independent object where it is)" onClick={() => detachObjects([o.id])}>×</button>
+            </div>
+            <div className="rel-desc muted small">{describeLink(o, doc)}</div>
+            {(sources.length > 0 || users.length > 0 || switches.length > 0) && (
+              <div className="chips">
+                {sources.map((id) => <button key={id} className="chip" title="Built from (select)" onClick={() => selectObjects([id])}>← {name(id)}</button>)}
+                {users.map((u) => <button key={u.id} className="chip" title="Built from this (select)" onClick={() => selectObjects([u.id])}>→ {u.name}</button>)}
+                {switches.map((c) => <button key={c.id} className={`chip switch-chip ${c.kind}`} title="Select the clip" onClick={() => selectClips([c.id])}>{c.kind === 'couple' ? '⛓' : '⊘'} {timecode(c.start)}</button>)}
+              </div>
+            )}
           </div>
         );
       })}

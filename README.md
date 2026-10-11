@@ -143,11 +143,22 @@ manim-studio code scene.manimstudio > scene.py # plain manim code
   Dragging an attached label changes its offset. Dragging a constrained point changes its parameter: its `x`
   on the graph or its angle on the circle. If that value is a parameter, the drag sets the parameter's starting
   value; in **Record** mode it adds a `.set_value` clip instead.
+- **Coupling existing objects**: select objects that already exist and pick from *Couple* (inspector or right-click):
+  put a point on a circle, graph or axes, make it a midpoint, intersection or foot, attach any object to another,
+  make a line connect two points, a circle go through them, or a polygon go through several. Each is built from where
+  things are now, so nothing jumps further than the relationship requires. An independent object's inspector also
+  has *couple to*.
+- **Uncouple, couple again, forget**: *Uncouple* pauses a relationship without losing it: the object stays where it
+  is and is edited and animated like any other. *Couple again* restores it; *Forget* removes it for good. Over time,
+  *Uncouple* and *Couple* clips switch a relationship during the video (a Couple clip with a duration glides the
+  object back into place); in the exported file these are `constraints.pause(…)`, `constraints.resume(…)` and
+  `constraints.couple(…)`. The Scene tab's *Relationships* view lists every relationship with its state, sources,
+  dependents and timeline switches.
 - **Who owns what**: a connection owns either an object's *position* (labels, constrained points, midpoints,
   intersections, feet, measurements) or its *shape* (segments, perpendicular and parallel lines, circles, angle
   marks, graphs, tangents, areas, braces). Animations
   keep everything else: color, opacity, scale, rotation, and Create/FadeIn/Write. An animation that would move
-  or reshape a connected object is flagged in its clip's Effect Controls.
+  or reshape a connected object is flagged in its clip's Effect Controls, unless the object is uncoupled meanwhile.
 - **Editing relationships**: the inspector's *Construction* section shows the sources (pickers limited to
   compatible objects), the expressions, the offset and the mode. **Detach** turns a connected object into an
   independent one at its current place or shape. Unticking *keep updated* freezes it: it is built once and
