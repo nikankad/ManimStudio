@@ -38,6 +38,7 @@ export interface AppState {
   timelineSnap: boolean;
   autoIntro: boolean;
   record: boolean;
+  viewerMaximized: boolean;
   targetTrack: string | null;
   view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
@@ -83,6 +84,7 @@ let state: AppState = {
   timelineSnap: true,
   autoIntro: true,
   record: false,
+  viewerMaximized: false,
   targetTrack: null,
   view: { pps: 110, start: 0 },
   video: null,
@@ -900,6 +902,25 @@ export function pasteClips() {
   selectClips(ids);
 }
 
+/** Duplicate a clip group immediately after its last edge, keeping relative timing. */
+export function duplicateClips() {
+  if (state.selection?.kind !== 'clips') return;
+  const selected = new Set(state.selection.ids);
+  const clips = state.doc.clips.filter((c) => selected.has(c.id) && !state.doc.tracks.find((t) => t.id === c.track)?.locked);
+  if (!clips.length) return;
+  const offset = Math.max(...clips.map((c) => c.start + clipDuration(c, state.timeline))) - Math.min(...clips.map((c) => c.start));
+  const ids: string[] = [];
+  updateDoc((d) => {
+    for (const c of clips) {
+      const copy = { ...structuredClone(c), id: uid('c'), start: frameSnap(c.start + Math.max(offset, 1 / fps())) };
+      copy.track = chooseTrack(d, copy.start, copy.duration, { track: c.track });
+      d.clips.push(copy);
+      ids.push(copy.id);
+    }
+  });
+  selectClips(ids);
+}
+
 // ---------------------------------------------------------------- canvas edits
 
 export const fmt = (v: number) => String(Math.round(v * 100) / 100);
@@ -982,6 +1003,32 @@ export function commitTransform(id: string, t: TransformDelta, center: [number, 
     d.clips.push(clip);
   });
   setState({ time: time + 1 });
+}
+
+/** Nudge a selection as one undoable edit; recorded moves all start at the same playhead. */
+export function nudgeObjects(ids: string[], move: [number, number]) {
+  const s = state;
+  const objects = s.doc.objects.filter((o) => ids.includes(o.id) && !ownsPosition(o) && !isRedraw(o)
+    && (!s.record || s.frame?.objects.find((info) => info.id === o.id)?.center));
+  if (!objects.length) return;
+  const at = frameSnap(s.time);
+  let recorded = false;
+  updateDoc((d) => {
+    for (const obj of objects) {
+      const center = s.frame?.objects.find((o) => o.id === obj.id)?.center ?? null;
+      if (!s.record) applyTransform(d.objects.find((o) => o.id === obj.id)!, { move }, center);
+      else if (center) {
+        const chain = `.move_to(np.array([${fmt(snapV(center[0] + move[0]))}, ${fmt(snapV(center[1] + move[1]))}, 0]))`;
+        const existing = d.clips.find((c) => c.cls === 'animate' && c.target === obj.name && c.chain?.startsWith('.move_to(') && Math.abs(c.start + c.duration - at) < 1e-3);
+        if (existing) existing.chain = chain;
+        else {
+          d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, at, 1, { target: obj.name }), start: at, duration: 1, cls: 'animate', target: obj.name, args: {}, chain });
+          recorded = true;
+        }
+      }
+    }
+  }, s.record ? undefined : `nudge:${ids.join(',')}`);
+  if (recorded) setState({ time: at + 1 });
 }
 
 export function docKey(doc: SceneDoc): string {

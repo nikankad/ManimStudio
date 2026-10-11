@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc, selectedObjectIds,
+  addMarker, nudgeObjects, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateClips, duplicateObjects, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc, selectClips, selectObjects, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
-import type { Job } from '../types';
+import { isTextEntry, matchShortcut, shortcutHint, viewerCommand } from '../shortcuts';
+import type { Job, Tool } from '../types';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
@@ -27,9 +28,14 @@ export async function saveProject(saveAs = false) {
   toast(`Saved ${path}`);
 }
 
+export function newProject() {
+  if (!getState().dirty || confirm('Discard unsaved changes?')) loadDoc(emptyDoc(), null);
+}
+
 export async function openProject() {
   const path = await askPath('open', '', [PROJECT_FILES], 'Open project path:');
   if (!path) return;
+  if (getState().dirty && !confirm('Discard unsaved changes?')) return;
   const res = await api.openProject(path);
   loadDoc(res.doc, res.path);
 }
@@ -47,24 +53,24 @@ export function Toolbar() {
     <header className="toolbar">
       <span className="brand"><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</span>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
-      <button className="ghost" onClick={() => { if (!getState().dirty || confirm('Discard unsaved changes?')) loadDoc(emptyDoc(), null); }}>New</button>
-      <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
-      <button className="ghost" onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
+      <button className="ghost" title={shortcutHint('new')} onClick={newProject}>New</button>
+      <button className="ghost" title={shortcutHint('open')} onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
+      <button className="ghost" title={shortcutHint('save')} onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
       <span className="sep" />
-      <button className="ghost" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)">↶</button>
-      <button className="ghost" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)">↷</button>
+      <button className="ghost" disabled={!canUndo} onClick={undo} title={shortcutHint('undo')}>↶</button>
+      <button className="ghost" disabled={!canRedo} onClick={redo} title={shortcutHint('redo')}>↷</button>
       <span className="sep" />
-      <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
+      <label className="toggle" title={shortcutHint('canvas-snap')}><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
       <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
-      <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
+      <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title={shortcutHint('record')}><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
       <div className="spacer" />
       <UpdateNotice />
-      <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
+      <button data-tour="graph" className="ghost" title={shortcutHint('graph')} onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
         <PreviewButton />
-        <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
-        <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
-        <button className="primary" onClick={() => setState({ panel: 'export' })}>Export video</button>
+        <button title={shortcutHint('code')} onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
+        <button title={shortcutHint('settings')} onClick={() => setState({ panel: 'settings' })}>Settings</button>
+        <button className="primary" title={shortcutHint('export')} onClick={() => setState({ panel: 'export' })}>Export video</button>
       </span>
       <button data-tour="help" className="ghost help-btn" title="Guide and tour (? or F1)" onClick={() => setState({ panel: 'help', panelData: null })}>? Help</button>
     </header>
@@ -260,71 +266,106 @@ function ExportPanel() {
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
-      const mod = e.metaKey || e.ctrlKey;
-      const k = e.key.toLowerCase();
-      if (mod && k === 's') {
-        e.preventDefault();
-        void saveProject(e.shiftKey).catch((err) => toast(String(err)));
-        return;
-      }
-      if (e.key === 'F1') {
-        e.preventDefault();
-        setState({ panel: 'help', panelData: null });
-        return;
-      }
-      if (typing) return;
+      if (e.defaultPrevented || e.isComposing || e.altKey && e.ctrlKey) return;
       const s = getState();
-      if (e.key === '?' && !mod) {
+      if (s.tour !== null) return;
+      // Dialogs own the keyboard, including drawing keys and editor actions.
+      if (e.key === 'Escape' && !e.repeat) {
         e.preventDefault();
-        setState({ panel: s.panel === 'help' ? null : 'help', panelData: null });
+        if (s.panel) setState({ panel: null, panelData: null });
+        else if (isTextEntry(e)) (document.querySelector('.monitor') as HTMLElement | null)?.focus();
+        else if (s.viewerMaximized) setState({ viewerMaximized: false });
+        else setState({ selection: null });
         return;
       }
-      const go = (t: number) => setState({ time: frameSnap(Math.max(0, Math.min(sequenceEnd(s.doc, s.timeline), t))), showVideo: false });
-      const objSel = s.selection?.kind === 'object' ? s.selection.id : null;
-      if (mod && k === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      } else if (mod && k === 'y') redo();
-      else if (mod && k === 'c') copyClips();
-      else if (mod && k === 'v') pasteClips();
-      else if (mod && k === 'd') {
-        e.preventDefault();
-        if (selectedObjectIds().length) duplicateObjects(selectedObjectIds());
-      } else if (e.key === ' ' || k === 'l') {
-        e.preventDefault();
-        setPlaying(e.key === ' ' ? !s.playing : true);
-      } else if (k === 'k') setPlaying(false);
-      else if (e.key === 'Delete' || e.key === 'Backspace') deleteSelection(e.shiftKey);
-      else if (e.key === 'Home') go(0);
-      else if (e.key === 'End') go(sequenceEnd(s.doc, s.timeline));
-      else if (objSel && e.key.startsWith('Arrow')) {
-        // Nudge the selected object on the canvas (Shift = 1 unit).
-        e.preventDefault();
-        const step = e.shiftKey ? 1 : 0.1;
-        const d: [number, number] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key] as [number, number];
-        const info = s.frame?.objects.find((o) => o.id === objSel);
-        commitTransform(objSel, { move: d }, info?.center ?? null);
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        e.preventDefault();
-        const n = (e.shiftKey ? 5 : 1) * (e.key === 'ArrowLeft' ? -1 : 1);
-        go(s.time + n / fps());
-      } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        const pts = editPoints(s.doc, s.timeline);
-        const t = e.key === 'ArrowDown' ? pts.find((p) => p > s.time + 1e-6) : [...pts].reverse().find((p) => p < s.time - 1e-6);
-        if (t !== undefined) go(t);
-      } else if (k === 'm') addMarker();
-      else if (k === 's' && !mod) setState({ timelineSnap: !s.timelineSnap });
-      else if (e.key === '=' || e.key === '+') zoomBy(1.4);
-      else if (e.key === '-') zoomBy(1 / 1.4);
-      else if (e.key === '\\') zoomToFit(document.querySelector('.tl-lanes')?.clientWidth);
-      else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') {
-        const ids = new Set(s.selection.ids);
-        updateDoc((d) => d.clips.filter((c) => ids.has(c.id)).forEach((c) => (c.disabled = !c.disabled)));
-      } else if (e.key === 'Escape') setState({ selection: null, panel: null });
+      if (s.panel) return;
+      const binding = matchShortcut(e);
+      if (!binding || isTextEntry(e) && !binding.whileTyping) return;
+      // Let focused buttons keep native Space/Enter activation.
+      if (e.key === ' ' && e.composedPath().some((n) => n instanceof Element && n.matches('button, [role="button"]'))) return;
+      const id = binding.id;
+      const focused = document.activeElement;
+      const inTimeline = focused instanceof Element && Boolean(focused.closest('.timeline'));
+      const inViewer = focused instanceof Element && Boolean(focused.closest('.monitor'));
+      const objects = selectedObjectIds();
+      const timelineContext = inTimeline || !inViewer && s.selection?.kind === 'clips';
+      if (id === 'copy' && s.selection?.kind !== 'clips') return;
+      e.preventDefault();
+      const go = (t: number) => {
+        setPlaying(false);
+        setState({ time: frameSnap(Math.max(0, Math.min(sequenceEnd(s.doc, s.timeline), t))), showVideo: false });
+      };
+      if (id.startsWith('tool-')) {
+        setState({ tool: id.slice(5) as Tool });
+        (document.querySelector('.monitor') as HTMLElement | null)?.focus();
+        return;
+      }
+      if (id.startsWith('focus-')) {
+        const selectors: Record<string, string> = { viewer: '.monitor', inspector: '.inspector .scroll', timeline: '.timeline' };
+        if (id !== 'focus-viewer') setState({ viewerMaximized: false });
+        if (id === 'focus-library') window.dispatchEvent(new Event('library-search'));
+        else (document.querySelector(selectors[id.slice(6)]) as HTMLElement | null)?.focus();
+        return;
+      }
+      switch (id) {
+        case 'new': newProject(); break;
+        case 'open': void openProject().catch((err) => toast(String(err))); break;
+        case 'save': case 'save-as': void saveProject(id === 'save-as').catch((err) => toast(String(err))); break;
+        case 'undo': undo(); break;
+        case 'redo': redo(); break;
+        case 'copy': copyClips(); break;
+        case 'paste': pasteClips(); break;
+        case 'duplicate': if (s.selection?.kind === 'clips') duplicateClips(); else duplicateObjects(objects); break;
+        case 'select-all':
+          if (timelineContext) selectClips(s.doc.clips.filter((c) => !s.doc.tracks.find((t) => t.id === c.track)?.locked).map((c) => c.id));
+          else selectObjects(inViewer && s.frame ? s.frame.objects.filter((o) => o.visible && o.box).map((o) => o.id) : s.doc.objects.map((o) => o.id));
+          break;
+        case 'delete': case 'ripple-delete': deleteSelection(id === 'ripple-delete'); break;
+        case 'toggle-play': setPlaying(!s.playing); break;
+        case 'play': setPlaying(true); break;
+        case 'pause': setPlaying(false); break;
+        case 'back': go(s.time - 5 / fps()); break;
+        case 'start': go(0); break;
+        case 'end': go(sequenceEnd(s.doc, s.timeline)); break;
+        case 'ArrowLeft': case 'ArrowRight': case 'ArrowUp': case 'ArrowDown': {
+          if (objects.length && !inTimeline) {
+            const step = e.shiftKey ? 1 : s.snap ? 0.25 : 0.1;
+            const moves: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+            nudgeObjects(objects, moves[id]);
+          } else if (id === 'ArrowLeft' || id === 'ArrowRight') go(s.time + (e.shiftKey ? 5 : 1) * (id === 'ArrowLeft' ? -1 : 1) / fps());
+          else {
+            const pts = editPoints(s.doc, s.timeline);
+            const t = id === 'ArrowDown' ? pts.find((p) => p > s.time + 1e-6) : [...pts].reverse().find((p) => p < s.time - 1e-6);
+            if (t !== undefined) go(t);
+          }
+          break;
+        }
+        case 'marker': addMarker(); break;
+        case 'snap': setState({ timelineSnap: !s.timelineSnap }); break;
+        case 'canvas-snap': setState({ snap: !s.snap }); break;
+        case 'record': setState({ record: !s.record }); break;
+        case 'zoom-in': case 'zoom-out':
+          if (inViewer || s.viewerMaximized) viewerCommand(id);
+          else zoomBy(id === 'zoom-in' ? 1.4 : 1 / 1.4);
+          break;
+        case 'fit':
+          if (inViewer || s.viewerMaximized) viewerCommand('fit');
+          else zoomToFit(document.querySelector('.tl-lanes')?.clientWidth);
+          break;
+        case 'viewer-fit': viewerCommand('fit'); break;
+        case 'viewer-selection': viewerCommand('selection'); break;
+        case 'viewer-maximize': setState({ viewerMaximized: !s.viewerMaximized }); break;
+        case 'enable': {
+          if (s.selection?.kind !== 'clips') break;
+          const ids = new Set(s.selection.ids);
+          updateDoc((d) => d.clips.filter((c) => ids.has(c.id) && !d.tracks.find((t) => t.id === c.track)?.locked).forEach((c) => (c.disabled = !c.disabled)));
+          break;
+        }
+        case 'help': setState({ panel: 'help', panelData: 'keys' }); break;
+        case 'graph': case 'code': case 'settings': case 'export': setState({ panel: id, panelData: null }); break;
+        case 'preview': void renderPreview(); break;
+        case 'search': setState({ viewerMaximized: false }); window.dispatchEvent(new Event('library-search')); break;
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

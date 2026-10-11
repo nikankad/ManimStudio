@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { getState, setState, useStore } from '../store';
+import { SHORTCUTS, shortcutKeys } from '../shortcuts';
 import { Modal } from './Modal';
 
 // ---------------------------------------------------------------- guided tour
@@ -332,26 +333,19 @@ const TOPICS: Topic[] = [
     title: 'Keyboard shortcuts',
     keywords: 'keys shortcuts hotkeys keyboard',
     body: (
-      <table className="keys-table">
+      <><p className="muted">Typing keeps native editing; Save, F1 and panel focus shortcuts still work in fields. Dialogs own the keyboard. Click the viewer or timeline to target its controls. Shift+arrows nudge by 1 unit; ordinary arrows use 0.25 with snapping, otherwise 0.1.</p><table className="keys-table">
         <tbody>
-          {[
-            ['1 – 7', 'Drawing tools (select, point, segment, arrow, circle, rectangle, polygon)'],
-            ['Enter / Esc', 'Finish a polygon / cancel drawing'],
-            ['Shift-click', 'Add to the selection'],
-            ['Space, J / K / L', 'Play / pause'],
-            ['← / →', 'Previous / next frame (Shift: 5 frames)'],
-            ['↑ / ↓', 'Previous / next edit point'],
-            ['Home / End', 'Start / end of the sequence'],
-            ['Del, ⇧Del', 'Delete, ripple delete'],
-            ['⌘D', 'Duplicate selected objects'],
-            ['⌘C / ⌘V', 'Copy / paste clips'],
-            ['⌘Z / ⇧⌘Z', 'Undo / redo'],
-            ['⌘S', 'Save'],
-            ['M · S · = / -', 'Marker · timeline snap · zoom'],
-            ['? or F1', 'Open this guide'],
-          ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
+          {[...new Set(SHORTCUTS.map((s) => s.group))].flatMap((group) => [
+            <tr className="keys-group" key={group}><th colSpan={2}>{group}</th></tr>,
+            ...SHORTCUTS.filter((s) => s.group === group).map((s) => <tr key={`${s.id}-${s.key}`}><td><kbd>{shortcutKeys(s.keys)}</kbd></td><td>{s.label}</td></tr>),
+          ])}
+          <tr><td><kbd>Enter / Backspace</kbd></td><td>Finish polygon / remove last drawing point</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close dialog or menu, cancel drawing, restore viewer, or clear selection</td></tr>
+          <tr><td><kbd>Ctrl/Cmd+wheel</kbd></td><td>Zoom viewer under the pointer; zoom timeline</td></tr>
+          <tr><td><kbd>Wheel / middle-drag</kbd></td><td>Pan zoomed viewer</td></tr>
+          <tr><td><kbd>Enter (library search)</kbd></td><td>Add the first matching object or effect</td></tr>
         </tbody>
-      </table>
+      </table></>
     ),
   },
   {

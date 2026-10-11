@@ -3,6 +3,7 @@ import { currentActions, type Action } from '../actions';
 import { FOLLOW_KINDS, geoType, graphAxes, isCoupled, isFollow, isRedraw, literal, ownsPosition, soleParam, standsAlone } from '../construct';
 import { dist, dragHandle, freeShape, handlesOf, nearestOnPath, nearestOnSegment, shapeCenter, writeShape, type Shape } from '../geometry';
 import { meetSnaps, type MeetSnap } from '../intersect';
+import { isTextEntry, shortcutHint, viewerCommand, type ViewerCommand } from '../shortcuts';
 import {
   addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, coupleObjects, uncoupleObjects, editPoints, fmt, fps,
   frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
@@ -76,6 +77,7 @@ export function Viewport() {
   const playing = useStore((s) => s.playing);
   const time = useStore((s) => s.time);
   const tool = useStore((s) => s.tool);
+  const maximized = useStore((s) => s.viewerMaximized);
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [size, setSize] = useState({ w: 640, h: 360 });
@@ -94,6 +96,8 @@ export function Viewport() {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [entry, setEntry] = useState('');
   const [dropPoint, setDropPoint] = useState<[number, number] | null>(null);
+  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
+  const panRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
 
   const aspect = doc.config.pixel_width / doc.config.pixel_height;
 
@@ -112,23 +116,22 @@ export function Viewport() {
   useEffect(() => requestFrame(), [size.w]);
   useEffect(() => setDraft(null), [tool]);
 
-  // Tool shortcuts (1–7), Enter finishes a polygon, Escape cancels a drawing.
+  // Drawing owns Enter, Backspace and Escape before global selection actions.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement;
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || e.metaKey || e.ctrlKey || e.altKey) return;
-      const t = TOOLS.find((x) => x.key === e.key);
-      if (t) {
-        setState({ tool: t.tool });
-        e.preventDefault();
+      if (e.defaultPrevented || e.isComposing || getState().panel || getState().tour !== null || isTextEntry(e) || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      if (e.key === 'Escape' && menu) {
+        setMenu(null);
       } else if (e.key === 'Enter' && draft?.tool === 'polygon' && draft.points.length >= 3) {
         finishPolygon(draft.points);
-        e.preventDefault();
+      } else if (e.key === 'Backspace' && draft) {
+        setDraft(draft.points.length > 1 ? { ...draft, points: draft.points.slice(0, -1) } : null);
       } else if (e.key === 'Escape' && (draft || getState().tool !== 'select')) {
         if (draft) setDraft(null);
         else setState({ tool: 'select' });
-        e.stopPropagation();
-      }
+      } else return;
+      e.preventDefault();
+      e.stopPropagation();
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
@@ -169,9 +172,54 @@ export function Viewport() {
   ];
   const localPoint = (e: { clientX: number; clientY: number }, el: Element) => {
     const r = el.getBoundingClientRect();
-    return toScene(e.clientX - r.left, e.clientY - r.top);
+    return toScene((e.clientX - r.left) * size.w / r.width, (e.clientY - r.top) * size.h / r.height);
   };
-  const unit = cam.width / size.w; // scene units per pixel
+  const unit = cam.width / (size.w * view.zoom); // scene units per displayed pixel
+
+  useEffect(() => {
+    const command = (e: Event) => {
+      const action = (e as CustomEvent<ViewerCommand>).detail;
+      if (action === 'fit') setView({ zoom: 1, x: 0, y: 0 });
+      else if (action === 'zoom-in' || action === 'zoom-out') setView((v) => {
+        const zoom = Math.max(0.25, Math.min(8, v.zoom * (action === 'zoom-in' ? 1.25 : 0.8)));
+        return { zoom, x: v.x * zoom / v.zoom, y: v.y * zoom / v.zoom };
+      });
+      else if (action === 'selection') {
+        const ids = selectedObjectIds();
+        const boxes = getState().frame?.objects.filter((o) => ids.includes(o.id) && o.visible && o.box).map((o) => o.box!) ?? [];
+        if (!boxes.length) return toast('Select a visible object to frame');
+        const x0 = Math.min(...boxes.map((b) => b[0])), y0 = Math.min(...boxes.map((b) => b[1]));
+        const x1 = Math.max(...boxes.map((b) => b[2])), y1 = Math.max(...boxes.map((b) => b[3]));
+        const zoom = Math.max(0.25, Math.min(8, (size.w - 48) / Math.max(1, (x1 - x0) / cam.width * size.w), (size.h - 48) / Math.max(1, (y1 - y0) / cam.height * size.h)));
+        const [px, py] = toPx((x0 + x1) / 2, (y0 + y1) / 2);
+        setView({ zoom, x: (size.w / 2 - px) * zoom, y: (size.h / 2 - py) * zoom });
+      }
+    };
+    window.addEventListener('viewer-command', command);
+    return () => window.removeEventListener('viewer-command', command);
+  }, [size.w, size.h, cam.width, cam.height, cam.center[0], cam.center[1]]);
+
+  useEffect(() => {
+    const el = wrapRef.current!;
+    const wheel = (e: WheelEvent) => {
+      if (getState().panel || getState().tour !== null) return;
+      if (!e.ctrlKey && !e.metaKey && view.zoom <= 1) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        const r = el.getBoundingClientRect();
+        const px = e.clientX - r.left - r.width / 2, py = e.clientY - r.top - r.height / 2;
+        setView((v) => {
+          const zoom = Math.max(0.25, Math.min(8, v.zoom * Math.exp(-e.deltaY * 0.01)));
+          return { zoom, x: px - (px - v.x) * zoom / v.zoom, y: py - (py - v.y) * zoom / v.zoom };
+        });
+      } else {
+        const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+        setView((v) => ({ ...v, x: v.x - e.deltaX * factor, y: v.y - e.deltaY * factor }));
+      }
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => el.removeEventListener('wheel', wheel);
+  }, [view.zoom]);
   const snapPt = ([x, y]: [number, number]): [number, number] =>
     snap ? [Math.round(x * 4) / 4, Math.round(y * 4) / 4] : [Math.round(x * 100) / 100, Math.round(y * 100) / 100];
 
@@ -696,7 +744,10 @@ export function Viewport() {
   const diag = frame?.diagnostics?.find((d) => d.id === selectedId && d.kind === 'object');
 
   return (
-    <div className="monitor">
+    <div className={`monitor ${maximized ? 'maximized' : ''}`} tabIndex={0} aria-label="Program viewer"
+      onPointerDownCapture={(e) => {
+        if (!(e.target as Element).closest('button, input, select, textarea')) e.currentTarget.focus({ preventScroll: true });
+      }}>
       <div className="monitor-title">
         <span>Program: {doc.scene.name}</span>
         {record && <span className="rec-badge">● REC</span>}
@@ -714,11 +765,35 @@ export function Viewport() {
         {cursor && tool !== 'select' && <span className="muted small mono">{cursor.kind !== 'grid' && cursor.kind !== 'free' ? `${cursor.kind} ` : ''}({fmt(cursor.pt[0])}, {fmt(cursor.pt[1])})</span>}
         {showVideo && <span className="muted small">Smooth preview (manim render)</span>}
       </div>
-      <div className="viewport" ref={wrapRef}>
+      <div className="viewer-controls">
+        <button className="ghost small" title="Zoom out (- when viewer is focused)" onClick={() => viewerCommand('zoom-out')}>−</button>
+        <span className="mono" aria-live="polite">{Math.round(view.zoom * 100)}%</span>
+        <button className="ghost small" title="Zoom in (= when viewer is focused)" onClick={() => viewerCommand('zoom-in')}>+</button>
+        <button className="ghost small" title={shortcutHint('viewer-fit')} onClick={() => viewerCommand('fit')}>Fit</button>
+        <button className="ghost small" title={shortcutHint('viewer-selection')} onClick={() => viewerCommand('selection')}>Frame selection</button>
+        <span className="muted">Ctrl/Cmd+wheel zoom · wheel or middle-drag pan</span>
+        <span className="spacer" />
+        <button className="ghost small" title={shortcutHint('viewer-maximize')} aria-pressed={maximized} onClick={() => setState({ viewerMaximized: !maximized })}>{maximized ? 'Restore viewer' : 'Expand viewer'}</button>
+      </div>
+      <div className="viewport" ref={wrapRef}
+        onPointerDownCapture={(e) => {
+          if (e.button !== 1) return;
+          e.preventDefault(); e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          panRef.current = { x: view.x, y: view.y, px: e.clientX, py: e.clientY };
+        }}
+        onPointerMoveCapture={(e) => {
+          const pan = panRef.current;
+          if (!pan) return;
+          e.stopPropagation();
+          setView((v) => ({ ...v, x: pan.x + e.clientX - pan.px, y: pan.y + e.clientY - pan.py }));
+        }}
+        onPointerUpCapture={(e) => { if (panRef.current) { e.stopPropagation(); panRef.current = null; } }}
+        onPointerCancelCapture={() => { panRef.current = null; }}>
         <div
           data-tour="canvas"
           className={`stage ${tool !== 'select' ? 'drawing' : ''}`}
-          style={{ width: size.w, height: size.h, background: doc.config.background_color }}
+          style={{ width: size.w, height: size.h, background: doc.config.background_color, transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
           onDragOver={(e) => {
             if (!e.dataTransfer.types.includes(DND_TYPE)) return;
             e.preventDefault();

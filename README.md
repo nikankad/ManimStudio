@@ -79,8 +79,11 @@ manim-studio code scene.manimstudio > scene.py # plain manim code
   *Effects* tab holds animations; dropping one on a track targets the selected object.
 - **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
   corner handles to scale it, the edge handles to stretch it, or the top knob to rotate it. Arrow keys
-  nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
+  nudge all selected independent objects (0.25 units with snapping, 0.1 without; Shift: 1 unit).
+  With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
   Shift-click or drag a box on empty canvas to select several objects; right-click for actions.
+  Ctrl/⌘+wheel zooms under the pointer; wheel or middle-drag pans. **F** expands the viewer,
+  **Shift+F** frames the selection, and **0** restores the full frame. These change only the editor view.
 - **Inspector** (right): *Properties* for objects (scrubbable Transform values, Style with color pickers
   and sliders, every constructor argument), or *Effect Controls* for clips (start, duration, track and all
   animation arguments). Constructors can be methods of other objects, such as `axes.plot`.
@@ -219,9 +222,21 @@ manim-studio code scene.manimstudio > scene.py # plain manim code
 buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
 users are offered the tour once.
 
-Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
-S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object(s) ·
-1–7 drawing tools · Enter finish polygon · Esc cancel drawing · ? or F1 help.
+Shortcuts use **Ctrl** on Windows/Linux and **⌘** on macOS. **?** or **F1** opens the full shortcut reference.
+
+| Workflow | Shortcuts |
+| --- | --- |
+| Project | Ctrl/⌘+N new · Ctrl/⌘+O open · Ctrl/⌘+S save · Ctrl/⌘+Shift+S save as |
+| Editing | Ctrl/⌘+Z undo · Ctrl/⌘+Shift+Z redo · Ctrl/⌘+A select all · Ctrl/⌘+D duplicate objects or clips · Ctrl/⌘+C/V copy/paste clips |
+| Playback | Space play/pause · J step back 5 frames · K pause · L play · Home/End sequence start/end |
+| Viewer | F expand · Shift+F frame selection · 0 fit · R record · Shift+S canvas snapping · arrows nudge selection |
+| Timeline | ←/→ frame (Shift ×5) · ↑/↓ edit points · M marker · S snapping · Delete / Shift+Delete ripple delete · Shift+E enable/disable clips |
+| Zoom | =/- zoom and `\` fit the focused viewer or timeline; timeline by default |
+| Drawing | 1–7 tools · V select · Enter finish polygon · Backspace remove last point · Esc cancel |
+| Panels | / library search (Enter adds first match) · Alt/Option+1–4 focus library/viewer/inspector/timeline · G graph · Ctrl/⌘+Shift+C code · Ctrl/⌘+, settings · Ctrl/⌘+E export · Ctrl/⌘+Shift+P render preview |
+
+Click the viewer or timeline to direct its shortcuts. Typing keeps native text editing; Save, F1 and panel
+focus shortcuts still work in fields. Dialogs and the guided tour own the keyboard, and Escape closes them before clearing a selection.
 
 ## How it works
 
@@ -266,3 +281,6 @@ runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render
 and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
 (Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in
 [`docs/research/math-object-creation.md`](docs/research/math-object-creation.md).
+Keyboard checks: `cd frontend && npm test` (Node 22.18+). For browser integration checks without manim,
+start `cd frontend && npx vite --host 127.0.0.1`, then run `python scripts/keyboard_smoke.py` with
+Playwright and Chromium installed; the script mocks the rendering API.

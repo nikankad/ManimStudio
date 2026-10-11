@@ -71,7 +71,10 @@ function SceneInfo() {
         <li><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> frame · <kbd>↑</kbd><kbd>↓</kbd> edit points</li>
         <li><kbd>M</kbd> marker · <kbd>S</kbd> snap · <kbd>=</kbd>/<kbd>-</kbd> zoom · <kbd>\</kbd> fit</li>
         <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
+        <li><kbd>F</kbd> expand viewer · <kbd>Shift+F</kbd> frame selection · <kbd>0</kbd> fit viewer</li>
+        <li><kbd>R</kbd> record · <kbd>Shift+S</kbd> viewer snap · <kbd>/</kbd> search library</li>
       </ul>
+      <button className="ghost small" onClick={() => setState({ panel: 'help', panelData: 'keys' })}>All keyboard shortcuts</button>
       <LatexNotice />
       {catalog && <p className="muted small">Manim Studio {versionLabel(app)} · manim {catalog.manim_version}</p>}
     </div>
