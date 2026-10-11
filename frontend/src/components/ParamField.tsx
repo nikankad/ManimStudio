@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { askPath } from '../api';
 import { evalNumber, evalVector, fmtNum, formatDict, formatVector, parseDict, parseList, pyQuote, pyString, splitTop } from '../pyparse';
-import { getState, useSignature, useStore } from '../store';
+import { ensureSignature, getState, useSignature, useStore } from '../store';
 import type { Param, ParamKind } from '../types';
 import { ratePath } from './rates';
 
@@ -142,7 +142,8 @@ export function ColorField({ value, onChange, placeholder }: { value: string; on
 export const isColorKey = (name: string) => /(^|_)colou?r$/i.test(name);
 
 /** Kinds edited by a structured widget; all of them can flip to raw Python with the {} toggle. */
-const STRUCTURED = new Set<ParamKind>(['vector', 'choice', 'mobject', 'mobjects', 'range', 'numbers', 'strings', 'colors', 'colormap', 'dict', 'points', 'matrix', 'string', 'path']);
+const STRUCTURED = new Set<ParamKind>(['vector', 'choice', 'mobject', 'mobjects', 'range', 'numbers', 'strings', 'colors', 'colormap', 'dict', 'points', 'matrix', 'string', 'path',
+  'values', 'pairs', 'vertex', 'animation', 'dicts', 'svgpath']);
 
 /** Drag step for a numeric parameter, guessed from its name. */
 export function numStep(name: string, int?: boolean): number {
@@ -169,11 +170,22 @@ export function scrubber(start: () => number, step: number, apply: (v: number) =
   };
 }
 
-function useObjectNames(): string[] {
+function useObjectNames(accepts?: string[]): string[] {
   const objects = useStore((s) => s.doc.objects);
   const base = useStore((s) => s.doc.scene.base);
-  const names = objects.map((o) => o.name);
-  if (['MovingCameraScene', 'ZoomedScene'].includes(base)) names.push('self.camera.frame');
+  const signatures = useStore((s) => s.signatures);
+  const ok = accepts?.length ? new Set(accepts) : null;
+  const names = objects
+    .filter((o) => {
+      if (!ok) return true;
+      // An object's class: its constructor, or what a factory like axes.plot returns. Unknown -> keep.
+      const sig = signatures[o.ctor];
+      if (!sig) ensureSignature(o.ctor);
+      const cls = sig?.returns || (/^[A-Za-z_]\w*$/.test(o.ctor) ? o.ctor : '');
+      return !cls || sig?.unknown || ok.has(cls) || !getState().catalog?.mobjects.some((m) => m.name === cls);
+    })
+    .map((o) => o.name);
+  if (['MovingCameraScene', 'ZoomedScene'].includes(base) && (!ok || ok.has('ScreenRectangle') || ok.has('Rectangle'))) names.push('self.camera.frame');
   return names;
 }
 
@@ -195,6 +207,11 @@ function structurable(param: Param, value: string): boolean {
       return (star ? splitTop(v) : parseList(v)) !== null && (param.kind !== 'strings' || (parseList(v) ?? []).every((x) => pyString(x) !== null));
     case 'colormap': case 'dict': return parseDict(v) !== null;
     case 'matrix': { const rows = parseList(v); return !!rows && rows.every((r) => parseList(r) !== null); }
+    case 'values': return (star ? splitTop(v) : parseList(v)) !== null;
+    case 'pairs': { const items = star ? splitTop(v) : parseList(v); return !!items && items.every((x) => parseList(x)?.length === 2); }
+    case 'dicts': { const items = parseList(v); return !!items && items.every((x) => parseDict(x) !== null); }
+    case 'animation': return /^\w+\(\s*[\w.]*\s*\)$/.test(v);
+    case 'svgpath': return /^se\.Path\(([\s\S]*)\)$/.test(v) && pyString(v.slice(8, -1)) !== null;
     default: return true;
   }
 }
@@ -202,7 +219,7 @@ function snapshotNames() {
   return getState().doc.objects.map((o) => o.name).concat('self.camera.frame');
 }
 
-export function ParamField({ param, value, onChange, onRemove }: { param: Param; value: string; onChange: (v: string) => void; onRemove?: () => void }) {
+export function ParamField({ param, value, onChange, onRemove, siblings }: { param: Param; value: string; onChange: (v: string) => void; onRemove?: () => void; siblings?: Record<string, string> }) {
   const [rawMode, setRaw] = useState(false);
   const kind: ParamKind = isColorKey(param.name) && param.kind === 'expr' ? 'color' : param.kind;
   const p = kind === param.kind ? param : { ...param, kind };
@@ -214,14 +231,14 @@ export function ParamField({ param, value, onChange, onRemove }: { param: Param;
     ? scrubber(() => evalNumber(value) ?? evalNumber(param.default) ?? 0, step, (v) => onChange(String(v)), param.int || step === 1)
     : undefined;
   return (
-    <div className={`param ${param.required && !value ? 'missing' : ''} ${STRUCTURED.has(kind) && !['string', 'path', 'choice', 'mobject'].includes(kind) ? 'wide' : ''}`}
+    <div className={`param ${param.required && !value ? 'missing' : ''} ${STRUCTURED.has(kind) && !['string', 'path', 'choice', 'mobject', 'vertex', 'svgpath'].includes(kind) ? 'wide' : ''}`}
       title={param.annotation ? `${param.label}: ${param.annotation}${param.from ? `  (from ${param.from})` : ''}` : param.label}>
       <span className={`pname ${scrub ? 'scrubbable' : ''}`} onPointerDown={scrub} title={scrub ? 'Drag to change · Shift ×10 · Alt ÷10' : undefined}>
         {param.label}
         {onRemove && <button className="x-btn" title="Remove" onClick={onRemove}>×</button>}
       </span>
       <div className="pcontrol">
-        {raw ? <Field value={value} onChange={onChange} placeholder={placeholder} className="mono" /> : <Control param={p} value={value} onChange={onChange} placeholder={placeholder} />}
+        {raw ? <Field value={value} onChange={onChange} placeholder={placeholder} className="mono" /> : <Control param={p} value={value} onChange={onChange} placeholder={placeholder} siblings={siblings} />}
         {STRUCTURED.has(kind) && (
           <button className={`raw-toggle ${raw ? 'on' : ''}`} disabled={!canStructure} title={raw ? (canStructure ? 'Back to the visual editor' : 'This value is custom Python') : 'Edit as Python'} onClick={() => setRaw(!rawMode)}>{'{}'}</button>
         )}
@@ -230,7 +247,7 @@ export function ParamField({ param, value, onChange, onRemove }: { param: Param;
   );
 }
 
-function Control({ param, value, onChange, placeholder }: { param: Param; value: string; onChange: (v: string) => void; placeholder: string }) {
+function Control({ param, value, onChange, placeholder, siblings }: { param: Param; value: string; onChange: (v: string) => void; placeholder: string; siblings?: Record<string, string> }) {
   const catalog = useStore((s) => s.catalog);
   switch (param.kind) {
     case 'bool':
@@ -263,9 +280,9 @@ function Control({ param, value, onChange, placeholder }: { param: Param; value:
     case 'choice':
       return <ChoiceField options={param.options ?? []} value={value} onChange={onChange} def={param.default} />;
     case 'mobject':
-      return <MobjectField value={value} onChange={onChange} def={param.default} />;
+      return <MobjectField value={value} onChange={onChange} def={param.default} accepts={param.accepts} />;
     case 'mobjects':
-      return <MobjectsField value={value} onChange={onChange} star={param.name === '*'} />;
+      return <MobjectsField value={value} onChange={onChange} star={param.name === '*'} accepts={param.accepts} />;
     case 'range':
       return <RangeField value={value} onChange={onChange} def={param.default} />;
     case 'numbers': case 'strings': case 'colors': case 'points':
@@ -276,6 +293,24 @@ function Control({ param, value, onChange, placeholder }: { param: Param; value:
       return <DictField value={value} onChange={onChange} hint={param.hint} def={param.default} />;
     case 'matrix':
       return <MatrixField value={value} onChange={onChange} />;
+    case 'values':
+      return <ValuesField value={value} onChange={onChange} star={param.name === '*'} def={param.default} />;
+    case 'pairs':
+      return <PairsField value={value} onChange={onChange} star={param.name === '*'} vertices={vertexOptions(siblings)} />;
+    case 'vertex': {
+      const opts = vertexOptions(siblings);
+      return opts.length ? <ChoiceField options={opts} value={value} onChange={onChange} def={param.default} /> : <Field value={value} onChange={onChange} placeholder="vertex label" className="mono" />;
+    }
+    case 'key':
+      return <Field value={value} onChange={onChange} placeholder={placeholder || 'key (e.g. "a" or 1)'} className="mono" />;
+    case 'animation':
+      return <AnimationField value={value} onChange={onChange} />;
+    case 'dicts':
+      return <DictsField value={value} onChange={onChange} hint={param.hint} />;
+    case 'svgpath': {
+      const d = value ? pyString(value.slice(8, -1)) ?? '' : '';
+      return <Field value={d} onChange={(t) => onChange(t ? `se.Path(${pyQuote(t)})` : '')} placeholder="SVG path data, e.g. M 0 0 C 1 2 3 2 4 0" className="mono" />;
+    }
     case 'string':
       return <Field value={pyString(value) ?? value} onChange={(t) => onChange(t === '' ? '' : pyQuote(t))} placeholder={pyString(param.default) ?? placeholder} />;
     case 'path':
@@ -369,8 +404,8 @@ export function ChoiceField({ options, value, onChange, def }: { options: string
   );
 }
 
-function MobjectField({ value, onChange, def }: { value: string; onChange: (v: string) => void; def?: string }) {
-  const names = useObjectNames();
+function MobjectField({ value, onChange, def, accepts }: { value: string; onChange: (v: string) => void; def?: string; accepts?: string[] }) {
+  const names = useObjectNames(accepts);
   return (
     <select className="field mono" value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{def && def !== 'None' ? `default (${def})` : '— none —'}</option>
@@ -380,8 +415,8 @@ function MobjectField({ value, onChange, def }: { value: string; onChange: (v: s
   );
 }
 
-function MobjectsField({ value, onChange, star }: { value: string; onChange: (v: string) => void; star: boolean }) {
-  const names = useObjectNames().filter((n) => n !== 'self.camera.frame');
+function MobjectsField({ value, onChange, star, accepts }: { value: string; onChange: (v: string) => void; star: boolean; accepts?: string[] }) {
+  const names = useObjectNames(accepts).filter((n) => n !== 'self.camera.frame');
   const items = (star ? splitTop(value) : parseList(value) ?? []).filter(Boolean);
   const toggle = (n: string) => {
     const next = items.includes(n) ? items.filter((x) => x !== n) : [...items, n];
@@ -389,7 +424,7 @@ function MobjectsField({ value, onChange, star }: { value: string; onChange: (v:
   };
   return (
     <div className="chips">
-      {names.length === 0 && <span className="muted small">no objects yet</span>}
+      {names.length === 0 && <span className="muted small">{accepts?.length ? `no ${accepts.slice(0, 3).join('/')} objects yet` : 'no objects yet'}</span>}
       {names.map((n) => <button key={n} className={`chip ${items.includes(n) ? 'on' : ''}`} onClick={() => toggle(n)}>{n}</button>)}
     </div>
   );
@@ -522,6 +557,93 @@ function MatrixField({ value, onChange }: { value: string; onChange: (v: string)
         <button className="ghost small" disabled={!grid.length} onClick={() => write(grid.slice(0, -1))}>− row</button>
         <button className="ghost small" disabled={cols < 2} onClick={() => write(grid.map((r) => r.slice(0, -1)))}>− col</button>
       </div>
+    </div>
+  );
+}
+
+
+/** Vertex labels declared in a sibling `vertices` argument (Graph edges / root_vertex pick from them). */
+function vertexOptions(siblings?: Record<string, string>): string[] {
+  const src = siblings?.vertices;
+  return src ? parseList(src) ?? [] : [];
+}
+
+function ValuesField({ value, onChange, star, def }: { value: string; onChange: (v: string) => void; star: boolean; def: string }) {
+  const items = (star ? splitTop(value) : parseList(value) ?? []).filter(Boolean);
+  const write = (next: string[]) => onChange(next.length ? (star ? next.join(', ') : `[${next.join(', ')}]`) : '');
+  const nums = items.map((x) => evalNumber(x)).filter((x): x is number => x !== null);
+  const fresh = items.length === 0 ? '1' : nums.length === items.length ? String(Math.max(...nums) + 1) : '""';
+  return (
+    <div className="list-field">
+      {items.length === 0 && <span className="muted small">{def && def !== 'None' ? `default ${def}` : 'empty'}</span>}
+      <div className="chips">
+        {items.map((it, i) => (
+          <span key={i} className="chip value-chip">
+            <Field value={it} className="mono" onChange={(v) => write(items.map((x, k) => (k === i ? v || '0' : x)))} />
+            <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+          </span>
+        ))}
+        <button className="ghost small" onClick={() => write([...items, fresh])}>+ add</button>
+      </div>
+    </div>
+  );
+}
+
+function PairsField({ value, onChange, star, vertices }: { value: string; onChange: (v: string) => void; star: boolean; vertices: string[] }) {
+  const items = (star ? splitTop(value) : parseList(value) ?? []).filter(Boolean).map((x) => parseList(x) ?? ['', '']);
+  const write = (next: string[][]) => {
+    const parts = next.map(([a, b]) => `(${a || '0'}, ${b || '0'})`);
+    onChange(parts.length ? (star ? parts.join(', ') : `[${parts.join(', ')}]`) : '');
+  };
+  const end = (i: number, j: number, v: string) => write(items.map((pr, k) => (k === i ? pr.map((x, q) => (q === j ? v : x)) : pr)));
+  const pick = (v: string, set: (v: string) => void) => vertices.length
+    ? <select className="field mono" value={v} onChange={(e) => set(e.target.value)}>{[...new Set([...vertices, v])].map((o) => <option key={o} value={o}>{o}</option>)}</select>
+    : <Field value={v} className="mono" onChange={set} />;
+  return (
+    <div className="list-field">
+      {items.map(([a, b], i) => (
+        <div key={i} className="row list-row">
+          {pick(a, (v) => end(i, 0, v))}<span className="muted">—</span>{pick(b, (v) => end(i, 1, v))}
+          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <button className="ghost small" onClick={() => write([...items, [vertices[0] ?? '1', vertices[1] ?? vertices[0] ?? '2']])}>+ edge</button>
+    </div>
+  );
+}
+
+function AnimationField({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const catalog = useStore((s) => s.catalog);
+  const names = useObjectNames();
+  const m = value.match(/^(\w+)\(\s*([\w.]*)\s*\)$/);
+  const [cls, target] = m ? [m[1], m[2]] : ['', ''];
+  const write = (c: string, t: string) => onChange(c ? `${c}(${t})` : '');
+  return (
+    <div className="row">
+      <select className="field mono" value={cls} onChange={(e) => write(e.target.value, target || names[0] || '')}>
+        <option value="">— animation —</option>
+        {catalog?.animations.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+      </select>
+      <select className="field mono" value={target} disabled={!cls} onChange={(e) => write(cls, e.target.value)}>
+        {[...new Set([...names, target])].map((n) => <option key={n} value={n}>{n || '—'}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function DictsField({ value, onChange, hint }: { value: string; onChange: (v: string) => void; hint?: string }) {
+  const items = parseList(value) ?? [];
+  const write = (next: string[]) => onChange(next.length ? `[${next.join(', ')}]` : '');
+  return (
+    <div className="list-field">
+      {items.map((d, i) => (
+        <div key={i} className="row list-row">
+          <span className="muted small idx">{i}</span>
+          <DictField value={d === '{}' ? '' : d} hint={hint} def="" onChange={(v) => write(items.map((x, k) => (k === i ? v || '{}' : x)))} />
+          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+        </div>
+      ))}
+      <button className="ghost small" onClick={() => write([...items, '{}'])}>+ add</button>
     </div>
   );
 }

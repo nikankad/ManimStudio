@@ -347,3 +347,5 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .call-card { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px 6px; margin: 6px 0; background: rgba(255, 255, 255, 0.015); }
 .call-head { display: flex; align-items: center; gap: 4px; color: var(--accent); }
 .call-card .doc { margin: 2px 0 4px; }
+.value-chip { display: inline-flex; align-items: center; padding: 1px 2px 1px 6px; gap: 2px; }
+.value-chip .field { width: 52px; padding: 1px 4px; border: 0; background: transparent; }

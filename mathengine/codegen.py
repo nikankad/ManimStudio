@@ -48,11 +48,17 @@ def _num(v: float) -> str:
     return repr(int(v)) if v == int(v) else repr(v)
 
 
-def _call_args(args: dict | None, leading: list[str] | None = None, extra: dict | None = None) -> str:
+def _call_args(args: dict | None, leading: list[str] | None = None, extra: dict | None = None,
+               before_star: tuple[str, ...] = ()) -> str:
     parts = [p for p in (leading or []) if p and p.strip()]
     merged = dict(args or {})
     merged.update(extra or {})
     star = str(merged.pop("*", "")).strip()
+    if star and before_star:
+        # f(a, *rest): parameters declared before *args can't follow it as keywords.
+        for name in before_star:
+            val = str(merged.pop(name, "") or "None").strip()
+            parts.append(val)
     if star:
         parts.append(star)
     for key, val in merged.items():
@@ -74,12 +80,43 @@ def anim_expr(clip: dict, run_time: float | None) -> str:
     cls = (clip.get("cls") or "").strip()
     target = (clip.get("target") or "").strip()
     args = {k: v for k, v in (clip.get("args") or {}).items() if k != "run_time"}
-    extra = {"run_time": _num(run_time)} if run_time is not None else {}
+    extra = {"run_time": _num(run_time)} if run_time is not None and not _sets_run_time(cls) else {}
     if cls == "animate":
         kw = _call_args(args, extra=extra)
         head = f"{target}.animate({kw})" if kw else f"{target}.animate"
         return head + _join_chain(clip.get("chain", ""))
-    return f"{cls}({_call_args(args, [target], extra)})"
+    kw_target = _target_keyword(cls)
+    if kw_target and target:  # ApplyMatrix(matrix, mobject): the target isn't the first argument
+        return f"{cls}({_call_args({**args, kw_target: target}, [], extra)})"
+    return f"{cls}({_call_args(args, [target], extra, _leading(cls, skip=1))})"
+
+
+def _leading(ctor: str, skip: int = 0) -> tuple[str, ...]:
+    if not re.fullmatch(r"[A-Za-z_]\w*", ctor or ""):
+        return ()
+    try:
+        from .catalog import leading_positionals
+    except Exception:
+        return ()
+    return leading_positionals(ctor, skip)
+
+
+def _sets_run_time(cls: str) -> bool:
+    if not re.fullmatch(r"[A-Za-z_]\w*", cls or ""):
+        return False
+    try:
+        from .catalog import sets_run_time
+    except Exception:
+        return False
+    return sets_run_time(cls)
+
+
+def _target_keyword(cls: str) -> str | None:
+    try:
+        from .catalog import target_keyword
+    except Exception:
+        return None
+    return target_keyword(cls)
 
 
 def _end(c: dict) -> float:
@@ -153,6 +190,8 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     if eases:
         emit(f"from manim.utils.rate_functions import {', '.join(eases)}")
     emit("import numpy as np")
+    if "se.Path(" in json.dumps(doc):
+        emit("import svgelements as se")
     if not preview:
         bg = cfg.get("background_color")
         if bg:
@@ -174,7 +213,7 @@ def generate(doc: dict, preview: bool = False) -> Generated:
     for obj in doc.get("objects", []):
         ref = ("object", obj["id"])
         name = obj["name"]
-        emit(f"{name} = {(obj.get('ctor') or '').strip()}({_call_args(obj.get('args'))})", ref, B)
+        emit(f"{name} = {(obj.get('ctor') or '').strip()}({_call_args(obj.get('args'), before_star=_leading((obj.get('ctor') or '').strip()))})", ref, B)
         chain = _join_chain(obj.get("chain", ""))
         if chain:
             emit(f"{name}{chain}", ref, B)

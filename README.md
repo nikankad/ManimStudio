@@ -47,17 +47,22 @@ mathengine code scene.mathengine > scene.py # plain manim code
   - numbers: drag the parameter name to scrub them; opacity values also get a slider;
   - colors: a picker;
   - points and directions: compass presets plus draggable x/y/z, or another object where manim allows one;
-  - objects: an object picker, or toggle chips for several;
-  - enums (`CapStyleType`, `LineJointType`), `Literal`s, `type[...]` choices (`tip_shape=StealthTip`, `vertex_type`) and scales (`LogBase()`): dropdowns;
+  - objects: an object picker, or toggle chips for several. These are filtered to the type manim needs: `Angle.line1` only offers lines, `get_area(graph)` only plotted functions;
+  - enums, `Literal`s, `type[...]` choices (tip shapes, Graph vertex/edge types), scales (`LogBase()`), TeX templates and fonts: dropdowns;
   - ranges (`x_range`): min/max/step;
   - lists of numbers, colors, strings or points: list editors;
   - `t2c` / `tex_to_color_map`: substring → color rows;
   - `Matrix` / `Table` data: a cell grid;
-  - config dicts: the target class's own fields (`axis_config` uses `NumberLine`'s parameters, `tip_style` uses the tip's);
-  - callables: a lambda template;
-  - file paths: a Browse button.
-- **Method chains**: each call is a card with its own signature. Pick from all of the object's chainable methods. This also covers the methods animated by `.animate` clips, such as `ValueTracker.set_value`.
+  - Graph `vertices` and `edges`: chips, and dropdowns of the vertices;
+  - config dicts: the target class's own fields (`axis_config` uses `NumberLine`'s parameters);
+  - callables: working lambda templates;
+  - file paths: a Browse button;
+  - nested animations (`TransformAnimations`): a class plus target picker.
+- **Only real options are shown**: inherited parameters that a subclass sets itself are hidden, such as Square's `height`/`width` or Brace's `path_obj`. So are those a class never forwards to its parent (like `Flash`'s).
+- **Method chains**: each call is a card with its own signature. Pick from the object's chainable methods (those returning the object). This also covers the methods animated by `.animate` clips, such as `ValueTracker.set_value`.
+- **Create from this object**: factory methods such as `axes.plot`, `axes.get_area` and `brace.get_tex` make a new object in one click, with required arguments pre-filled.
 - **Raw Python**: every structured field has a `{}` toggle that shows the Python behind it. Anything manim accepts can be typed there (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names).
+- `scripts/verify_controls.py` runs the value every widget writes through manim, for every parameter of every class, animation and method. Rerun it after upgrading manim.
 - **Code clips** run any manim code inside `construct()` (updaters, ValueTrackers, loops…).
 - **</> Code**: the header (imports, helpers, custom Mobject classes) and the generated scene.
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**

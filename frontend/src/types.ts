@@ -74,11 +74,13 @@ export interface Param {
   objects?: boolean; // vector: also accepts a mobject
   pos?: number; // positional index (the "*" arg fills pos 0 when the class has no *args)
   kwonly?: boolean;
+  accepts?: string[]; // mobject(s): classes the referenced object must be (Angle.line1 -> Line…)
 }
 
 export type ParamKind =
   | 'number' | 'bool' | 'color' | 'string' | 'vector' | 'rate_func' | 'expr' | 'choice' | 'mobject' | 'mobjects'
-  | 'range' | 'numbers' | 'strings' | 'colors' | 'colormap' | 'dict' | 'points' | 'function' | 'path' | 'matrix';
+  | 'range' | 'numbers' | 'strings' | 'colors' | 'colormap' | 'dict' | 'points' | 'function' | 'path' | 'matrix'
+  | 'values' | 'pairs' | 'vertex' | 'key' | 'animation' | 'dicts' | 'svgpath';
 
 export interface CatalogEntry {
   name: string;
@@ -113,6 +115,8 @@ export interface Signature {
   vector: boolean;
   unknown?: boolean;
   methods?: string[]; // chainable methods (mobject classes)
+  factories?: string[]; // methods that build a new mobject from this one (axes.plot)
+  returns?: string; // mobject class this expression builds
 }
 
 export interface RunError {

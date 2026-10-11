@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { api } from '../api';
 import {
-  addAnimation, clipDuration, deleteSelection, duplicateObject, fps, frameSnap, renameObject, setState, timecode, toast, updateDoc,
+  addAnimation, addObject, clipDuration, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, setState, timecode, toast, updateDoc,
   useSignature, useStore,
 } from '../store';
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
-import type { Args, Clip, Param, SceneObject } from '../types';
+import type { Args, Clip, Param, SceneDoc, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
@@ -78,6 +79,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const sig = useSignature(obj.ctor);
   const objects = useStore((s) => s.doc.objects);
   const chainCls = useChainClass(obj.name);
+  const chainSig = useSignature(chainCls);
   const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
   const content = TEXT_CTORS.has(obj.ctor) ? unquote(obj.args['*'] ?? '') : null;
   const isVector = sig?.vector ?? true;
@@ -153,6 +155,15 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
 
       <ChainEditor title="Method chain" cls={chainCls} chain={obj.chain} placeholder=".set_fill(BLUE, opacity=0.5)" onChange={(v) => setObj(obj.id, (o) => void (o.chain = v), 'chain')} />
 
+      {(chainSig?.factories?.length ?? 0) > 0 && (
+        <section>
+          <h4>Create from {obj.name}</h4>
+          <div className="chips">
+            {chainSig!.factories!.map((f) => <button key={f} className="chip" title={`New object = ${obj.name}.${f}(…)`} onClick={() => void createFrom(obj.name, chainCls, f)}>{f}</button>)}
+          </div>
+        </section>
+      )}
+
       <section>
         <h4>Animate at playhead</h4>
         <div className="chips">
@@ -169,6 +180,33 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   );
 }
 
+/** First scene object (other than `owner`) whose class is one of `accepts` (any object when unrestricted). */
+async function matchingObject(doc: SceneDoc, owner: string, accepts?: string[]): Promise<string | undefined> {
+  for (const o of doc.objects) {
+    if (o.name === owner) continue;
+    if (!accepts?.length) return o.name;
+    const sig = await api.signature(o.ctor, doc.header, objectClasses(doc)).catch(() => null);
+    const cls = sig?.returns || o.ctor;
+    if (accepts.includes(cls)) return o.name;
+  }
+  return undefined;
+}
+
+/** New object built by a factory method of another (axes.plot, axes.get_area…), required args prefilled. */
+async function createFrom(owner: string, cls: string, method: string) {
+  const { doc } = getState();
+  const sig = await api.signature(`${cls}.${method}`, doc.header, objectClasses(doc)).catch(() => null);
+  const initial: Args = {};
+  for (const p of sig?.params ?? []) {
+    if (!p.required) continue;
+    if (p.kind === 'function' && p.template) initial[p.name] = p.template;
+    else if (p.kind === 'mobject') initial[p.name] = (await matchingObject(doc, owner, p.accepts)) ?? '';
+    else if (p.kind === 'number') initial[p.name] = '1';
+    else if (p.kind === 'range') initial[p.name] = '[0, 1]';
+  }
+  addObject(`${owner}.${method}`, null, undefined, undefined, initial);
+}
+
 function ArgsEditor({ params, args, onChange, hideStar, title = 'Arguments' }: { params: Param[]; args: Args; onChange: (k: string, v: string) => void; hideStar?: boolean; title?: string }) {
   const [more, setMore] = useState(false);
   const [newKey, setNewKey] = useState('');
@@ -180,7 +218,7 @@ function ArgsEditor({ params, args, onChange, hideStar, title = 'Arguments' }: {
   const inherited = shown.filter((p) => !primary.includes(p));
   const known = new Set(params.map(keyOf));
   const extra = Object.keys(args).filter((k) => !known.has(k) && !(hideStar && k === '*'));
-  const field = (p: Param) => <ParamField key={p.name} param={p} value={args[keyOf(p)] ?? ''} onChange={(v) => onChange(keyOf(p), v)} />;
+  const field = (p: Param) => <ParamField key={p.name} param={p} value={args[keyOf(p)] ?? ''} siblings={args} onChange={(v) => onChange(keyOf(p), v)} />;
   return (
     <section>
       <h4>{title}</h4>
@@ -303,7 +341,7 @@ function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: 
         <Field className="mono" value={call.args} placeholder="arguments" onChange={(v) => onChange({ name: call.name, args: v })} />
       ) : (
         <>
-          {params.map((p) => <ParamField key={p.name} param={p} value={args[p.name] ?? ''} onChange={(v) => set(p.name, v)} />)}
+          {params.map((p) => <ParamField key={p.name} param={p} value={args[p.name] ?? ''} siblings={args} onChange={(v) => set(p.name, v)} />)}
           {Object.keys(args).filter((k) => !known.has(k)).map((k) => (
             <ParamField key={k} param={{ name: k, label: k, kind: 'expr', default: '', required: false, annotation: '', from: '' }} value={args[k]} onChange={(v) => set(k, v)} onRemove={() => set(k, '')} />
           ))}

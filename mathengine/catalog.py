@@ -7,8 +7,11 @@ defined in the project's header code, is available with its real signature.
 
 from __future__ import annotations
 
+import ast
 import enum
+import functools
 import inspect
+import textwrap
 import re
 import typing
 from typing import Any
@@ -60,6 +63,9 @@ FEATURED_MOBJECTS: dict[str, dict[str, str]] = {
     "RoundedRectangle": {"corner_radius": "0.3"},
     "Polygon": {"*": "UP * 2, DL * 2, DR * 2"},
     "ValueTracker": {"*": "0"},
+    "ConvexHull": {"*": "UP * 2, DL * 2, DR * 2, RIGHT * 2"},
+    "Graph": {"vertices": "[1, 2, 3, 4]", "edges": "[(1, 2), (2, 3), (3, 4), (4, 1)]"},
+    "Angle": {"line1": "Line(ORIGIN, RIGHT * 2)", "line2": "Line(ORIGIN, UR * 2)"},
 }
 
 FEATURED_ANIMATIONS = [
@@ -71,7 +77,8 @@ FEATURED_ANIMATIONS = [
 ]
 
 # Animation classes that don't take a single mobject as first argument.
-SKIP_ANIMATIONS = {"Animation", "AnimationGroup", "LaggedStart", "LaggedStartMap", "Succession", "Wait", "Add"}
+SKIP_ANIMATIONS = {"Animation", "AnimationGroup", "LaggedStart", "LaggedStartMap", "Succession", "Wait", "Add",
+                   "ApplyPointwiseFunctionToCenter"}  # broken in manim itself: never passes its mobject on
 
 COMMON_METHODS = [
     "shift", "move_to", "next_to", "to_edge", "to_corner", "align_to", "scale", "rotate", "flip",
@@ -104,13 +111,16 @@ NAME_OPTIONS = {
     "weight": TEXT_WEIGHTS,
     "slant": ["NORMAL", "ITALIC", "OBLIQUE"],
     "alignment": ['"left"', '"center"', '"right"'],
+    "azimuth_units": ['"PI radians"', '"TAU radians"', '"degrees"', '"gradians"', "None"],
+    "azimuth_direction": ['"CCW"', '"CW"'],
+    "tex_environment": ['"align*"', '"center"', '"equation*"', '"gather*"', '"flushleft"', '"flushright"', "None"],
     "language": ['"python"', '"javascript"', '"typescript"', '"c"', '"cpp"', '"rust"', '"go"', '"java"',
                  '"haskell"', '"julia"', '"latex"', '"bash"', '"json"', '"html"', '"css"', '"sql"'],
 }
 PATH_PARAMS = {"file_name", "code_file", "filename_or_array", "background_image"}
 SCALE_OPTIONS = ["LinearBase()", "LogBase()", "LogBase(base=10, custom_labels=True)"]
 # Classes users pass as references to other mobjects.
-_MOB_REF = ("Mobject", "VMobject", "Line", "Arc", "Group", "VGroup", "MovingCamera", "Rectangle", "Square")
+_MOB_REF = ("Mobject", "VMobject", "Line", "Arc", "Group", "VGroup", "MovingCamera", "Rectangle", "Square", "CoordinateSystem")
 
 
 def _expr_repr(value: Any, colors: dict[str, str], dirs: dict[tuple, str], depth: int = 0) -> str:
@@ -146,16 +156,28 @@ def _names_in(ann: str) -> list[str]:
 
 
 def _callable_template(ann: str, name: str) -> str:
-    inner = re.match(r"Callable\[\[([^\]]*)\]", ann)
-    n = len([a for a in inner.group(1).split(",") if a.strip()]) if inner else 1
-    if name in ("homotopy",):
+    """A working starter lambda for a callable parameter (never `...`, which would be Ellipsis)."""
+    inner = re.match(r"Callable\[\[([^\]]*)\],\s*(.*)\]$", re.sub(r"\s*\|\s*None$", "", ann))
+    argt = [a.strip() for a in inner.group(1).split(",") if a.strip()] if inner else []
+    ret = inner.group(2) if inner else ""
+    n = len(argt) or 1
+    if "homotopy" in name:
         return "lambda x, y, z, t: (x, y + 0.2 * np.sin(x + t), z)"
-    if "Point3D" in ann or name in ("func",) and "Vector3D" in ann:
-        return "lambda p: np.array([-p[1], p[0], 0])"
-    args = ["x", "y", "z", "t"][:n] if n <= 4 else ["*a"]
-    if n == 2 and name == "func":
-        args = ["u", "v"]
-    return f"lambda {', '.join(args)}: " + ("x" if n == 1 else "...")
+    if name == "length_func":
+        return "lambda norm: min(norm, 0.5)"
+    if argt and ("Point3D" in argt[0] or "Vector3D" in argt[0]):  # vector fields, color schemes
+        return "lambda p: np.linalg.norm(p)" if "float" in ret else "lambda p: np.array([-p[1], p[0], 0])"
+    if n == 1 and ("Point3D" in ret or "ndarray" in ret or name == "function" and "Point" in ann):
+        return "lambda t: np.array([np.cos(t), np.sin(t), 0])"
+    if n == 2 and "ndarray" in ret:
+        return "lambda u, v: np.array([u, v, 0.3 * np.sin(u * v)])"
+    if n == 2:
+        return "lambda x, y: x**2 + y**2 - 4"
+    if n == 4:
+        return "lambda x, y, z, t: (x, y, z)"
+    if "VMobject" in ret or "Mobject" in ret:
+        return "lambda value: MathTex(value)"
+    return "lambda x: np.sin(x)"
 
 
 def classify(name: str, default: Any, annotation: str) -> dict:
@@ -172,15 +194,49 @@ def classify(name: str, default: Any, annotation: str) -> dict:
     if name in PATH_PARAMS:
         return {"kind": "path"}
     if ann.startswith("type[") or "| type[" in ann:
-        bases = [ns[n] for n in names if isinstance(ns.get(n), type)]
-        opts = sorted({c.__name__ for c in vars(m).values() if isinstance(c, type) and bases
-                       and issubclass(c, tuple(bases)) and not c.__name__.startswith(("OpenGL", "_"))})
-        return {"kind": "choice", "options": opts[:80]}
+        return {"kind": "choice", "options": _class_options(name, [ns[n] for n in names if isinstance(ns.get(n), type)])}
+    if "Resampling" in ann:
+        return {"kind": "choice", "options": [f'RESAMPLING_ALGORITHMS["{k}"]' for k in ("nearest", "bilinear", "bicubic")]}
+    if "AngleQuadrant" in ann or (name == "corner" and isinstance(default, tuple) and default == (1, 1)):
+        return {"kind": "choice", "options": ["(1, 1)", "(1, -1)", "(-1, 1)", "(-1, -1)"]}
+    if name == "depth" and ann == "Any":
+        return {"kind": "number"}
     if isinstance(default, enum.Enum) or any(isinstance(ns.get(n), type) and issubclass(ns[n], enum.Enum) for n in names):
         cls = type(default) if isinstance(default, enum.Enum) else next(ns[n] for n in names if isinstance(ns.get(n), type) and issubclass(ns[n], enum.Enum))
         if cls.__name__ not in ns:
             return {"kind": "expr"}
         return {"kind": "choice", "options": [f"{cls.__name__}.{e.name}" for e in cls]}
+    if "TexTemplate" in ann:
+        fonts = sorted(n for n in dir(m.TexFontTemplates) if not n.startswith("_"))
+        return {"kind": "choice", "options": [f"TexTemplateLibrary.{n}" for n in ("default", "simple", "threeb1b", "ctex")]
+                + [f"TexFontTemplates.{n}" for n in fonts]}
+    if "se.Path" in ann:
+        return {"kind": "svgpath"}
+    if re.fullmatch(r"Animation( \| None)?", ann):
+        return {"kind": "animation"}
+    if ann.startswith("list[dict]"):
+        out = {"kind": "dicts"}
+        if name == "arc_config":
+            out["hint"] = "Arc"
+        return out
+    if "MethodType" in ann or "MappingFunction" in ann:
+        return {"kind": "function", "template": "lambda p: p + 0.2 * np.sin(p)"}
+    if "_Updater" in ann:
+        return {"kind": "function", "template": "lambda m, dt: m.rotate(dt)"}
+    if name == "condition" and "NDArray" in ann:
+        return {"kind": "function", "template": "lambda p: p[0] > 0"}
+    if ann == "MatrixMN":
+        return {"kind": "matrix"}
+    if re.search(r"tuple\[Hashable, Hashable\]", ann) or (name == "*" and ann.startswith("tuple[Hashable")):
+        return {"kind": "pairs"}
+    if re.search(r"(list|Sequence)\[(list\[|Sequence\[)?Hashable", ann):
+        return {"kind": "values"}
+    if re.fullmatch(r"(Hashable|tuple\[Hashable\])( \| None)?", ann) and name != "*":
+        return {"kind": "vertex" if name == "root_vertex" else "key"}
+    if name == "alpha" and ann == "Any":
+        return {"kind": "number"}
+    if ann.startswith("complex"):
+        return {"kind": "number"}
     if "_ScaleBase" in ann:
         return {"kind": "choice", "options": SCALE_OPTIONS}
     lit = re.search(r"Literal\[([^\]]*)\]", ann)
@@ -191,16 +247,20 @@ def classify(name: str, default: Any, annotation: str) -> dict:
         return {"kind": "choice", "options": [repr(o) for o in typing.get_args(LayoutName)]}
     if "AngleQuadrant" in ann:
         return {"kind": "choice", "options": ["(1, 1)", "(1, -1)", "(-1, 1)", "(-1, -1)"]}
-    if name in ("matrix", "table") and "Iterable[Iterable" in ann:
+    if name in ("matrix", "table") and ("Iterable[Iterable" in ann or "ndarray" in ann or ann == "MatrixMN"):
         return {"kind": "matrix"}
     if name in NAME_OPTIONS:
         return {"kind": "choice", "options": NAME_OPTIONS[name]}
+    if name == "font" and low.startswith("str"):
+        return {"kind": "choice", "options": _fonts()}
     if name == "formatter_style":
         try:
             from pygments.styles import get_all_styles
             return {"kind": "choice", "options": sorted(repr(s) for s in get_all_styles())}
         except Exception:
             return {"kind": "string"}
+    if "ParsableManimColor" in ann and "Literal[False]" in ann:
+        return {"kind": "colors"}  # a color list, or False (via {} raw) to switch it off
     if isinstance(default, bool) or low in ("bool", "bool | none"):
         return {"kind": "bool"}
     if ann.startswith("Callable") or (" | Callable" in ann and "Mobject" not in ann):
@@ -218,25 +278,108 @@ def classify(name: str, default: Any, annotation: str) -> dict:
         return {"kind": "colors"}
     if "Point3DLike_Array" in ann or (name == "*" and "Point3DLike" in ann and "Mobject" not in ann):
         return {"kind": "points"}
-    refs = [n for n in names if n in _MOB_REF or n == "OpenGLGroup"]
-    if refs and not re.search(r"Point|Vector|ndarray", ann) and "type[" not in ann and "Callable" not in ann:
+    refs = [n for n in names if n in _MOB_REF or n == "OpenGLGroup" or _mobject_class(n)]
+    if refs and not re.search(r"Point3D|Point2D|Vector|ndarray", ann) and "type[" not in ann and "Callable" not in ann:
         many = name == "*" or "Iterable[" in ann or name in ("mobjects",)
-        return {"kind": "mobjects" if many else "mobject"}
+        out = {"kind": "mobjects" if many else "mobject"}
+        accepts = _accepts(refs)
+        if accepts:
+            out["accepts"] = accepts
+        return out
     if name.endswith("_range") and re.search(r"Sequence|tuple|list", ann):
         return {"kind": "range"}
-    if re.search(r"(Iterable|Sequence|MutableSequence|list)\[(float|int)", ann):
+    if name == "coords" and "ManimFloat" in ann:
+        return {"kind": "vector"}
+    if re.search(r"(Iterable|Sequence|MutableSequence|list)\[(float|int)", ann) and not ann.startswith(("int", "float")):
         return {"kind": "numbers"}
     if isinstance(default, (int, float)) and not isinstance(default, bool) or ann.startswith(("float", "int")):
         return {"kind": "number", "int": is_int or (isinstance(default, int) and not ann)}
     if re.search(r"(Iterable|Sequence|list)\[str", ann):
         return {"kind": "strings"}
-    if isinstance(default, np.ndarray) or re.search(r"Point3D|Vector3D|Vector2D|np\.ndarray", ann):
+    if isinstance(default, np.ndarray) or re.search(r"Point3D|Point2D|Vector3D|Vector2D|np\.ndarray|NDArray", ann):
         return {"kind": "vector", "objects": "Mobject" in ann}
     if name.endswith("_range") and isinstance(default, (tuple, list)):
         return {"kind": "range"}
     if isinstance(default, str) or low.startswith(("str", "strpath")):
         return {"kind": "string"}
     return {"kind": "expr"}
+
+
+TEXT_LIKE = ("MathTex", "Tex", "Text", "MarkupText", "Paragraph", "DecimalNumber", "Integer", "SingleStringMathTex")
+
+
+def _class_options(name: str, bases: list[type]) -> list[str]:
+    """Classes a ``type[...]`` parameter can sensibly take, given the role its name implies."""
+    m = manim()
+    if len(re.findall(r"type\[", " ".join(b.__name__ for b in bases))) == 0 and name == "shape":
+        return sorted(b.__name__ for b in bases)  # Circumscribe checks `shape is Rectangle/Circle` exactly
+    if not bases:
+        return list(TEXT_LIKE) if name in ("element_to_mobject", "label_constructor", "mob_class", "var_type") else []
+    cands = [c for c in vars(m).values() if isinstance(c, type) and issubclass(c, tuple(bases))
+             and not c.__name__.startswith(("OpenGL", "_"))]
+    if name in ("element_to_mobject", "label_constructor", "mob_class", "var_type"):
+        cands = [c for c in cands if c.__name__ in TEXT_LIKE]  # built from a single value
+    elif name == "edge_type":
+        cands = [c for c in cands if issubclass(c, m.Line) and not issubclass(c, m.NumberLine) and _no_required(c)
+                 and {"start", "end"} <= {p["name"] for p in class_params(c)}
+                 and not any(p["required"] for p in class_params(c))]
+    elif name == "vertex_type":
+        cands = [c for c in cands if issubclass(c, m.VMobject) and _builds_bare(c.__name__)]
+    else:
+        cands = [c for c in cands if _no_required(c)]
+    return sorted({c.__name__ for c in cands})
+
+
+@functools.lru_cache(maxsize=None)
+def _fonts() -> list[str]:
+    """Fonts Pango (manim's Text renderer) can use on this machine."""
+    try:
+        import manimpango
+
+        return [repr(f) for f in sorted(set(manimpango.list_fonts()), key=str.lower) if not f.startswith(".")]
+    except Exception:
+        return ['"sans-serif"', '"serif"', '"monospace"']
+
+
+@functools.lru_cache(maxsize=None)
+def _builds_bare(name: str) -> bool:
+    """Whether ``Cls()`` works (and quickly): Graph vertex types are built with no arguments."""
+    m = manim()
+    cls = vars(m).get(name)
+    if not isinstance(cls, type) or not _no_required(cls) or "three_d" in cls.__module__ or "text" in cls.__module__:
+        return False
+    try:
+        mob = cls()
+        return isinstance(mob, m.VMobject) and len(mob.get_family()) > 0 and mob.has_points() or bool(mob.submobjects)
+    except Exception:
+        return False
+
+
+def _no_required(cls: type) -> bool:
+    try:
+        params = list(inspect.signature(cls.__init__).parameters.values())[1:]
+    except (TypeError, ValueError):
+        return False
+    return all(p.default is not inspect.Parameter.empty or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in params)
+
+
+# Mobject plumbing: changing these breaks point storage (dim=2, cubic curves of other orders).
+INTERNAL_PARAMS = {"dim", "n_points_per_cubic_curve"}
+
+
+GENERIC_REFS = {"Mobject", "VMobject", "Group", "VGroup", "OpenGLGroup", "OpenGLVGroup", "OpenGLMobject", "OpenGLVMobject"}
+
+
+def _accepts(refs: list[str]) -> list[str]:
+    """Classes an object reference must be (Angle.line1 -> Line and subclasses); [] when any mobject will do."""
+    m = manim()
+    ns = vars(m)
+    if any(r in GENERIC_REFS for r in refs):
+        return []
+    bases = tuple(ns[r] for r in refs if isinstance(ns.get(r), type))
+    if not bases:
+        return []
+    return sorted(n for n, c in ns.items() if isinstance(c, type) and issubclass(c, bases) and not n.startswith(("OpenGL", "_")))
 
 
 def _ann_str(p: inspect.Parameter) -> str:
@@ -255,13 +398,113 @@ def _param(p: inspect.Parameter, name: str, label: str, source: str, required: b
     return out
 
 
+@functools.lru_cache(maxsize=None)
+def _super_call(klass: type) -> tuple[int, frozenset[str], bool, bool]:
+    """What ``klass.__init__`` hands its parent.
+
+    Returns (positional count, keyword names it sets itself, forwards **kwargs, forwards *args).
+    Parent parameters the subclass fills in (``Square`` sets Rectangle's ``height``/``width``,
+    ``Brace`` builds ``path_obj``) are not real options of the subclass, so the forms hide them;
+    when **kwargs isn't forwarded to the parent at all (``Flash`` sends it to child animations),
+    the parent's parameters aren't options either.
+    """
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(klass.__dict__["__init__"])))
+    except (OSError, TypeError, SyntaxError, KeyError):
+        return 0, frozenset(), True, True
+    fn = tree.body[0] if tree.body and isinstance(tree.body[0], ast.FunctionDef) else None
+    own = {a.arg for a in fn.args.args + fn.args.kwonlyargs} if fn else set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "__init__"):
+            continue
+        owner = node.func.value
+        via_super = isinstance(owner, ast.Call) and getattr(owner.func, "id", "") == "super"
+        args = list(node.args)
+        if not via_super:
+            if not args:  # X.__init__(self, ...): drop self
+                continue
+            args = args[1:]
+        npos = 0
+        star = False
+        for a in args:
+            if isinstance(a, ast.Starred):
+                star = True
+                break
+            npos += 1
+        # x=x only passes the user's value through when x is this __init__'s own parameter.
+        names = frozenset(k.arg for k in node.keywords
+                          if k.arg and not (isinstance(k.value, ast.Name) and k.value.id == k.arg and k.arg in own))
+        forwards = any(k.arg is None for k in node.keywords)
+        return npos, names, forwards, star
+    return 0, frozenset(), True, True  # no direct parent call: can't tell, keep following
+
+
+def target_param(cls: type) -> str | None:
+    """Name of the animated-mobject parameter of an Animation class (None for *mobjects)."""
+    try:
+        params = [p for p in list(inspect.signature(cls.__init__).parameters.values())[1:]
+                  if p.kind in (p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)]
+    except (TypeError, ValueError):
+        return None
+    for p in params:
+        if p.kind is p.POSITIONAL_OR_KEYWORD and p.name in TARGET_PARAMS:
+            return p.name
+    if params and params[0].kind is p.POSITIONAL_OR_KEYWORD:
+        return params[0].name
+    return None
+
+
+@functools.lru_cache(maxsize=256)
+def leading_positionals(cls_name: str, skip: int = 0) -> tuple[str, ...]:
+    """Parameters declared before ``*args`` (Cutout(main_shape, *mobjects)); they must be passed positionally."""
+    cls = vars(manim()).get(cls_name)
+    if not isinstance(cls, type):
+        return ()
+    try:
+        params = list(inspect.signature(cls.__init__).parameters.values())[1 + skip:]
+    except (TypeError, ValueError):
+        return ()
+    out = []
+    for p in params:
+        if p.kind is p.VAR_POSITIONAL:
+            return tuple(out)
+        if p.kind is not p.POSITIONAL_OR_KEYWORD:
+            break
+        out.append(p.name)
+    return ()
+
+
+@functools.lru_cache(maxsize=256)
+def sets_run_time(cls_name: str) -> bool:
+    """True for animations that compute run_time themselves (ChangeSpeed): passing one would clash."""
+    cls = vars(manim()).get(cls_name)
+    if not isinstance(cls, type):
+        return False
+    return any("run_time" in _super_call(k)[1] for k in cls.__mro__ if "__init__" in k.__dict__)
+
+
+@functools.lru_cache(maxsize=256)
+def target_keyword(cls_name: str) -> str | None:
+    """Keyword the clip target must be passed as, when it isn't the first argument (ApplyMatrix(matrix, mobject))."""
+    cls = vars(manim()).get(cls_name)
+    if not isinstance(cls, type):
+        return None
+    try:
+        first = next(p for p in list(inspect.signature(cls.__init__).parameters.values())[1:])
+    except (StopIteration, TypeError, ValueError):
+        return None
+    name = target_param(cls)
+    return name if name and first.name != name else None
+
+
 def class_params(cls: type, skip_first: bool = False) -> list[dict]:
     """Constructor parameters, following **kwargs up the MRO like manim does."""
     out: list[dict] = []
     seen: set[str] = set()
     star_done = False
-    first = True
     pos = 0
+    target = target_param(cls) if skip_first else None
+    fixed_pos, fixed_names = 0, frozenset()  # what the previous __init__ already passes up
     for level, klass in enumerate(cls.__mro__):
         init = klass.__dict__.get("__init__")
         if init is None:
@@ -272,37 +515,74 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
             break
         has_kwargs = False
         params = list(sig.parameters.values())[1:]
+        hidden = set(fixed_names) | _computed_by(cls)
+        hidden.update(p.name for p in [q for q in params if q.kind is q.POSITIONAL_OR_KEYWORD][:fixed_pos])
         for p in params:
             if p.kind is p.VAR_KEYWORD:
                 has_kwargs = True
                 continue
-            if skip_first and (p.name in TARGET_PARAMS or (p.kind is p.VAR_POSITIONAL and level == 0 and first)):
+            if skip_first and (p.name in TARGET_PARAMS or (level == 0 and (p.name == target or (target is None and p.kind is p.VAR_POSITIONAL)))):
                 seen.add(p.name)
-                first = False
                 continue
-            if skip_first and first and level == 0:
-                first = False
-                if p.kind is not p.VAR_POSITIONAL:
-                    seen.add(p.name)
-                    continue
             if p.kind is p.VAR_POSITIONAL:
                 if not star_done and level == 0:
                     star_done = True
-                    out.append(_param(p, "*", f"*{p.name}", klass.__name__, not skip_first))
+                    if issubclass(cls, manim().Line) and not skip_first:
+                        continue  # Arrow(*args) only forwards Line's start/end, which have their own fields
+                    entry = _param(p, "*", f"*{p.name}", klass.__name__, False)
+                    entry.update(_special(cls, "*", entry))
+                    out.append(entry)
                 continue
-            if p.name in seen or p.name.startswith("_"):
+            if p.name in seen or p.name.startswith("_") or p.name in hidden or p.name in INTERNAL_PARAMS:
+                seen.add(p.name)
                 continue
             seen.add(p.name)
             # Private bases (manim's _Fade etc.) hold the class's real parameters: treat them as its own.
             own = level == 0 or klass.__name__.startswith("_")
             entry = _param(p, p.name, p.name, "" if own else klass.__name__, p.default is inspect.Parameter.empty)
+            entry.update(_special(cls, p.name, entry))
             if level == 0 and p.kind is p.POSITIONAL_OR_KEYWORD and not star_done:
                 entry["pos"] = pos
                 pos += 1
             out.append(entry)
         if not has_kwargs:
             break
+        npos, names, forwards, star_fwd = _super_call(klass)
+        if not forwards:
+            break
+        # Positionals we received into *args and pass on via *args reach the parent too (Vector -> Arrow -> Line).
+        before_star = len([q for q in params if q.kind is q.POSITIONAL_OR_KEYWORD])
+        absorbed = max(0, fixed_pos - before_star) if any(q.kind is q.VAR_POSITIONAL for q in params) else 0
+        fixed_pos, fixed_names = npos + (absorbed if star_fwd else 0), fixed_names | names
     return out
+
+
+def _computed_by(cls: type) -> set[str]:
+    """Parameters a class computes itself in ways the super() call doesn't show."""
+    m = manim()
+    if issubclass(cls, m.ApplyMethod) or cls.__name__ in ("MoveToTarget", "Restore"):
+        return {"target_mobject"}
+    if issubclass(cls, m.Line3D):  # set_start_and_end_attrs builds the Cylinder from start/end/thickness
+        return {"radius", "direction", "height", "show_ends"}
+    return set()
+
+
+def _special(cls: type, name: str, entry: dict) -> dict:
+    """Kind overrides that depend on the owning class."""
+    m = manim()
+    if entry["kind"] != "expr":
+        return {}
+    if name == "*" and entry["label"] in ("*mobjects", "*vmobjects", "*submobjects"):
+        return {"kind": "mobjects"}
+    if name == "*":
+        # Line(*args) / Arrow(*args) forward start and end points; others are free positional values.
+        return {"kind": "points"} if issubclass(cls, m.Line) else {"kind": "values"}
+    from manim.mobject.graph import GenericGraph
+
+    if issubclass(cls, GenericGraph):
+        return {"vertices": {"kind": "values"}, "partitions": {"kind": "values"},
+                "edges": {"kind": "pairs"}, "root_vertex": {"kind": "vertex"}}.get(name, {})
+    return {}
 
 
 # Methods that return something other than the mobject (break a chain) or are internal plumbing.
@@ -314,21 +594,73 @@ _NON_CHAIN = ("get_", "has_", "is_", "init_", "generate_", "interpolate", "align
               "resume_updating", "set_points", "start_new_path", "add_points", "add_subpath", "add_cubic", "add_quadratic",
               "add_smooth", "add_line_to", "set_anchors", "change_anchor", "close_path", "resize_points", "copy",
               "match_points", "save_state", "restore", "append_vectorized", "invert", "force_direction", "gen_",
-              "point_at", "stop_angle", "save_image", "show", "null_point", "reduce_", "position_tip", "pop_tips")
+              "point_at", "stop_angle", "save_image", "show", "null_point", "reduce_", "position_tip", "pop_tips",
+              "polyline_to", "path_to", "get_mob_from")
+
+
+def _returns(fn: Any) -> str:
+    try:
+        r = inspect.signature(fn).return_annotation
+    except (TypeError, ValueError):
+        return ""
+    if r is inspect.Signature.empty:
+        return ""
+    return r if isinstance(r, str) else getattr(r, "__name__", str(r))
+
+
+def _mobject_class(name: str) -> type | None:
+    m = manim()
+    obj = vars(m).get(name.split("|")[0].strip().split(".")[-1])
+    return obj if isinstance(obj, type) and issubclass(obj, m.Mobject) else None
+
+
+def _is_forwarder(fn: Any) -> bool:
+    try:
+        params = list(inspect.signature(fn).parameters.values())[1:]
+    except (TypeError, ValueError):
+        return False
+    return bool(params) and all(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) and p.annotation in (p.empty, "Any") for p in params)
 
 
 def methods_of(cls: type) -> list[str]:
-    """Public chainable methods of a mobject class, common ones first."""
+    """Public chainable methods (they return the mobject itself) of a mobject class, common ones first."""
+    own = {k.__name__ for k in cls.__mro__}
     names = []
     for n in dir(cls):
         if n.startswith("_") or n.startswith(_NON_CHAIN):
             continue
         attr = inspect.getattr_static(cls, n, None)
-        if isinstance(attr, (property, type, classmethod, staticmethod)) or not callable(getattr(cls, n, None)):
+        fn = getattr(cls, n, None)
+        if isinstance(attr, (property, type, classmethod, staticmethod)) or not callable(fn):
             continue
+        ret = _returns(fn)
+        if ret and ret not in ("Self", "None") and ret not in own:
+            continue  # returns a value or a new object: not part of a chain
+        if _is_forwarder(fn):
+            continue  # f(*args, **kwargs) aliases (shuffle_submobjects -> shuffle): use the real method
         names.append(n)
     common = [n for n in COMMON_METHODS if n in names]
     return common + [n for n in names if n not in common]
+
+
+def factories_of(cls: type) -> list[str]:
+    """Methods that build a new mobject from this one (axes.plot, axes.get_area, brace.get_tex...)."""
+    own = {k.__name__ for k in cls.__mro__}
+    out = []
+    for n in dir(cls):
+        # get_subdivision_braces_and_labels: broken in manim itself (passes min_num_quads to Brace).
+        if n.startswith(("_", "get_mob_from", "polyline_to", "path_to", "get_point_mobject")) or n in (
+                "get_subdivision_braces_and_labels", "copy", "become", "repeat_submobject", "polyline_to_mobject", "path_to_mobject",
+                                      "get_family", "get_mobject_family_members", "get_group_class", "get_top_level_mobjects"):
+            continue
+        attr = inspect.getattr_static(cls, n, None)
+        fn = getattr(cls, n, None)
+        if isinstance(attr, (property, type, classmethod, staticmethod)) or not callable(fn):
+            continue
+        ret = _returns(fn)
+        if ret and ret != "Self" and ret not in own and _mobject_class(ret):
+            out.append(n)
+    return out
 
 
 _tables: tuple[dict[str, str], dict[tuple, str]] | None = None
@@ -455,9 +787,10 @@ def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes
     if isinstance(target, type):
         is_anim = issubclass(target, m.Animation)
         out = {"name": expr, "params": class_params(target, skip_first=is_anim), "doc": _doc(target),
-               "animation": is_anim, "vector": _is_vmobject(target)}
+               "animation": is_anim, "vector": _is_vmobject(target), "returns": expr if issubclass(target, m.Mobject) else ""}
         if issubclass(target, m.Mobject):
             out["methods"] = methods_of(target)
+            out["factories"] = factories_of(target)
         return out
     if callable(target):
         params = []
@@ -470,10 +803,13 @@ def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes
                 continue
             star = p.kind is p.VAR_POSITIONAL
             params.append(_param(p, "*" if star else p.name, p.name, "", p.default is inspect.Parameter.empty and not star))
+            if star and params[-1]["kind"] == "expr":
+                params[-1]["kind"] = "values"
             if p.kind is p.KEYWORD_ONLY:
                 params[-1]["kwonly"] = True
+        ret = _returns(target)
         return {"name": expr, "params": params, "doc": _clean_doc(inspect.getdoc(target) or ""),
-                "animation": False, "vector": True}
+                "animation": False, "vector": True, "returns": ret if _mobject_class(ret) else ""}
     return {"name": expr, "params": [], "doc": "", "animation": False, "vector": False, "unknown": True}
 
 

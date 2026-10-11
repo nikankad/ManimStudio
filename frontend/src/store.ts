@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import type { Catalog, CatalogEntry, Clip, Job, RunResult, SceneDoc, SceneObject, Selection, Signature, Track } from './types';
+import type { Args, Catalog, CatalogEntry, Clip, Job, RunResult, SceneDoc, SceneObject, Selection, Signature, Track } from './types';
 
 export interface VideoState {
   jobId: string | null;
@@ -214,7 +214,13 @@ export function objectClasses(doc: SceneDoc): Record<string, string> {
 
 export function useSignature(expr: string): Signature | undefined {
   const sig = useStore((s) => s.signatures[expr]);
-  if (!sig && expr && !sigPending.has(expr)) {
+  if (!sig) ensureSignature(expr);
+  return sig;
+}
+
+/** Start loading a signature (outside React render-hooks rules; results land in state.signatures). */
+export function ensureSignature(expr: string) {
+  if (expr && !state.signatures[expr] && !sigPending.has(expr)) {
     sigPending.add(expr);
     api
       .signature(expr, state.doc.header, objectClasses(state.doc))
@@ -222,7 +228,6 @@ export function useSignature(expr: string): Signature | undefined {
       .catch(() => undefined)
       .finally(() => sigPending.delete(expr));
   }
-  return sig;
 }
 
 // ---------------------------------------------------------------- time helpers
@@ -393,9 +398,9 @@ export function selectClips(ids: string[]) {
   setState({ selection: ids.length ? { kind: 'clips', ids } : null });
 }
 
-export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: { start?: number; track?: string }) {
+export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: { start?: number; track?: string }, initial?: Args) {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
-  const args: Record<string, string> = {};
+  const args: Record<string, string> = { ...initial };
   for (const [k, v] of Object.entries(entry?.starter ?? {})) args[k] = v === '@target' ? targetName ?? '' : v;
   const intro = state.autoIntro ? introFor(entry, ctor) : null;
   const start = frameSnap(at?.start ?? state.time);
