@@ -3,7 +3,7 @@ import {
   addAnimation, addObject, commitTransform, editPoints, fmt, fps, frameSnap, getState, previewTransform, requestFrame, sequenceEnd,
   setPlaying, setPreviewWidth, setState, timecode, type TransformDelta, useStore,
 } from '../store';
-import type { ObjInfo } from '../types';
+import type { Clip, ObjInfo } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 
 type Box = [number, number, number, number]; // x0, y0, x1, y1 in scene units (y up)
@@ -102,6 +102,8 @@ export function Viewport() {
 
   const selectedId = selection?.kind === 'object' ? selection.id : null;
   const selInfo = visible.find((o) => o.id === selectedId);
+  // Objects touched by the clips selected in the timeline.
+  const clipNames = selection?.kind === 'clips' ? clipTargets(doc.clips.filter((c) => selection.ids.includes(c.id))) : null;
   const error = frame?.error;
 
   const beginDrag = (e: React.PointerEvent, info: ObjInfo, handle: Handle) => {
@@ -238,6 +240,16 @@ export function Viewport() {
               const [x1, y1] = toPx(o.box![2], o.box![1]);
               return <rect key={o.id} x={x0 - 4} y={y0 - 4} width={x1 - x0 + 8} height={y1 - y0 + 8} className="hover-box" />;
             })}
+            {clipNames && visible.filter((o) => clipNames.has(o.name)).map((o) => {
+              const [x0, y0] = toPx(o.box![0], o.box![3]);
+              const [x1, y1] = toPx(o.box![2], o.box![1]);
+              return (
+                <g key={'clip-' + o.id}>
+                  <rect x={x0 - 5} y={y0 - 5} width={x1 - x0 + 10} height={y1 - y0 + 10} className="clip-target-box" />
+                  <text x={x0 - 5} y={y0 - 13} className="clip-target-label">{o.name}</text>
+                </g>
+              );
+            })}
             {selInfo && (
               <Handles
                 name={selInfo.name}
@@ -351,6 +363,16 @@ function Grid({ toPx, cam }: { toPx: (x: number, y: number) => [number, number];
     lines.push(<line key={'y' + y} y1={py} y2={py} x1={0} x2="100%" className={y === 0 ? 'grid axis' : 'grid'} />);
   }
   return <g>{lines}</g>;
+}
+
+/** Names of the objects a set of clips animates, adds, removes or references in code/args. */
+function clipTargets(clips: Clip[]): Set<string> {
+  const names = new Set<string>();
+  for (const c of clips) {
+    const src = [c.target, ...(c.targets ?? []), c.code, c.chain, ...Object.values(c.args ?? {})].filter(Boolean).join(' ');
+    for (const m of src.matchAll(/[A-Za-z_]\w*/g)) names.add(m[0]);
+  }
+  return names;
 }
 
 const area = (b: number[]) => (b[2] - b[0]) * (b[3] - b[1]);

@@ -127,6 +127,8 @@ select.inline { background: transparent; color: var(--blue); border: none; font:
 .frame.stale { opacity: 0.35; filter: grayscale(0.6); }
 .overlay { position: absolute; inset: 0; cursor: default; overflow: visible; }
 .sel-box { fill: transparent; stroke: var(--blue); stroke-width: 1.2; cursor: move; }
+.clip-target-box { fill: rgba(240, 172, 95, 0.08); stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 5 3; pointer-events: none; }
+.clip-target-label { fill: var(--warn); font: 11px var(--mono); paint-order: stroke; stroke: #000; stroke-width: 3px; pointer-events: none; }
 .hover-box { fill: none; stroke: rgba(255, 255, 255, 0.35); stroke-width: 1; }
 .handle { fill: #fff; stroke: var(--blue); stroke-width: 1.2; }
 .handle.rot { fill: var(--blue); stroke: #fff; cursor: grab; }
