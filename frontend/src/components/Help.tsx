@@ -18,7 +18,7 @@ const libraryTab = (label: string) => () =>
 
 export const TOUR: TourStep[] = [
   {
-    title: 'Welcome to MathEngine',
+    title: 'Welcome to Manim Studio',
     body: <>Build math animations visually. Everything you see is rendered by <b>manim</b>, and every project exports as a plain manim Python file. This tour takes about a minute.</>,
   },
   {
@@ -174,7 +174,7 @@ const TOPICS: Topic[] = [
     keywords: 'begin first new project basics overview',
     body: (
       <>
-        <p>MathEngine builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
+        <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
         <ol>
           <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
@@ -429,7 +429,7 @@ export function WelcomeCard() {
   if (!show || tour !== null || panel) return null;
   return (
     <div className="welcome-card" role="dialog" aria-label="Welcome">
-      <b>New to MathEngine?</b>
+      <b>New to Manim Studio?</b>
       <p className="muted small">A one-minute tour shows where everything is. You can reopen it from Help at any time.</p>
       <div className="row">
         <button className="ghost small" onClick={dismiss}>Not now</button>

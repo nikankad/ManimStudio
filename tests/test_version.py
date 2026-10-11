@@ -37,7 +37,7 @@ def test_stable_sees_newer_stable_only(build):
 
 
 def test_nightly_sees_a_build_of_another_commit(build):
-    rel = {"nightly": {"name": "MathEngine nightly 0.2.0-nightly.9", "body": f"> Built from {SHA_B}.",
+    rel = {"nightly": {"name": "Manim Studio nightly 0.2.0-nightly.9", "body": f"> Built from {SHA_B}.",
                        "html_url": "https://github.com/nikankad/MathEngine/releases/tag/nightly"}}
     build("nightly", "0.2.0-nightly.8", commit=SHA_A, releases=rel)
     u = version.check_for_update()

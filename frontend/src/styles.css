@@ -467,3 +467,6 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .app-settings { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 button.link { background: none; border: none; padding: 0; color: var(--blue); cursor: pointer; font: inherit; text-decoration: underline; }
 .latex-notice .row { margin-top: 6px; }
+
+.brand { display: inline-flex; align-items: center; gap: 6px; }
+.brand-icon { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; }

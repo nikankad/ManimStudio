@@ -1,4 +1,4 @@
-"""Compile a MathEngine scene document into a plain ManimCE Python file.
+"""Compile a Manim Studio scene document into a plain ManimCE Python file.
 
 Every value in the document is stored as Python source (e.g. ``"BLUE"``,
 ``"UP * 2"``, ``"lambda x: x**2"``), so anything manim accepts can be used

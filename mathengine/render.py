@@ -42,7 +42,7 @@ def manim_command() -> list[str]:
     which runs manim when given ``manim`` as its first argument (see __main__.py and packaging/)."""
     if getattr(sys, "frozen", False):
         exe = Path(sys.executable)
-        cli = exe.with_name("mathengine-cli" + (".exe" if sys.platform == "win32" else ""))
+        cli = exe.with_name("manim-studio" + (".exe" if sys.platform == "win32" else ""))
         return [str(cli if cli.exists() else exe), "manim"]
     return [sys.executable, "-m", "manim"]
 

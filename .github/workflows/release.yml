@@ -107,7 +107,7 @@ jobs:
             "$VERSION" "$CHANNEL" "$GITHUB_SHA" "$GITHUB_REPOSITORY" > mathengine/_build.py
           cat mathengine/_build.py
 
-      - name: Install MathEngine and PyInstaller
+      - name: Install Manim Studio and PyInstaller
         run: |
           python -m pip install -U pip
           if [ "$RUNNER_OS" = "Linux" ]; then extra="pywebview[qt]"; fi
@@ -115,35 +115,35 @@ jobs:
 
       - name: Package
         working-directory: packaging
-        run: pyinstaller --noconfirm --distpath ../dist --workpath ../build mathengine.spec
+        run: pyinstaller --noconfirm --distpath ../dist --workpath ../build manim-studio.spec
 
       - name: Smoke test the packaged app
         run: |
           case "$RUNNER_OS" in
-            macOS) dir=dist/MathEngine.app/Contents/MacOS; cli=$dir/mathengine-cli ;;
-            Windows) cli=dist/MathEngine/mathengine-cli.exe ;;
-            *) cli=dist/MathEngine/mathengine-cli ;;
+            macOS) cli="dist/Manim Studio.app/Contents/MacOS/manim-studio" ;;
+            Windows) cli=dist/ManimStudio/manim-studio.exe ;;
+            *) cli=dist/ManimStudio/manim-studio ;;
           esac
-          "$cli" code examples/sine_tracker.mathengine > /dev/null
-          "$cli" render examples/sine_tracker.mathengine -q preview -o smoke.mp4
+          "$cli" code examples/sine_tracker.manimstudio > /dev/null
+          "$cli" render examples/sine_tracker.manimstudio -q preview -o smoke.mp4
           test -s smoke.mp4
           # The editor's server serves the bundled interface (output to a file so the step doesn't wait on it).
           "$cli" --serve --port 8765 > serve.log 2>&1 &
           pid=$!
           for i in $(seq 1 90); do curl -sf http://127.0.0.1:8765/ -o index.html && break; sleep 1; done
           kill $pid 2>/dev/null || true
-          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM mathengine-cli.exe > /dev/null 2>&1 || true; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //IM manim-studio.exe > /dev/null 2>&1 || true; fi
           cat serve.log
           grep -q '<div id="root">' index.html
 
       - name: Archive
         run: |
-          name="MathEngine-${VERSION}-${{ matrix.name }}"
+          name="ManimStudio-${VERSION}-${{ matrix.name }}"
           mkdir -p out
           case "$RUNNER_OS" in
-            macOS) ditto -c -k --keepParent dist/MathEngine.app "out/$name.zip" ;;
-            Windows) (cd dist && 7z a -tzip "../out/$name.zip" MathEngine > /dev/null) ;;
-            *) tar -C dist -czf "out/$name.tar.gz" MathEngine ;;
+            macOS) ditto -c -k --keepParent "dist/Manim Studio.app" "out/$name.zip" ;;
+            Windows) (cd dist && 7z a -tzip "../out/$name.zip" ManimStudio > /dev/null) ;;
+            *) tar -C dist -czf "out/$name.tar.gz" ManimStudio ;;
           esac
           ls -lh out
 
@@ -176,19 +176,19 @@ jobs:
 
           | Platform | File | Run it |
           |---|---|---|
-          | Windows 10/11 (64-bit) | `*-windows-x64.zip` | Unzip, then run `MathEngine.exe`. If SmartScreen warns about an unrecognized app: **More info → Run anyway**. |
-          | macOS (Apple Silicon) | `*-macos-arm64.zip` | Unzip and move `MathEngine.app` to Applications. The app isn't notarized: the first time, right-click it → **Open**. |
+          | Windows 10/11 (64-bit) | `*-windows-x64.zip` | Unzip, then run `ManimStudio.exe`. If SmartScreen warns about an unrecognized app: **More info → Run anyway**. |
+          | macOS (Apple Silicon) | `*-macos-arm64.zip` | Unzip and move `Manim Studio.app` to Applications. The app isn't notarized: the first time, right-click it → **Open**. |
           | macOS (Intel) | `*-macos-x64.zip` | As above. |
-          | Linux (x86-64) | `*-linux-x64.tar.gz` | Extract, then run `MathEngine/MathEngine`. |
+          | Linux (x86-64) | `*-linux-x64.tar.gz` | Extract, then run `ManimStudio/ManimStudio`. |
 
-          `mathengine-cli` next to the app renders from a terminal: `mathengine-cli render scene.mathengine -q 1080p`.
+          `manim-studio` next to the app renders from a terminal: `manim-studio render scene.manimstudio -q 1080p`.
 
           **LaTeX** isn't included. Equations (`MathTex`, `Tex`) need it: install MiKTeX on Windows, MacTeX or BasicTeX on macOS, or TeX Live on Linux, then click **Check again** in the scene panel. Everything else works without it: numbers and simple labels are drawn with plain text until LaTeX is installed.
           EOF
           if [ "$CHANNEL" = "stable" ]; then
             gh release create "v${VERSION}" out/* \
               --verify-tag \
-              --title "MathEngine ${VERSION}" \
+              --title "Manim Studio ${VERSION}" \
               --notes-file notes.md \
               --generate-notes \
               --latest
@@ -198,7 +198,7 @@ jobs:
             gh release delete nightly --yes --cleanup-tag || true
             gh release create nightly out/* \
               --target "$GITHUB_SHA" \
-              --title "MathEngine nightly ${VERSION}" \
+              --title "Manim Studio nightly ${VERSION}" \
               --notes-file nightly.md \
               --prerelease \
               --latest=false

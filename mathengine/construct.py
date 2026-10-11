@@ -176,7 +176,7 @@ def link_sources(obj: dict) -> list[str]:
 
 CONSTRAINTS_SOURCE = '''
 class Constraints:
-    """Keeps constructed objects attached to what they are built from (MathEngine).
+    """Keeps constructed objects attached to what they are built from (Manim Studio).
 
     Every frame, each construction is re-evaluated in the order it was added (sources first),
     except while an animation is playing on its mobject: manim suspends updating then, so
@@ -192,7 +192,7 @@ class Constraints:
             self.update()
 
         # Scene updaters run last in every frame, after animations and mobject updaters...
-        step.mathengine_constraints = True  # (the MathEngine preview doesn't need to sub-step for this)
+        step.mathengine_constraints = True  # (the Manim Studio preview doesn't need to sub-step for this)
         scene.add_updater(step)
         # ...but not after an animation finishes, when manim only updates mobjects. This invisible
         # carrier brings constructions to the final state of each self.play().
@@ -246,7 +246,7 @@ class Constraints:
 
 GEOMETRY_SOURCE = '''
 class Geometry:
-    """Constructions used by MathEngine scenes (tangents, secants, slopes, integrals, intersections, perpendiculars)."""
+    """Constructions used by Manim Studio scenes (tangents, secants, slopes, integrals, intersections, perpendiculars)."""
 
     @staticmethod
     def function(graph):
@@ -476,7 +476,7 @@ class Geometry:
 
 TERMS_SOURCE = '''
 class TransformTerms(TransformMatchingAbstractBase):
-    """Transform one equation into another term by term (MathEngine).
+    """Transform one equation into another term by term (Manim Studio).
 
     Each part of the two MathTex objects gets a key; parts sharing a key transform into each
     other and the others fade out or in. The correspondence is purely visual: it does not
@@ -771,7 +771,7 @@ def _fallback_lines(obj: dict, ctx: _Ctx) -> list[str] | None:
     kind = (obj.get("link") or {}).get("kind")
     if kind in FOLLOW_KINDS:
         return None
-    return [f"{obj['name']} = VMobject()  # construction error: see MathEngine diagnostics"]
+    return [f"{obj['name']} = VMobject()  # construction error: see Manim Studio diagnostics"]
 
 
 def _plain_equation_lines(obj: dict, p: Plan) -> list[str]:
@@ -961,7 +961,7 @@ def _placement(obj: dict, ctx: _Ctx, uses: list[str]) -> tuple[str, bool]:
         elif what == "integral":
             sl = src.get("link") or {}
             if sl.get("kind") not in ("area", "riemann"):
-                raise mathexpr.ExprError("Integral values are measured on a shaded area or Riemann rectangles built by MathEngine.")
+                raise mathexpr.ExprError("Integral values are measured on a shaded area or Riemann rectangles built by Manim Studio.")
             a = _expr(ctx, src, sl.get("a"), "0", uses)
             b = _expr(ctx, src, sl.get("b"), "1", uses)
             value = f"Geometry.integral({n(sl['graph'])}, {a}, {b})"

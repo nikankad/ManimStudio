@@ -1,4 +1,4 @@
-// Which MathEngine this is, and a quiet notice when a newer release is out (once per launch).
+// Which Manim Studio this is, and a quiet notice when a newer release is out (once per launch).
 // Release builds know their channel: stable builds look for newer stable releases, nightly builds for a
 // newer nightly. Running from source never checks. The check can be turned off in Settings.
 
@@ -69,7 +69,7 @@ export function AppSettings() {
   return (
     <section className="app-settings">
       <h4>App</h4>
-      <p className="muted small">MathEngine {versionLabel(app)}{app && <> · <button className="link" onClick={() => openReleases(app.releases)}>releases</button></>}</p>
+      <p className="muted small">Manim Studio {versionLabel(app)}{app && <> · <button className="link" onClick={() => openReleases(app.releases)}>releases</button></>}</p>
       {app?.channel !== 'dev' ? (
         <label className="check">
           <input type="checkbox" checked={on} onChange={(e) => { setOn(e.target.checked); setChecksForUpdates(e.target.checked); }} />

@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mathengine"
+name = "manim-studio"
 version = "0.2.0"
-description = "Drag-and-drop visual editor for manim (Community Edition) videos"
+description = "Manim Studio: drag-and-drop visual editor for manim (Community Edition) videos"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,7 +17,8 @@ dependencies = [
 dev = ["pytest"]
 
 [project.scripts]
-mathengine = "mathengine.__main__:main"
+manim-studio = "mathengine.__main__:main"
+mathengine = "mathengine.__main__:main"  # earlier name
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

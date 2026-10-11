@@ -1,10 +1,10 @@
-"""MathEngine command line.
+"""Manim Studio command line (``manim-studio``; ``mathengine`` is the same command).
 
-    mathengine [project.mathengine]          open the editor (native window)
-    mathengine --browser [project]           open the editor in the default browser
-    mathengine render project -q 1080p -o out.mp4
-    mathengine code project > scene.py       print the generated manim code
-    mathengine manim …                       run manim's own command line (used by packaged apps)
+    manim-studio [project.manimstudio]       open the editor (native window)
+    manim-studio --browser [project]           open the editor in the default browser
+    manim-studio render project -q 1080p -o out.mp4
+    manim-studio code project > scene.py       print the generated manim code
+    manim-studio manim …                       run manim's own command line (used by packaged apps)
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
     threading.Thread(target=_warmup, daemon=True).start()
 
     if serve_only:
-        print(f"MathEngine serving at {url}  (Ctrl+C to quit)", flush=True)
+        print(f"Manim Studio serving at {url}  (Ctrl+C to quit)", flush=True)
         try:
             while True:
                 time.sleep(3600)
@@ -44,7 +44,7 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
         return _open_editor_in_browser(url)
 
     try:
-        window = webview.create_window("MathEngine", url, width=1500, height=940, min_size=(1000, 640),
+        window = webview.create_window("Manim Studio", url, width=1500, height=940, min_size=(1000, 640),
                                        background_color="#111216")
     except Exception as exc:  # no usable GUI toolkit (e.g. a Linux system without Qt or GTK)
         print(f"Can't open a window ({exc}); opening in your browser instead.")
@@ -61,8 +61,12 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
         return res if isinstance(res, str) else res[0]
 
     app.dialogs = dialogs
+    icon = Path(__file__).parent / "web" / "icon.png"  # the window icon on Linux (Windows and macOS use the app's)
     try:
-        webview.start()
+        try:
+            webview.start(icon=str(icon) if icon.is_file() else None)
+        except TypeError:  # an older pywebview without icon=
+            webview.start()
     except Exception as exc:
         print(f"Can't open a window ({exc}); opening in your browser instead.")
         app.dialogs = None
@@ -73,7 +77,7 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
 def _open_editor_in_browser(url: str) -> None:
     import webbrowser
 
-    print(f"MathEngine running at {url}  (Ctrl+C to quit)")
+    print(f"Manim Studio running at {url}  (Ctrl+C to quit)")
     webbrowser.open(url)
     try:
         while True:
@@ -132,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if argv and argv[0] in ("render", "code"):
         cmd = argv[0]
-        p = argparse.ArgumentParser(prog=f"mathengine {cmd}")
+        p = argparse.ArgumentParser(prog=f"manim-studio {cmd}")
         p.add_argument("project")
         if cmd == "render":
             p.add_argument("-q", "--quality", default="project",
@@ -149,8 +153,8 @@ def main(argv: list[str] | None = None) -> int:
         print(gen.source, end="")
         return 0
 
-    p = argparse.ArgumentParser(prog="mathengine", description="Visual editor for manim scenes.")
-    p.add_argument("project", nargs="?", help="a .mathengine project file to open")
+    p = argparse.ArgumentParser(prog="manim-studio", description="Manim Studio: a visual editor for manim scenes.")
+    p.add_argument("project", nargs="?", help="a project file to open (.manimstudio, or .mathengine from earlier versions)")
     p.add_argument("--browser", action="store_true", help="use the default browser instead of a native window")
     p.add_argument("--port", type=int, default=0)
     p.add_argument("--serve", action="store_true", help="only run the local server (no window)")

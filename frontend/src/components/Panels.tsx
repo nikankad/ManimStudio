@@ -12,19 +12,23 @@ import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from
 import { HelpPanel } from './Help';
 import { AppSettings, UpdateNotice } from './Updates';
 
+/** Project files: .manimstudio, and .mathengine from versions before the rename. */
+const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
+const PROJECT_EXT = /\.(manimstudio|mathengine)$/;
+
 export async function saveProject(saveAs = false) {
   const s = getState();
   let path = s.path;
-  if (!path || saveAs) path = await askPath('save', 'scene.mathengine', ['MathEngine project (*.mathengine)'], 'Save project to path:');
+  if (!path || saveAs) path = await askPath('save', 'scene.manimstudio', [PROJECT_FILES], 'Save project to path:');
   if (!path) return;
-  if (!/\.mathengine$/.test(path)) path += '.mathengine';
+  if (!PROJECT_EXT.test(path)) path += '.manimstudio'; // projects from earlier versions keep their .mathengine name
   await api.saveProject(path, s.doc);
   setState({ path, dirty: false });
   toast(`Saved ${path}`);
 }
 
 export async function openProject() {
-  const path = await askPath('open', '', ['MathEngine project (*.mathengine)'], 'Open project path:');
+  const path = await askPath('open', '', [PROJECT_FILES], 'Open project path:');
   if (!path) return;
   const res = await api.openProject(path);
   loadDoc(res.doc, res.path);
@@ -41,7 +45,7 @@ export function Toolbar() {
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
     <header className="toolbar">
-      <span className="brand">∑ MathEngine</span>
+      <span className="brand"><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</span>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
       <button className="ghost" onClick={() => { if (!getState().dirty || confirm('Discard unsaved changes?')) loadDoc(emptyDoc(), null); }}>New</button>
       <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
@@ -193,7 +197,7 @@ function ExportPanel() {
   const doc = useStore((s) => s.doc);
   const path = useStore((s) => s.path);
   const [quality, setQuality] = useState('project');
-  const [output, setOutput] = useState(() => (path ? path.replace(/\.mathengine$/, '.mp4') : ''));
+  const [output, setOutput] = useState(() => (path ? path.replace(PROJECT_EXT, '.mp4') : ''));
   const [job, setJob] = useState<Job | null>(null);
   const jobRef = useRef<string | null>(null);
   useEffect(() => () => { jobRef.current = null; }, []);

@@ -2,7 +2,7 @@
 
 Start the editor server first, then run this with Playwright installed:
 
-    mathengine --serve --port 8765 &
+    manim-studio --serve --port 8765 &
     uv pip install playwright && python scripts/ui_smoke.py
 
 Environment: MATHENGINE_URL (default http://127.0.0.1:8765/), CHROMIUM (a Chromium executable, optional),
@@ -19,7 +19,7 @@ import tempfile
 from playwright.sync_api import sync_playwright
 
 URL = os.environ.get("MATHENGINE_URL", "http://127.0.0.1:8765/")
-OUT = os.environ.get("SMOKE_OUT") or tempfile.mkdtemp(prefix="mathengine-smoke-")
+OUT = os.environ.get("SMOKE_OUT") or tempfile.mkdtemp(prefix="manim-studio-smoke-")
 errors: list[str] = []
 
 
@@ -623,7 +623,7 @@ def timeline_editing(p):
     browser.close()
 
 
-SAVE = os.path.join(OUT, "smoke.mathengine")
+SAVE = os.path.join(OUT, "smoke.manimstudio")
 with sync_playwright() as p:
     drawing_graphs_equations(p)
     connections_records_constructions(p)

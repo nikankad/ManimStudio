@@ -161,7 +161,7 @@ def text_fallback(ctor: str, args: dict) -> tuple[str, dict] | None:
 
 NUMBERS_SOURCE = '''
 # LaTeX isn't installed on this computer, so the parts of numbers (DecimalNumber, Integer, numbers on
-# axes) are drawn with Text instead (MathEngine). Install LaTeX to draw them with TeX again.
+# axes) are drawn with Text instead (Manim Studio). Install LaTeX to draw them with TeX again.
 _me_number_parts = {}
 _ME_NUMBER_TEXT = {"\\\\dots": "…", "\\\\cdots": "⋯", "^\\\\circ": "°", "^{\\\\circ}": "°", "\\\\circ": "°", "\\\\%": "%"}
 

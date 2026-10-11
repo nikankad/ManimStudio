@@ -73,7 +73,7 @@ function SceneInfo() {
         <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
       </ul>
       <LatexNotice />
-      {catalog && <p className="muted small">MathEngine {versionLabel(app)} · manim {catalog.manim_version}</p>}
+      {catalog && <p className="muted small">Manim Studio {versionLabel(app)} · manim {catalog.manim_version}</p>}
     </div>
   );
 }

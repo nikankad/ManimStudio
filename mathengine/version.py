@@ -1,4 +1,4 @@
-"""Which MathEngine this is, and whether a newer one has been released.
+"""Which Manim Studio this is, and whether a newer one has been released.
 
 Release builds carry ``_build.py`` (written by .github/workflows/release.yml): version, channel ("stable"
 for tagged releases, "nightly" for builds of every push to main), commit and repository. Anything else
@@ -24,11 +24,15 @@ COMMIT = getattr(_build, "COMMIT", "")
 
 def _installed_version() -> str:
     try:
-        from importlib.metadata import version
-
-        return version("mathengine")
-    except Exception:
+        from importlib.metadata import PackageNotFoundError, version
+    except ImportError:
         return "0.0.0"
+    for dist in ("manim-studio", "mathengine"):  # installed before the rename: "mathengine"
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            continue
+    return "0.0.0"
 
 
 VERSION = getattr(_build, "VERSION", _installed_version())
@@ -45,7 +49,7 @@ def _numbers(v: str) -> tuple[int, ...]:
 
 
 def _get(url: str, timeout: float) -> dict:
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "MathEngine"})
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "ManimStudio"})
     with urllib.request.urlopen(req, timeout=timeout) as res:
         return json.load(res)
 
@@ -54,7 +58,7 @@ def check_for_update(timeout: float = 5.0) -> dict:
     """Is a newer release out? Stable builds look at the latest stable release, nightly builds at the latest
     nightly. One request to GitHub's public API; never raises (offline means "no update")."""
     out = {"available": False, **info()}
-    if CHANNEL not in ("stable", "nightly") or os.environ.get("MATHENGINE_NO_UPDATE_CHECK"):
+    if CHANNEL not in ("stable", "nightly") or os.environ.get("MANIM_STUDIO_NO_UPDATE_CHECK") or os.environ.get("MATHENGINE_NO_UPDATE_CHECK"):
         return out
     try:
         if CHANNEL == "stable":
@@ -66,7 +70,7 @@ def check_for_update(timeout: float = 5.0) -> dict:
             rel = _get(f"https://api.github.com/repos/{REPOSITORY}/releases/tags/nightly", timeout)
             built_from = re.search(r"\b([0-9a-f]{40})\b", rel.get("body") or "")
             if built_from and COMMIT and built_from.group(1) != COMMIT:
-                out.update(available=True, latest=rel.get("name", "nightly").replace("MathEngine ", ""),
+                out.update(available=True, latest=rel.get("name", "nightly").replace("Manim Studio ", ""),
                            url=rel.get("html_url") or out["releases"])
     except Exception:
         pass

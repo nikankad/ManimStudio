@@ -1,4 +1,8 @@
-# MathEngine
+# Manim Studio
+
+<img src="icon.png" alt="" width="64" align="right">
+
+*Formerly MathEngine: the `mathengine` command and `.mathengine` projects still work.*
 
 A drag-and-drop editor for [manim](https://www.manim.community/) (Community Edition) videos.
 Build scenes visually, edit any argument as Python, and export a real manim `.py` file or MP4.
@@ -21,13 +25,13 @@ Python, manim and ffmpeg, but not LaTeX, which equations need (see below; everyt
 
 Releasing (`.github/workflows/release.yml`): set `version` in `pyproject.toml`, commit, then
 `git tag v0.2.0 && git push origin v0.2.0`. The workflow runs the tests, packages the app on each platform
-with PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the
+with PyInstaller (`packaging/manim-studio.spec`), checks that each package opens the editor and renders the
 example project, and publishes the release. A tag that doesn't match `pyproject.toml` is refused. To build
 one yourself:
 
 ```bash
 pip install . pyinstaller              # on Linux also: pip install "pywebview[qt]"
-cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/
+cd packaging && pyinstaller manim-studio.spec   # -> packaging/dist/
 ```
 
 ## Install
@@ -37,24 +41,24 @@ uv venv --python 3.12 && uv pip install -e .     # or: pip install -e .
 cd frontend && npm install && npm run build        # builds the UI into mathengine/web
 ```
 
-MathEngine needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
+Manim Studio needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
 parts. manim's system requirements also apply:
 - **LaTeX** for equations (`MathTex`, `Tex`): MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on
   Windows. It's found in its standard install locations even when it isn't on `PATH` (an app opened from the
   macOS Finder doesn't see `/Library/TeX/texbin` or Homebrew). Without it, numbers (measurements, value labels,
   axis numbers) and simple labels such as `A`, `\theta` or `x^2` are drawn with `Text` instead, so the rest of
-  MathEngine, including the starter constructions, keeps working; equations say they need LaTeX. After
+  Manim Studio, including the starter constructions, keeps working; equations say they need LaTeX. After
   installing it, *Check again* in the scene panel picks it up without a restart.
 - **ffmpeg** is bundled with manim via PyAV; no separate install is needed.
 
 ## Use
 
 ```bash
-mathengine                                  # open the editor (native window via pywebview)
-mathengine examples/sine_tracker.mathengine
-mathengine --browser                        # use your default browser instead
-mathengine render scene.mathengine -q 1080p -o scene.mp4   # headless render
-mathengine code scene.mathengine > scene.py # plain manim code
+manim-studio                                # open the editor (native window via pywebview)
+manim-studio examples/sine_tracker.manimstudio
+manim-studio --browser                      # use your default browser instead
+manim-studio render scene.manimstudio -q 1080p -o scene.mp4   # headless render
+manim-studio code scene.manimstudio > scene.py # plain manim code
 ```
 
 - **Timeline** (bottom, the main workspace): a Premiere Pro–style, non-linear editor. Clips sit on stacked
@@ -221,7 +225,7 @@ frontend/ (React)  ──HTTP (127.0.0.1 + session token)──▶  mathengine/s
                                                             └─ render.py     `manim render` subprocess for video
 ```
 
-A project (`.mathengine`) is JSON: objects, tracks and timed clips. Every argument is stored as Python
+A project (`.manimstudio`; `.mathengine` from earlier versions) is JSON: objects, tracks and timed clips. Every argument is stored as Python
 source, so anything manim accepts is representable. Format 3 adds optional fields, each upgraded explicitly
 and losslessly from older projects (`project.upgrade`):
 
@@ -246,7 +250,7 @@ mobject an animation is playing on (manim's `updating_suspended`). Segments beco
 rendering them, stops partway through at the requested time, and draws that moment with the scene's
 camera. This takes about 50 to 150 ms per frame, and the frame is exactly what the final render shows.
 
-Development: `cd frontend && npm run dev` rebuilds the UI on change, and `mathengine --serve --port 8765`
+Development: `cd frontend && npm run dev` rebuilds the UI on change, and `manim-studio --serve --port 8765`
 runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render real frames with manim,
 and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
 (Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in
