@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, mathexpr, recent, render, runtime, samples, starters, tex, version
+from . import catalog, codegen, importer, mathexpr, recent, render, runtime, samples, starters, tex, version
 from .project import load_project, new_project, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -68,10 +68,6 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, data: Any, status: int = 200) -> None:
         self._send(status, json.dumps(data).encode(), "application/json")
 
-    def _body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(length) or b"{}") if length else {}
-
     # ---- routing --------------------------------------------------------
     def do_GET(self) -> None:
         url = urlparse(self.path)
@@ -89,10 +85,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         url = urlparse(self.path)
         query = parse_qs(url.query)
+        # Read the body first, even for a refused request: left unread, it would be taken for the next request on
+        # this connection (a page left open from before a restart still sends requests with its old token).
+        raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
         if not self._authorized(query):
             return self._send(403, b"forbidden", "text/plain")
         try:
-            body = self._body()
+            body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             return self._json({"error": "bad json"}, 400)
         self._route("POST", url.path, query, body)
@@ -107,6 +106,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/signature"): self.api_signature,
             ("POST", "/api/run"): self.api_run,
             ("POST", "/api/code"): self.api_code,
+            ("POST", "/api/import_code"): self.api_import_code,
             ("POST", "/api/render"): self.api_render,
             ("GET", "/api/project/initial"): self.api_project_initial,
             ("POST", "/api/project/open"): self.api_project_open,
@@ -242,7 +242,23 @@ class Handler(BaseHTTPRequestHandler):
         return res.to_json()
 
     def api_code(self, _q: dict, body: dict) -> dict:
-        return {"code": codegen.generate(body["doc"]).source}
+        """The document as manim code, and which element each line comes from (written as if LaTeX is installed,
+        so the code is the document's, wherever it's shown)."""
+        gen = codegen.generate(body["doc"], latex=True)
+        return {"code": gen.source, "linemap": {str(k): list(v) for k, v in gen.linemap.items()}}
+
+    def api_import_code(self, _q: dict, body: dict) -> dict:
+        """manim code -> a document. ``base``: the document the code was generated from (unchanged parts keep it)."""
+        try:
+            code = str(body.get("code", ""))
+            scene = body.get("scene") or None
+            with self.app.manim_lock:
+                if scene and scene not in importer.scenes_in(code):
+                    scene = None  # renamed in the code: follow it
+                res = importer.import_code(code, scene, body.get("base"))
+        except importer.CodeError as exc:
+            return {"ok": False, "error": exc.message, "line": exc.line}
+        return {"ok": True, "doc": res.doc, "scenes": res.scenes, "notes": res.notes}
 
     def api_export_code(self, _q: dict, body: dict) -> dict:
         path = Path(body["path"]).expanduser()
@@ -269,12 +285,28 @@ class Handler(BaseHTTPRequestHandler):
         path = self.app.project_path
         if path and Path(path).exists():
             recent.add(path)
+            if path.endswith(".py"):
+                return {**self._import_file(path), "home": False}
             return {"doc": load_project(path), "path": path, "home": False}
         # No project given, or the file given doesn't exist (moved, renamed): start at Home.
         self.app.project_path = None
         return {"doc": new_project(), "path": None, "home": True, "missing": path}
 
+    def _import_file(self, path: str) -> dict:
+        """A manim .py file opens as a new, unsaved project made from its code."""
+        with self.app.manim_lock:
+            res = importer.import_code(Path(path).expanduser().read_text(encoding="utf-8"))
+        self.app.project_path = None
+        return {"doc": res.doc, "path": None, "imported": path, "notes": res.notes, "scenes": res.scenes}
+
     def api_project_open(self, _q: dict, body: dict) -> dict:
+        if str(body["path"]).endswith(".py"):
+            try:
+                out = self._import_file(body["path"])
+            except importer.CodeError as exc:
+                raise ValueError(exc.message) from None
+            recent.add(body["path"])
+            return out
         doc = load_project(body["path"])
         self.app.project_path = body["path"]
         recent.add(body["path"])

@@ -1,14 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, clipDuration, deleteSelection, docKey, fps, previewFresh,
-  frameSnap, getState, isLocked, parseTimecode, selectClips, sequenceEnd, setPlaying, setState, timecode, toast, trackIsFree, uid,
-  selectedObjectIds, updateDoc, useStore,
+  addAnimation, addMarker, addObject, addStep, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
+  previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
-import type { Clip, SceneDoc } from '../types';
+import {
+  canTrimStep, EPS, findAnim, findStep, isComposition, landing, layout, moveAnims, moveSteps, setAnimDuration, setStepDuration,
+  type Layout,
+} from '../timeline';
+import type { Anim, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 import { ratePath } from './rates';
 
-const ROW = 48; // track height
+const ROW = 46; // animation track height
+const STEPS = 30; // statement lane height
 const RULER = 30;
 const HEAD = 168; // track header width
 const SNAP_PX = 8;
@@ -24,13 +28,38 @@ const CAT_COLORS: Record<string, string> = {
   Numbers: '#6c4a80',
   Changing: '#6c4a80',
   Specialized: '#7a3f5c',
+  Composition: '#4a5a6e',
+};
+
+const STEP_COLORS: Record<Step['kind'], string> = {
+  play: '#34506e',
+  wait: '#3a3e4a',
+  code: '#6b3f78',
+  add: '#3f6b4a',
+  remove: '#7a4040',
+  couple: '#2f7a74',
+  uncouple: '#8a6a2f',
+  call: '#4f5b2f',
 };
 
 type Drag =
-  | { mode: 'move'; ids: string[]; x0: number; y0: number; dt: number; drow: number; alt: boolean; moved: boolean }
-  | { mode: 'trim-start' | 'trim-end'; id: string; x0: number; dt: number }
+  | { mode: 'anims'; ids: string[]; x0: number; y0: number; t0: number; row0: number; t: number; row: number; copy: boolean; moved: boolean }
+  | { mode: 'steps'; ids: string[]; x0: number; t0: number; t: number; copy: boolean; moved: boolean }
+  | { mode: 'trim-anim' | 'trim-step'; id: string; x0: number; dur0: number; dur: number }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: string[] }
   | { mode: 'scrub' };
+
+/** What a timeline drag does to the document (shown live while dragging, committed on release). */
+function applyDrag(d: SceneDoc, drag: Drag, measured: RunResult | null): string[] {
+  if (drag.mode === 'anims') return moveAnims(d, measured, drag.ids, drag.t, drag.row, drag.copy);
+  if (drag.mode === 'steps') return moveSteps(d, measured, drag.ids, drag.t, drag.copy);
+  if (drag.mode === 'trim-anim') setAnimDuration(d, drag.id, drag.dur);
+  if (drag.mode === 'trim-step') setStepDuration(d, drag.id, drag.dur);
+  return [];
+}
+
+const changes = (d: Drag | null) =>
+  !!d && (((d.mode === 'anims' || d.mode === 'steps') && d.moved) || ((d.mode === 'trim-anim' || d.mode === 'trim-step') && Math.abs(d.dur - d.dur0) > EPS));
 
 export function Timeline() {
   const doc = useStore((s) => s.doc);
@@ -39,7 +68,6 @@ export function Timeline() {
   const selection = useStore((s) => s.selection);
   const view = useStore((s) => s.view);
   const snapOn = useStore((s) => s.timelineSnap);
-  const targetTrack = useStore((s) => s.targetTrack);
   const catalog = useStore((s) => s.catalog);
   const error = useStore((s) => s.frame?.error ?? s.timeline?.error);
   const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
@@ -51,13 +79,26 @@ export function Timeline() {
   dragRef.current = drag;
   const [guide, setGuide] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<{ t: number; row: number } | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; clip: Clip } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+
+  const lay = docLayout(doc, timeline);
+  // While dragging, the timeline shows the result of the edit: later steps move along, like a magnetic timeline.
+  const shown = useMemo(() => {
+    if (!changes(drag)) return { doc, lay, moved: [] as string[] };
+    const d = structuredClone(doc);
+    const moved = applyDrag(d, drag!, timeline);
+    return { doc: d, lay: layout(d, timeline), moved };
+  }, [doc, lay, drag, timeline]);
+  const sdoc = shown.doc;
+  const slay = shown.lay;
 
   const { pps, start: v0 } = view;
-  const rows = [...doc.tracks].reverse(); // V1 at the bottom, like Premiere
+  const rows = Math.max(3, slay.rows + (drag?.mode === 'anims' && drag.moved ? 1 : 0));
   const selected = new Set(selection?.kind === 'clips' ? selection.ids : []);
-  const end = sequenceEnd(doc, timeline);
+  const end = slay.end;
   const x = (t: number) => (t - v0) * pps;
+  const rowTop = (r: number) => RULER + STEPS + r * ROW;
+  const totalH = RULER + STEPS + rows * ROW + 24;
 
   useLayoutEffect(() => {
     const el = laneRef.current!;
@@ -76,9 +117,11 @@ export function Timeline() {
     const r = laneRef.current!.getBoundingClientRect();
     return Math.max(0, v0 + (clientX - r.left) / pps);
   };
+  /** Track row under the pointer: -1 for the statement lane, 0… for V1… */
   const rowAt = (clientY: number) => {
     const r = laneRef.current!.getBoundingClientRect();
-    return Math.floor((clientY - r.top - RULER + bodyRef.current!.scrollTop) / ROW);
+    const y = clientY - r.top + bodyRef.current!.scrollTop - RULER;
+    return y < STEPS ? -1 : Math.floor((y - STEPS) / ROW);
   };
 
   // ------------------------------------------------------------ zoom / scroll
@@ -98,19 +141,20 @@ export function Timeline() {
   // ------------------------------------------------------------ snapping
   const snapPoints = (exclude: Set<string>) => {
     const pts = [0, time, ...(doc.markers ?? []).map((m) => m.time)];
-    for (const c of doc.clips) if (!exclude.has(c.id)) pts.push(c.start, c.start + clipDuration(c, timeline));
+    for (const [id, sp] of [...lay.steps, ...lay.anims]) if (!exclude.has(id)) pts.push(sp.start, sp.end);
     return pts;
   };
-  const snapDt = (edges: number[], dt: number, exclude: Set<string>) => {
-    const quant = (v: number) => Math.round(v * fps()) / fps();
-    if (!snapOn) return { dt: quant(dt), guide: null };
+  // Times written into the code stay readable: whole frames only when zoomed far in, else round numbers.
+  const grid = pps >= 900 ? 1 / fps() : pps >= 300 ? 0.05 : pps >= 60 ? 0.1 : 0.5;
+  const snapTo = (v: number, exclude: Set<string>) => {
+    const quant = Math.max(0, Math.round(v / grid) * grid);
+    if (!snapOn) return { v: quant, guide: null };
     let best: { d: number; p: number } | null = null;
-    for (const p of snapPoints(exclude))
-      for (const e of edges) {
-        const d = p - (e + dt);
-        if (Math.abs(d) * pps < SNAP_PX && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, p };
-      }
-    return best ? { dt: dt + best.d, guide: best.p } : { dt: quant(dt), guide: null };
+    for (const p of snapPoints(exclude)) {
+      const d = p - v;
+      if (Math.abs(d) * pps < SNAP_PX && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, p };
+    }
+    return best ? { v: best.p, guide: best.p } : { v: quant, guide: null };
   };
 
   // ------------------------------------------------------------ pointer handling
@@ -123,37 +167,40 @@ export function Timeline() {
         const r = laneRef.current!.getBoundingClientRect();
         const nx = e.clientX - r.left, ny = e.clientY - r.top + bodyRef.current!.scrollTop;
         const t0 = v0 + Math.min(d.x0, nx) / pps, t1 = v0 + Math.max(d.x0, nx) / pps;
-        const r0 = Math.floor((Math.min(d.y0, ny) - RULER) / ROW), r1 = Math.floor((Math.max(d.y0, ny) - RULER) / ROW);
-        const hit = doc.clips.filter((c) => {
-          const ri = rows.findIndex((t) => t.id === c.track);
-          return ri >= r0 && ri <= r1 && c.start < t1 && c.start + Math.max(clipDuration(c, timeline), 2 / pps) > t0;
-        }).map((c) => c.id);
+        const y0 = Math.min(d.y0, ny), y1 = Math.max(d.y0, ny);
+        const hit: string[] = [];
+        const overlaps = (sp: { start: number; end: number }) => sp.start < t1 && Math.max(sp.end, sp.start + 2 / pps) > t0;
+        if (y0 < RULER + STEPS && y1 > RULER) for (const s of doc.timeline) if (overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
+        for (const s of doc.timeline) (s.disabled ? [] : s.anims ?? []).forEach((a, i) => {
+          if (rowTop(i) < y1 && rowTop(i) + ROW > y0 && overlaps(lay.anims.get(a.id)!)) hit.push(a.id);
+        });
         selectClips([...new Set([...d.base, ...hit])]);
         return setDrag({ ...d, x1: nx, y1: ny });
       }
-      const raw = (e.clientX - d.x0) / pps;
-      if (d.mode === 'move') {
-        const moving = doc.clips.filter((c) => d.ids.includes(c.id));
-        const edges = [Math.min(...moving.map((c) => c.start)), Math.max(...moving.map((c) => c.start + clipDuration(c, timeline)))];
-        const minStart = Math.min(...moving.map((c) => c.start));
-        let { dt, guide: g } = snapDt(edges, raw, new Set(d.ids));
-        dt = Math.max(dt, -minStart);
-        const drow = Math.round((e.clientY - d.y0) / ROW);
+      const dx = (e.clientX - d.x0) / pps;
+      if (d.mode === 'anims' || d.mode === 'steps') {
+        const { v, guide: g } = snapTo(d.t0 + dx, new Set(d.ids));
         setGuide(g);
-        return setDrag({ ...d, dt, drow, alt: e.altKey, moved: d.moved || Math.abs(e.clientX - d.x0) > 3 || Math.abs(e.clientY - d.y0) > 3 });
+        const moved = d.moved || Math.abs(e.clientX - d.x0) > 3 || (d.mode === 'anims' && Math.abs(e.clientY - d.y0) > 3);
+        if (d.mode === 'anims') return setDrag({ ...d, t: v, row: Math.max(0, d.row0 + Math.round((e.clientY - d.y0) / ROW)), copy: e.altKey, moved });
+        return setDrag({ ...d, t: v, copy: e.altKey, moved });
       }
-      const c = doc.clips.find((k) => k.id === d.id)!;
-      const edge = d.mode === 'trim-start' ? c.start : c.start + c.duration;
-      const { dt, guide: g } = snapDt([edge], raw, new Set([c.id]));
+      const sp = d.mode === 'trim-anim' ? lay.anims.get(d.id)! : lay.steps.get(d.id)!;
+      const { v, guide: g } = snapTo(sp.start + d.dur0 + dx, new Set([d.id]));
       setGuide(g);
-      setDrag({ ...d, dt });
+      // the length is what the code says: a round number unless the edge snapped to something
+      const dur = g !== null ? v - sp.start : Math.round((d.dur0 + dx) / grid) * grid;
+      setDrag({ ...d, dur: Math.max(1 / fps(), dur) });
     };
     const up = () => {
       const d = dragRef.current!;
       setDrag(null);
       setGuide(null);
-      if (d.mode === 'move' && d.moved) commitMove(d);
-      if (d.mode === 'trim-start' || d.mode === 'trim-end') commitTrim(d);
+      if (!changes(d)) return;
+      let ids: string[] = [];
+      const measured = getState().timeline;
+      updateDoc((nd) => void (ids = applyDrag(nd, d, measured)));
+      if (ids.length) selectClips(ids);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up, { once: true });
@@ -163,79 +210,39 @@ export function Timeline() {
     };
   }, [drag?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /**
-   * Row a moved clip lands on: the one it's dropped on when that's free (and unlocked), else the nearest
-   * free row above it, else a new track on top (-1). The drag ghost shows exactly this.
-   */
-  const landingRow = (d: SceneDoc, ri: number, start: number, dur: number, ignore: Set<string>): number => {
-    const free = (r: number) => !rows[r].locked && trackIsFree(d, rows[r].id, start, start + Math.max(dur, 0.05), ignore);
-    for (let r = Math.min(ri, rows.length - 1); r >= 0; r--) if (free(r)) return r;
-    return -1;
-  };
-
-  const trimBounds = (c: Clip) => {
-    const others = doc.clips.filter((k) => k.track === c.track && k.id !== c.id);
-    const prevEnd = Math.max(0, ...others.filter((k) => k.start + k.duration <= c.start + 1e-6).map((k) => k.start + k.duration));
-    const nextStart = Math.min(Infinity, ...others.filter((k) => k.start >= c.start + c.duration - 1e-6).map((k) => k.start));
-    return { prevEnd, nextStart };
-  };
-
-  const trimmed = (c: Clip, d: Extract<Drag, { mode: 'trim-start' | 'trim-end' }>) => {
-    const { prevEnd, nextStart } = trimBounds(c);
-    const minDur = 1 / fps();
-    if (d.mode === 'trim-start') {
-      const s = clamp(c.start + d.dt, prevEnd, c.start + c.duration - minDur);
-      return { start: s, duration: c.start + c.duration - s };
-    }
-    const e = clamp(c.start + c.duration + d.dt, c.start + minDur, nextStart);
-    return { start: c.start, duration: e - c.start };
-  };
-
-  function commitTrim(d: Extract<Drag, { mode: 'trim-start' | 'trim-end' }>) {
-    if (!d.dt) return;
-    const c = doc.clips.find((k) => k.id === d.id)!;
-    const r = trimmed(c, d);
-    updateDoc((nd) => Object.assign(nd.clips.find((k) => k.id === c.id)!, { start: round(r.start), duration: round(r.duration) }));
-  }
-
-  function commitMove(d: Extract<Drag, { mode: 'move' }>) {
-    if (!d.dt && !d.drow) return;
-    const newIds: string[] = [];
-    updateDoc((nd) => {
-      const list = nd.clips.filter((c) => d.ids.includes(c.id));
-      const placed = new Set<string>();
-      let newTrack: string | null = null;
-      for (const orig of list) {
-        const c = d.alt ? { ...structuredClone(orig), id: uid('c') } : orig;
-        c.start = round(Math.max(0, orig.start + d.dt));
-        const ignore = new Set([...(d.alt ? [] : list.map((k) => k.id).filter((id) => !placed.has(id)))]);
-        const row = landingRow(nd, rows.findIndex((t) => t.id === orig.track) + d.drow, c.start, c.duration, ignore);
-        c.track = row < 0 ? (newTrack ??= addTrackTo(nd).id) : rows[row].id;
-        placed.add(orig.id);
-        if (d.alt) {
-          nd.clips.push(c);
-          newIds.push(c.id);
-        }
-      }
-    });
-    if (newIds.length) selectClips(newIds);
-  }
-
-  const onClipDown = (e: React.PointerEvent, c: Clip) => {
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    if (isLocked(doc, c)) return;
+  const pick = (e: React.PointerEvent, id: string): string[] | null => {
     const multi = e.shiftKey || e.metaKey || e.ctrlKey;
     let ids = selection?.kind === 'clips' ? selection.ids : [];
-    if (multi) ids = ids.includes(c.id) ? ids.filter((i) => i !== c.id) : [...ids, c.id];
-    else if (!ids.includes(c.id)) ids = [c.id];
+    if (multi) ids = ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id];
+    else if (!ids.includes(id)) ids = [id];
     selectClips(ids);
-    if (multi && !ids.includes(c.id)) return;
+    return multi && !ids.includes(id) ? null : ids;
+  };
+
+  const onAnimDown = (e: React.PointerEvent, a: Anim, step: Step, row: number) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const ids = pick(e, a.id);
+    if (!ids) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const trimmable = c.kind === 'anim' || c.kind === 'hold' || (c.kind === 'couple' && c.duration > 0);
-    if (trimmable && e.clientX - rect.left < 7 && rect.width > 18) return setDrag({ mode: 'trim-start', id: c.id, x0: e.clientX, dt: 0 });
-    if (trimmable && rect.right - e.clientX < 7) return setDrag({ mode: 'trim-end', id: c.id, x0: e.clientX, dt: 0 });
-    setDrag({ mode: 'move', ids, x0: e.clientX, y0: e.clientY, dt: 0, drow: 0, alt: e.altKey, moved: false });
+    const sp = lay.anims.get(a.id)!;
+    if (rect.right - e.clientX < 7 && rect.width > 10) return setDrag({ mode: 'trim-anim', id: a.id, x0: e.clientX, dur0: sp.end - sp.start, dur: sp.end - sp.start });
+    // Only whole animations of a self.play move; selected statements and nested animations stay.
+    const top = ids.filter((id) => { const r = findAnim(doc, id); return r && !r.parent; });
+    if (!top.length || step.disabled) return;
+    setDrag({ mode: 'anims', ids: top, x0: e.clientX, y0: e.clientY, t0: sp.start, row0: row, t: sp.start, row, copy: e.altKey, moved: false });
+  };
+
+  const onStepDown = (e: React.PointerEvent, s: Step) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const ids = pick(e, s.id);
+    if (!ids) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const sp = lay.steps.get(s.id)!;
+    if (canTrimStep(s) && !s.disabled && rect.right - e.clientX < 7 && rect.width > 10) return setDrag({ mode: 'trim-step', id: s.id, x0: e.clientX, dur0: sp.end - sp.start, dur: sp.end - sp.start });
+    const steps = ids.filter((id) => doc.timeline.some((x) => x.id === id));
+    setDrag({ mode: 'steps', ids: steps, x0: e.clientX, t0: sp.start, t: sp.start, copy: e.altKey, moved: false });
   };
 
   const onLaneDown = (e: React.PointerEvent) => {
@@ -254,14 +261,10 @@ export function Timeline() {
   };
 
   // ------------------------------------------------------------ library drops
-  const dropTime = (clientX: number) => {
-    const t = timeAt(clientX);
-    return frameSnap(t + snapDt([t], 0, new Set()).dt);
-  };
   const onDragOver = (e: React.DragEvent) => {
     if (!e.dataTransfer.types.includes(DND_TYPE)) return;
     e.preventDefault();
-    setDropAt({ t: dropTime(e.clientX), row: rowAt(e.clientY) });
+    setDropAt({ t: snapTo(timeAt(e.clientX), new Set()).v, row: rowAt(e.clientY) });
   };
   const onDrop = (e: React.DragEvent) => {
     setDropAt(null);
@@ -269,97 +272,115 @@ export function Timeline() {
     if (!raw) return;
     e.preventDefault();
     const p = JSON.parse(raw) as DragPayload;
-    const t = dropTime(e.clientX);
-    const row = rowAt(e.clientY);
-    const track = rows[row]?.id;
+    const at = { start: snapTo(timeAt(e.clientX), new Set()).v, row: Math.max(0, rowAt(e.clientY)) };
     const s = getState();
     const sel = s.selection?.kind === 'object' ? s.doc.objects.find((o) => o.id === (s.selection as { id: string }).id) : undefined;
-    if (p.kind === 'mobject') return addObject(p.name, [0, 0], sel?.name, { start: t, track });
+    if (p.kind === 'mobject') return void addObject(p.name, [0, 0], sel?.name, at);
     const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name;
     if (!target) return setState({ toast: 'Add an object first, then drop animations' });
-    addAnimation(p.name, target, { start: t, track });
+    addAnimation(p.name, target, at);
     if (!sel) toast(`${p.name} animates ${target}, the newest object. Select an object first to target it, or change it in Effect Controls`);
   };
+  const dropLanding = dropAt && landing(doc, lay, dropAt.t, dropAt.row >= 0);
 
   // ------------------------------------------------------------ ruler
   const visible = laneW / pps;
   const { major, minor } = tickSteps(pps);
   const ticks: { t: number; major: boolean }[] = [];
-  for (let t = Math.floor(v0 / minor) * minor; t <= v0 + visible + minor; t += minor) {
-    const isMajor = Math.abs(t / major - Math.round(t / major)) < 1e-6;
-    ticks.push({ t, major: isMajor });
-  }
+  for (let t = Math.floor(v0 / minor) * minor; t <= v0 + visible + minor; t += minor) ticks.push({ t, major: Math.abs(t / major - Math.round(t / major)) < 1e-6 });
 
-  // ------------------------------------------------------------ layout of clips (with drag ghosts)
-  const layout = (c: Clip): { start: number; dur: number; row: number; ghost?: boolean; pushed?: boolean } => {
-    let start = c.start, dur = clipDuration(c, timeline), row = rows.findIndex((t) => t.id === c.track);
-    if (drag?.mode === 'move' && drag.moved && drag.ids.includes(c.id) && !drag.alt) {
-      start = Math.max(0, start + drag.dt);
-      return { start, dur, row: landingRow(doc, row + drag.drow, start, dur, new Set(drag.ids)), ghost: true };
-    }
-    if ((drag?.mode === 'trim-start' || drag?.mode === 'trim-end') && drag.id === c.id) {
-      const r = trimmed(c, drag);
-      return { start: r.start, dur: r.duration, row, ghost: true };
-    }
-    // Code clips run after everything that started before them, so show where they really run.
-    const ran = c.kind === 'code' ? timeline?.steps.find((m) => m.id === c.id)?.start : undefined;
-    if (ran !== undefined && ran > c.start + 1 / fps()) return { start: ran, dur, row, pushed: true };
-    return { start, dur, row };
-  };
-  const altGhosts = drag?.mode === 'move' && drag.moved && drag.alt ? doc.clips.filter((c) => drag.ids.includes(c.id)) : [];
-  const altRow = (c: Clip, d: Extract<Drag, { mode: 'move' }>) =>
-    landingRow(doc, rows.findIndex((t) => t.id === c.track) + d.drow, Math.max(0, c.start + d.dt), clipDuration(c, timeline), new Set());
-  const newTrackRow = drag?.mode === 'move' && drag.moved && doc.clips.some((c) => drag.ids.includes(c.id) && (drag.alt ? altRow(c, drag) : layout(c).row) < 0);
+  // ------------------------------------------------------------ clips
+  const ghost = (id: string) => shown.moved.includes(id) || ((drag?.mode === 'trim-anim' || drag?.mode === 'trim-step') && drag.id === id && changes(drag));
+  const warnOf = (id: string) => diagnostics?.find((x) => x.id === id && x.kind === 'anim');
 
-  const totalH = RULER + (rows.length + (newTrackRow ? 1 : 0)) * ROW + 24;
-  const rowTop = (r: number) => RULER + (r + (newTrackRow ? 1 : 0)) * ROW;
-
-  const renderClip = (c: Clip, l: ReturnType<typeof layout>, key: string, extraClass = '') => {
-    const w = Math.max(l.dur * pps, 0);
-    const instant = c.kind === 'add' || c.kind === 'remove' || c.kind === 'uncouple' || (c.kind === 'couple' && !(c.duration > 0));
-    const left = x(l.start);
+  const renderAnim = (a: Anim, step: Step, row: number, l: Layout) => {
+    const sp = l.anims.get(a.id);
+    if (!sp) return null;
+    const left = x(sp.start), w = Math.max((sp.end - sp.start) * pps, 3);
     if (left + w < -40 || left > laneW + 40) return null;
-    const color = clipColor(c, catalog?.animations);
-    const label = clipLabel(c);
-    const warn = diagnostics?.find((x) => x.id === c.id && x.kind === 'clip');
+    const label = animLabel(a);
+    const warn = warnOf(a.id);
+    const kids = a.anims ? [...flatKids(a.anims, 0)] : [];
     return (
       <div
-        key={key}
-        className={`clip ${c.kind} ${instant ? 'instant' : ''} ${selected.has(c.id) ? 'sel' : ''} ${c.disabled ? 'disabled' : ''} ${error?.id === c.id ? 'err' : ''} ${l.ghost ? 'ghost' : ''} ${l.pushed ? 'pushed' : ''} ${warn && !l.ghost ? 'warn' : ''} ${extraClass}`}
-        style={{ left: instant ? left - 7 : left, width: instant ? 14 : Math.max(w, 3), top: rowTop(l.row) + 3, height: ROW - 6, ['--clip' as string]: color }}
-        title={`${label.title}\n${timecode(l.start)} → ${timecode(l.start + l.dur)}  (${l.dur.toFixed(2)}s)${l.pushed ? `\nPlaced at ${timecode(c.start)} but runs later: clips that start before it must finish first` : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
-        onPointerDown={(e) => onClipDown(e, c)}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          if (!selected.has(c.id)) selectClips([c.id]);
-          setMenu({ x: e.clientX, y: e.clientY, clip: c });
-        }}
-        onDoubleClick={() => setState({ time: frameSnap(c.start + clipDuration(c, timeline)), showVideo: false })}
+        key={a.id}
+        className={`clip anim ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
+        style={{ left, width: w, top: rowTop(row) + 3, height: ROW - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
+        title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
+        onPointerDown={(e) => onAnimDown(e, a, step, row)}
+        onContextMenu={(e) => openMenu(e, a.id)}
+        onDoubleClick={() => setState({ time: frameSnap(sp.end), showVideo: false })}
       >
-        {!instant && (
-          <>
-            <div className="clip-head">
-              {warn && <span className="clip-warn">!</span>}
-              {c.kind === 'anim' && <span className="fx">fx</span>}
-              <span className="clip-name">{label.name}</span>
-              {label.sub && <span className="clip-sub">{label.sub}</span>}
-            </div>
-            {c.kind === 'anim' && w > 24 && (
-              <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none">
-                <path d={ratePath(c.args?.rate_func, w, ROW - 28)} />
-              </svg>
-            )}
-            {c.kind === 'code' && <div className="code-peek">{(c.code ?? '').split('\n').filter((s) => s.trim() && !s.trim().startsWith('#'))[0] ?? ''}</div>}
-          </>
+        <div className="clip-head">
+          {warn && <span className="clip-warn">!</span>}
+          <span className="fx">fx</span>
+          <span className="clip-name">{label.name}</span>
+          {label.sub && <span className="clip-sub">{label.sub}</span>}
+        </div>
+        {kids.length > 0 ? (
+          <div className="kids">
+            {kids.map(({ a: k, depth }, i) => {
+              const ks = l.anims.get(k.id);
+              if (!ks) return null;
+              return (
+                <div key={k.id} className={`kid ${selected.has(k.id) ? 'sel' : ''} ${k.disabled ? 'disabled' : ''}`}
+                  style={{ left: (ks.start - sp.start) * pps, width: Math.max(2, (ks.end - ks.start) * pps), top: (i % 2) * 12 + depth, ['--clip' as string]: animColor(k, catalog?.animations) }}
+                  title={`${animLabel(k).title}\n${timecode(ks.start)} → ${timecode(ks.end)}`}
+                  onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) pick(e, k.id); }}
+                  onContextMenu={(e) => openMenu(e, k.id)}>
+                  {animLabel(k).name}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          w > 24 && <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none"><path d={ratePath(a.args?.rate_func ?? step.args?.rate_func, w, ROW - 28)} /></svg>
         )}
       </div>
     );
   };
 
+  const renderStep = (s: Step, l: Layout) => {
+    const sp = l.steps.get(s.id)!;
+    const w = (sp.end - sp.start) * pps;
+    const instant = w < 6 || s.disabled;
+    const left = x(sp.start);
+    if (left + w < -40 || left > laneW + 40) return null;
+    const label = stepLabel(s);
+    return (
+      <div
+        key={s.id}
+        className={`clip step ${s.kind} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
+        style={{ left: instant ? left - 7 : left, width: instant ? 14 : w, top: RULER + 3, height: STEPS - 6, ['--clip' as string]: STEP_COLORS[s.kind] }}
+        title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${s.disabled ? '\nDisabled: left out of the code' : ''}`}
+        onPointerDown={(e) => onStepDown(e, s)}
+        onContextMenu={(e) => openMenu(e, s.id)}
+        onDoubleClick={() => setState({ time: frameSnap(sp.end), showVideo: false })}
+      >
+        {!instant && (
+          <div className="clip-head">
+            <span className="clip-name">{label.name}</span>
+            {label.sub && <span className="clip-sub">{label.sub}</span>}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const openMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selected.has(id)) selectClips([id]);
+    setMenu({ x: e.clientX, y: e.clientY, id });
+  };
+
+  const calls = catalog ? sceneCalls(doc) : [];
+  const objNames = () => selectedObjectIds().map((id) => doc.objects.find((o) => o.id === id)?.name ?? '').filter(Boolean);
+
   return (
     <div className="timeline" data-tour="timeline" onWheel={onWheel}>
       <div className="tl-header">
-        <div className="seq-tab">{doc.scene.name}</div>
+        <div className="seq-tab" title="The timeline is this scene's construct(): each statement runs when the one before it ends">{doc.scene.name}.construct()</div>
         <TimecodeInput value={time} onChange={(t) => setState({ time: t, showVideo: false })} />
         <div className="tl-tools">
           <button className={`tool ${snapOn ? 'on' : ''}`} title="Snap in timeline (S)" onClick={() => setState({ timelineSnap: !snapOn })}>
@@ -369,12 +390,17 @@ export function Timeline() {
             <svg width="12" height="14" viewBox="0 0 12 14"><path d="M1 1h10v8l-5 4-5-4z" fill="currentColor" /></svg>
           </button>
           <span className="sep" />
-          <button className="ghost small" onClick={() => addClip('code')} title="Raw manim code at the playhead">+ Code</button>
-          <button className="ghost small" onClick={() => addClip('hold')} title="Hold (extends the scene, like self.wait)">+ Hold</button>
-          <button className="ghost small" onClick={() => addClip('add')} title="self.add(...) at the playhead">+ Add</button>
-          <button className="ghost small" onClick={() => addClip('remove')} title="self.remove(...) at the playhead">+ Remove</button>
-          <button className="ghost small" onClick={() => addClip('uncouple', { targets: selectedObjectIds().map((id) => doc.objects.find((o) => o.id === id)?.name ?? '').filter(Boolean) })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
-          <button className="ghost small" onClick={() => addClip('couple', { targets: selectedObjectIds().map((id) => doc.objects.find((o) => o.id === id)?.name ?? '').filter(Boolean) })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
+          <button className="ghost small" onClick={() => addStep('wait')} title="self.wait(1) at the playhead: a pause">+ Wait</button>
+          <button className="ghost small" onClick={() => addStep('code')} title="Any manim code at the playhead">+ Code</button>
+          <button className="ghost small" onClick={() => addStep('add', { targets: objNames() })} title="self.add(...) at the playhead: objects appear without an animation">+ Add</button>
+          <button className="ghost small" onClick={() => addStep('remove', { targets: objNames() })} title="self.remove(...) at the playhead: objects disappear without an animation">+ Remove</button>
+          <button className="ghost small" onClick={() => addStep('uncouple', { targets: objNames() })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
+          <button className="ghost small" onClick={() => addStep('couple', { targets: objNames() })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
+          <select className="inline scene-call" value="" title="Call another method of the scene at the playhead: sections, sounds, subcaptions, the camera (ThreeDScene)…"
+            onChange={(e) => e.target.value && addStep('call', { method: e.target.value })}>
+            <option value="">+ self.…</option>
+            {calls.map((m) => <option key={m} value={m}>self.{m}(…)</option>)}
+          </select>
         </div>
         <div className="spacer" />
         <span className="muted small mono">{timecode(end)}</span>
@@ -384,22 +410,13 @@ export function Timeline() {
       <div className="tl-body" ref={bodyRef}>
         <div className="tl-grid" style={{ height: totalH }}>
           <div className="tl-heads">
-            <div className="tl-corner" style={{ height: RULER }}>
-              <button className="ghost small" title="Add track" onClick={addTrack}>+ Track</button>
+            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} statements</span></div>
+            <div className="track-head steps-head" style={{ height: STEPS }} title="Each statement of construct(): self.play, self.wait, self.add, code… in order">
+              <span className="th-name">Statements</span>
             </div>
-            {newTrackRow && <div className="track-head new" style={{ height: ROW }}>new track</div>}
-            {rows.map((t) => (
-              <div key={t.id} className={`track-head ${targetTrack === t.id ? 'target' : ''} ${t.hidden ? 'off' : ''}`} style={{ height: ROW }}>
-                <button className={`th-btn ${t.hidden ? '' : 'on'}`} title="Toggle track output" onClick={() => updateDoc((d) => void (d.tracks.find((k) => k.id === t.id)!.hidden = !t.hidden))}>
-                  {t.hidden ? <EyeOffIcon /> : <EyeIcon />}
-                </button>
-                <button className={`th-btn ${t.locked ? 'lock' : ''}`} title="Toggle track lock" onClick={() => updateDoc((d) => void (d.tracks.find((k) => k.id === t.id)!.locked = !t.locked))}>
-                  <LockIcon open={!t.locked} />
-                </button>
-                <button className="th-name" title="Target this track for new clips" onClick={() => setState({ targetTrack: targetTrack === t.id ? null : t.id })}>
-                  {t.name}
-                </button>
-                <span className="th-count">{doc.clips.filter((c) => c.track === t.id).length || ''}</span>
+            {Array.from({ length: rows }, (_, r) => (
+              <div key={r} className="track-head" style={{ height: ROW }} title={`The ${ordinal(r + 1)} animation of each self.play`}>
+                <span className="th-name">V{r + 1}</span>
               </div>
             ))}
           </div>
@@ -412,34 +429,31 @@ export function Timeline() {
                 </div>
               ))}
               {(doc.markers ?? []).map((m) => (
-                <div
-                  key={m.id}
-                  className="marker"
-                  style={{ left: x(m.time) }}
-                  title="Marker: click to jump, Alt-click to delete"
+                <div key={m.id} className="marker" style={{ left: x(m.time) }} title="Marker: click to jump, Alt-click to delete"
                   onPointerDown={(e) => {
                     e.stopPropagation();
                     if (e.altKey) updateDoc((d) => void (d.markers = (d.markers ?? []).filter((k) => k.id !== m.id)));
                     else setState({ time: m.time, showVideo: false });
-                  }}
-                />
+                  }} />
               ))}
               <div className="end-mark" style={{ left: x(end) }} title="Sequence end" />
               <RenderBar left={x(0)} width={end * pps} />
             </div>
-            {rows.map((t, r) => (
-              <div key={t.id} className={`lane-row ${t.locked ? 'locked' : ''} ${t.hidden ? 'off' : ''}`} style={{ top: rowTop(r), height: ROW }} />
-            ))}
-            {doc.clips.map((c) => renderClip(c, layout(c), c.id))}
-            {altGhosts.map((c) => {
-              const d = drag as Extract<Drag, { mode: 'move' }>;
-              return renderClip(c, { start: Math.max(0, c.start + d.dt), dur: clipDuration(c, timeline), row: altRow(c, d), ghost: true }, 'alt' + c.id, 'copy');
+            <div className="lane-row steps-lane" style={{ top: RULER, height: STEPS }} />
+            {Array.from({ length: rows }, (_, r) => <div key={r} className="lane-row" style={{ top: rowTop(r), height: ROW }} />)}
+            {/* each self.play spans all tracks: a faint band shows which animations play together */}
+            {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).map((s) => {
+              const sp = slay.steps.get(s.id)!;
+              return <div key={'band' + s.id} className={`play-band ${selected.has(s.id) ? 'sel' : ''}`} style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: RULER + STEPS, height: rows * ROW }} />;
             })}
+            {sdoc.timeline.map((s) => renderStep(s, slay))}
+            {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).flatMap((s) => (s.anims ?? []).map((a, i) => renderAnim(a, s, i, slay)))}
             {drag?.mode === 'marquee' && (
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
             )}
-            {dropAt && dropAt.row >= 0 && dropAt.row < rows.length && (
-              <div className="drop-ind" style={{ left: x(dropAt.t), top: rowTop(dropAt.row), height: ROW }} />
+            {dropAt && dropLanding && (
+              <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? STEPS : ROW }}
+                title={dropLanding.kind === 'join' ? 'Plays with the animations of this self.play' : 'A new self.play here'} />
             )}
             {guide !== null && <div className="snap-guide" style={{ left: x(guide), height: totalH }} />}
             <div className="playhead" style={{ left: x(time), height: totalH }}>
@@ -454,6 +468,15 @@ export function Timeline() {
     </div>
   );
 }
+
+function* flatKids(anims: Anim[], depth: number): Generator<{ a: Anim; depth: number }> {
+  for (const a of anims) {
+    yield { a, depth };
+    if (a.anims) yield* flatKids(a.anims, depth + 1);
+  }
+}
+
+const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
 
 /** Premiere-style render bar: green = smooth preview ready, yellow = rendering, red = live frames only. */
 function RenderBar({ left, width }: { left: number; width: number }) {
@@ -472,8 +495,7 @@ function setView(patch: Partial<{ pps: number; start: number }>) {
 }
 
 export function zoomToFit(laneW = 800) {
-  const s = getState();
-  const end = Math.max(2, sequenceEnd(s.doc, s.timeline));
+  const end = Math.max(2, docLayout().end);
   setView({ pps: clamp((laneW - 40) / end, 4, 4000), start: 0 });
 }
 
@@ -520,29 +542,38 @@ function ZoomBar({ laneW, end }: { laneW: number; end: number }) {
   );
 }
 
-function ClipMenu({ x, y, clip, onClose }: { x: number; y: number; clip: Clip; onClose: () => void }) {
+function ClipMenu({ x, y, id, onClose }: { x: number; y: number; id: string; onClose: () => void }) {
   useEffect(() => {
     const close = () => onClose();
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, [onClose]);
   const s = getState();
+  const lay = docLayout();
+  const step = findStep(s.doc, id);
+  const ref = step ? undefined : findAnim(s.doc, id);
   const item = (label: string, fn: () => void, hint?: string) => (
     <div className="menu-item" onPointerDown={(e) => { e.stopPropagation(); fn(); onClose(); }}>
       <span>{label}</span>
       {hint && <span className="muted">{hint}</span>}
     </div>
   );
-  const ids = s.selection?.kind === 'clips' ? s.selection.ids : [clip.id];
+  const ids = s.selection?.kind === 'clips' ? s.selection.ids : [id];
+  const sp = (step ? lay.steps : lay.anims).get(id);
+  const disabled = (step ?? ref?.anim)?.disabled;
+  const target = ref?.anim.target;
   return (
     <div className="menu" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()}>
-      {item(clip.disabled ? 'Enable' : 'Disable', () => updateDoc((d) => d.clips.filter((c) => ids.includes(c.id)).forEach((c) => (c.disabled = !clip.disabled))), 'Shift+E')}
-      {item('Delete', () => deleteSelection(), 'Del')}
+      {item(disabled ? 'Enable' : 'Disable', () => toggleDisabled(ids), 'Shift+E')}
+      {item('Delete (leave a gap)', () => deleteSelection(), 'Del')}
       {item('Ripple Delete', () => deleteSelection(true), '⇧Del')}
-      {item('Move playhead to start', () => setState({ time: frameSnap(clip.start), showVideo: false }))}
-      {item('Move playhead to end', () => setState({ time: frameSnap(clip.start + clipDuration(clip, s.timeline)), showVideo: false }))}
-      {clip.target && item(`Select ${clip.target}`, () => {
-        const o = s.doc.objects.find((k) => k.name === clip.target);
+      {sp && item('Move playhead to start', () => setState({ time: frameSnap(sp.start), showVideo: false }))}
+      {sp && item('Move playhead to end', () => setState({ time: frameSnap(sp.end), showVideo: false }))}
+      {ref && isComposition(ref.anim) && item('Select the self.play', () => selectClips([ref.step.id]))}
+      {ref && !step && item('Select the self.play', () => selectClips([ref.step.id]))}
+      {item('Show in code', () => setState({ centerTab: 'code' }))}
+      {target && s.doc.objects.some((o) => o.name === target) && item(`Select ${target}`, () => {
+        const o = s.doc.objects.find((k) => k.name === target);
         if (o) setState({ selection: { kind: 'object', id: o.id } });
       })}
     </div>
@@ -588,38 +619,49 @@ function TimecodeInput({ value, onChange }: { value: number; onChange: (t: numbe
   );
 }
 
-export function clipLabel(c: Clip): { name: string; sub: string; title: string } {
-  switch (c.kind) {
-    case 'anim':
-      if (c.cls === 'animate') {
-        const chain = (c.chain ?? '').split('\n').join('').trim();
-        return { name: `.animate${chain.match(/^\.\w+/)?.[0] ?? ''}`, sub: c.target ?? '', title: `${c.target}.animate${chain}` };
-      }
-      return { name: c.cls ?? '', sub: c.target ?? '', title: `${c.cls}(${c.target})` };
+const firstLine = (code: string) => code.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) ?? '';
+
+/** How an animation reads on the timeline, and its code. */
+export function animLabel(a: Anim): { name: string; sub: string; title: string } {
+  if (a.cls === 'animate') {
+    const chain = (a.chain ?? '').split('\n').join('').trim();
+    return { name: `.animate${chain.match(/^\.\w+/)?.[0] ?? ''}`, sub: a.target, title: `${a.target}.animate${chain}` };
+  }
+  if (a.anims) return { name: a.cls, sub: `${a.anims.length} animation${a.anims.length === 1 ? '' : 's'}`, title: `${a.cls}(${a.anims.map((k) => animLabel(k).title).join(', ')})` };
+  return { name: a.cls, sub: a.target || a.args['*'] || '', title: `${a.cls}(${[a.target, a.args['*']].filter(Boolean).join(', ')})` };
+}
+
+/** How a statement reads on the timeline, and its code. */
+export function stepLabel(s: Step): { name: string; sub: string; title: string } {
+  const targets = (s.targets ?? []).join(', ');
+  switch (s.kind) {
+    case 'play': {
+      const n = s.anims?.length ?? 0;
+      const kw = Object.entries(s.args ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
+      return { name: 'self.play', sub: kw || `${n} animation${n === 1 ? '' : 's'}`, title: `self.play(${(s.anims ?? []).map((a) => animLabel(a).title).join(', ')}${kw ? ', ' + kw : ''})` };
+    }
+    case 'wait':
+      return { name: 'wait', sub: s.args?.duration ?? '', title: `self.wait(${s.args?.duration ?? ''})` };
     case 'code':
-      return { name: c.label || 'Code', sub: '', title: c.code ?? '' };
-    case 'hold':
-      return { name: 'Hold', sub: '', title: 'Hold: keeps the scene running (self.wait)' };
+      return { name: s.label || 'code', sub: firstLine(s.code ?? ''), title: s.code ?? '' };
     case 'couple':
-      return { name: 'Couple', sub: (c.targets ?? []).join(', '), title: `Couple ${(c.targets ?? []).join(', ')} again${c.duration > 0 ? ', gliding back into place' : ''}` };
+      return { name: 'Couple', sub: targets, title: `Couple ${targets} again${s.duration ? ', gliding back into place' : ''}` };
     case 'uncouple':
-      return { name: 'Uncouple', sub: (c.targets ?? []).join(', '), title: `Uncouple ${(c.targets ?? []).join(', ')}: they stay where they are and can be animated freely` };
+      return { name: 'Uncouple', sub: targets, title: `Uncouple ${targets}: they stay where they are and can be animated freely` };
+    case 'call': {
+      const kw = Object.entries(s.args ?? {}).map(([k, v]) => (k === '*' ? v : `${k}=${v}`)).join(', ');
+      return { name: `self.${s.method}`, sub: kw, title: `self.${s.method}(${kw})` };
+    }
     default:
-      return { name: c.kind, sub: (c.targets ?? []).join(', '), title: `self.${c.kind}(${(c.targets ?? []).join(', ')})` };
+      return { name: s.kind === 'add' ? '+ add' : '− remove', sub: targets, title: `self.${s.kind}(${targets})` };
   }
 }
 
-function clipColor(c: Clip, anims?: { name: string; category: string }[]): string {
-  if (c.kind === 'code') return '#6b3f78';
-  if (c.kind === 'hold') return '#3a3e4a';
-  if (c.kind === 'add') return '#3f6b4a';
-  if (c.kind === 'remove') return '#7a4040';
-  if (c.kind === 'couple') return '#2f7a74';
-  if (c.kind === 'uncouple') return '#8a6a2f';
-  if (c.cls === 'animate') return '#2f5c8c';
-  const cat = anims?.find((a) => a.name === c.cls)?.category ?? '';
-  if (/^(FadeOut|Uncreate|Unwrite|ShrinkToCenter|FadeOutAndShift)/.test(c.cls ?? '')) return '#7a4545';
-  return CAT_COLORS[cat] ?? '#3c5a75';
+function animColor(a: Anim, anims?: { name: string; category: string }[]): string {
+  if (a.cls === 'animate') return '#2f5c8c';
+  if (a.anims) return CAT_COLORS.Composition;
+  if (/^(FadeOut|Uncreate|Unwrite|ShrinkToCenter|FadeOutAndShift)/.test(a.cls)) return '#7a4545';
+  return CAT_COLORS[anims?.find((x) => x.name === a.cls)?.category ?? ''] ?? '#3c5a75';
 }
 
 function tickSteps(pps: number): { major: number; minor: number } {
@@ -630,7 +672,6 @@ function tickSteps(pps: number): { major: number; minor: number } {
 }
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
-const round = (v: number) => Math.round(v * 10000) / 10000;
 
 // ---- icons
 const MagnetIcon = () => (
@@ -639,16 +680,3 @@ const MagnetIcon = () => (
     <path d="M3 4.5h2.4M8.6 4.5H11" />
   </svg>
 );
-const EyeIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z" /><circle cx="7" cy="7" r="1.8" /></svg>
-);
-const EyeOffIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4"><path d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z" /><path d="M2 12L12 2" /></svg>
-);
-const LockIcon = ({ open }: { open: boolean }) => (
-  <svg width="12" height="14" viewBox="0 0 12 14" fill="none" stroke="currentColor" strokeWidth="1.4">
-    <rect x="1.5" y="6" width="9" height="7" rx="1.2" />
-    <path d={open ? 'M3.5 6V4a2.5 2.5 0 0 1 5 0' : 'M3.5 6V4a2.5 2.5 0 0 1 5 0v2'} />
-  </svg>
-);
-

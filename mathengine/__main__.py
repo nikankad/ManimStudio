@@ -1,9 +1,11 @@
 """Manim Studio command line (``manim-studio``; ``mathengine`` is the same command).
 
     manim-studio [project.manimstudio]       open the editor (native window)
+    manim-studio scene.py                      open a manim file in the editor (as a new project)
     manim-studio --browser [project]           open the editor in the default browser
     manim-studio render project -q 1080p -o out.mp4
     manim-studio code project > scene.py       print the generated manim code
+    manim-studio import scene.py -o project.manimstudio   turn a manim file into a project
     manim-studio manim …                       run manim's own command line (used by packaged apps)
 """
 
@@ -116,6 +118,26 @@ def _render(project: str, quality: str, output: str | None) -> int:
     return 0
 
 
+def _import(file: str, scene: str | None, output: str | None) -> int:
+    from .importer import CodeError, import_code
+    from .project import save_project
+
+    try:
+        res = import_code(Path(file).read_text(encoding="utf-8"), scene)
+    except CodeError as exc:
+        print(f"error: {exc.message}", file=sys.stderr)
+        return 1
+    out = output or str(Path(file).with_suffix(".manimstudio"))
+    save_project(out, res.doc)
+    for note in res.notes:
+        print(f"note: {note}", file=sys.stderr)
+    others = [s for s in res.scenes if s != res.doc["scene"]["name"]]
+    if others:
+        print(f"note: imported {res.doc['scene']['name']}; the file also has {', '.join(others)} (choose with -s)", file=sys.stderr)
+    print(out)
+    return 0
+
+
 def _print_diagnostics(diagnostics: list[dict]) -> None:
     """Construction problems don't stop a render (broken links are emitted unconstrained); show them."""
     for d in diagnostics:
@@ -134,6 +156,13 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit as exc:
             return int(exc.code or 0) if not isinstance(exc.code, str) else 1
         return 0
+    if argv and argv[0] == "import":
+        p = argparse.ArgumentParser(prog="manim-studio import", description="Turn a manim .py file into a project.")
+        p.add_argument("file")
+        p.add_argument("-s", "--scene", help="which Scene class (default: the first one)")
+        p.add_argument("-o", "--output", help="project file to write (default: next to the .py file)")
+        args = p.parse_args(argv[1:])
+        return _import(args.file, args.scene, args.output)
     if argv and argv[0] in ("render", "code"):
         cmd = argv[0]
         p = argparse.ArgumentParser(prog=f"manim-studio {cmd}")
@@ -154,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     p = argparse.ArgumentParser(prog="manim-studio", description="Manim Studio: a visual editor for manim scenes.")
-    p.add_argument("project", nargs="?", help="a project file to open (.manimstudio, or .mathengine from earlier versions)")
+    p.add_argument("project", nargs="?", help="a project file to open (.manimstudio, or .mathengine from earlier versions), or a manim .py file")
     p.add_argument("--browser", action="store_true", help="use the default browser instead of a native window")
     p.add_argument("--port", type=int, default=0)
     p.add_argument("--serve", action="store_true", help="only run the local server (no window)")

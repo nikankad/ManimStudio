@@ -17,6 +17,11 @@ Format history (each upgrade is explicit and lossless):
   to one. Clips are converted to the statements the old editor compiled them to (overlapping clips
   become one ``self.play``; a clip that started later inside it waits first with ``Succession(Wait(t), …)``).
   Construction templates get a ``timeline`` too.
+
+  Optional, for code read with importer.py (manim code -> document): objects may carry ``after`` (the
+  step they are created after, as in the code; none: at the top of construct()) and ``comment`` (comment
+  lines above them in the code), steps may carry ``comment``, and ``scene`` may carry ``members`` and
+  ``members_after`` (other code of the scene class, before and after construct()).
 """
 
 from __future__ import annotations

@@ -6,7 +6,7 @@ import { api, type RecentProject, type Sample } from '../api';
 import { emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
-import { discardOk, openPath, openProject, RESOLUTIONS } from './Panels';
+import { discardOk, importManimFile, openPath, openProject, RESOLUTIONS } from './Panels';
 import { openReleases, versionLabel } from './Updates';
 
 type Section = 'home' | 'learn';
@@ -79,6 +79,8 @@ export function Home() {
           <div className="home-actions">
             <button className="primary home-cta" onClick={() => setState({ panel: 'new-project' })}>New project…</button>
             <button className="home-cta" onClick={() => void openProject()}>Open project…</button>
+            <button className="home-cta" title="A manim .py file: its scene becomes the timeline, and the code stays in sync both ways" onClick={() => void importManimFile()}>Open manim file…</button>
+            <button className="home-cta" title="A new project with the code open: paste a manim scene and the timeline follows" onClick={() => newFromCode()}>Paste manim code…</button>
           </div>
           <span className="spacer" />
           <button className="home-link small" title="Release notes and downloads" onClick={() => app && openReleases(app.releases)}>What’s new</button>
@@ -162,6 +164,10 @@ function Learn() {
           <b>Read the guide</b>
           <span className="muted small">Drawing, connecting objects, parameters, the timeline, exporting video and code, and shortcuts.</span>
         </button>
+        <button className="learn-card" onClick={() => newFromCode()}>
+          <b>Start from manim code</b>
+          <span className="muted small">Paste a manim scene into the Code tab: every self.play becomes clips on the timeline, and editing either one updates the other.</span>
+        </button>
         <button className="learn-card" onClick={() => setState({ panel: 'new-project' })}>
           <b>Start from scratch</b>
           <span className="muted small">Choose a format, then draw with the tools above the canvas or drag objects in from the library.</span>
@@ -170,6 +176,13 @@ function Learn() {
       <p className="muted small">The samples on Home are ordinary projects: open one and select anything to see how it is built.</p>
     </section>
   );
+}
+
+/** A new, empty project with the code open, ready for a pasted manim scene. */
+function newFromCode() {
+  if (!discardOk()) return;
+  loadDoc(emptyDoc(), null);
+  setState({ centerTab: 'code' });
 }
 
 const toClassName = (name: string) => {

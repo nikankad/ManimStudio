@@ -57,7 +57,7 @@ export const TOUR: TourStep[] = [
     target: '[data-tour="timeline"]',
     title: 'Timeline',
     before: libraryTab('Objects'),
-    body: <>Clips sit on tracks at any time and may overlap. Drag to move, drag edges to trim, and press <kbd>Space</kbd> to play. Connected objects stay attached while you scrub.</>,
+    body: <>The scene’s <code>construct()</code>, statement by statement: each <code>self.play</code> plays its animations together on V1, V2…, then the next statement starts. Drag to move, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
   },
   {
     target: '[data-tour="record"]',
@@ -164,7 +164,7 @@ interface Topic {
 }
 
 const tourTo = (target: string) => () => startTour(Math.max(0, TOUR.findIndex((t) => t.target === `[data-tour="${target}"]`)));
-const open = (panel: 'graph' | 'code' | 'export' | 'settings') => () => setState({ panel, panelData: null });
+const open = (panel: 'graph' | 'code' | 'export' | 'settings') => () => (panel === 'code' ? setState({ centerTab: 'code' }) : setState({ panel, panelData: null }));
 const tool = (t: 'point' | 'line' | 'circle' | 'polygon') => () => setState({ panel: null, panelData: null, tool: t });
 
 const TOPICS: Topic[] = [
@@ -174,7 +174,7 @@ const TOPICS: Topic[] = [
     keywords: 'begin first new project basics overview',
     body: (
       <>
-        <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
+        <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and the statements of the scene’s <code>construct()</code> that animate them, shown as clips on a timeline. The <b>Code</b> tab shows the same scene as manim code; edit either one and the other follows, or paste a whole manim file to start from it.</p>
         <ol>
           <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
@@ -295,13 +295,17 @@ const TOPICS: Topic[] = [
   {
     id: 'timeline',
     title: 'Timeline and animation',
-    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order',
+    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple',
     body: (
       <>
         <ul>
-          <li>Clips sit on tracks at any time and may overlap or leave gaps. Drag to move, drag edges to trim, <kbd>Alt</kbd>-drag to duplicate, right-click for more. A clip dropped where its track is taken goes to the nearest free track above; the drag preview shows where.</li>
-          <li>Overlapping clips on the same object <b>add up</b>: move it and change its color, rotate it or fade it out at the same time. Replacing it or turning it into another shape still lets the later clip win.</li>
-          <li>A clip marked <b>!</b> animates an object before its intro (Create, FadeIn, Add): the object would show from that clip on. Effect Controls explains it.</li>
+          <li>The timeline is the scene’s <code>construct()</code>, in order. The <b>Statements</b> lane shows each one: <code>self.play</code>, <code>self.wait</code> (a pause), <code>self.add</code> / <code>self.remove</code>, and code. A statement starts when the one before it ends, exactly like manim.</li>
+          <li>The animations of one <code>self.play</code> start together: the first on V1, the second on V2, and so on. The <code>self.play</code> lasts as long as its longest animation. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
+          <li>Drag a clip onto another <code>self.play</code> to play it with that one, or into a pause to start it there (the pause shrinks, and later statements move only if it doesn’t fit). Drag it up or down to change its row. The drag shows the result before you let go. Drag a statement to move the whole statement. <kbd>Alt</kbd>-drag copies.</li>
+          <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along.</li>
+          <li>Effect Controls show every argument manim takes for the selected clip: the animation’s class, object(s), duration and arguments; a <code>self.play</code>’s animations (reorder, add, group into <code>LaggedStart</code>…) and the arguments it gives them all; a <code>self.wait</code>’s options. <i>+ self.…</i> on the timeline adds any other scene method: sections, sounds, subcaptions, the 3D camera…</li>
+          <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>⇧Del</kbd> (ripple delete) closes the gap.</li>
+          <li>A clip marked <b>!</b> animates an object that isn’t on screen yet (no Create, FadeIn or Add before it): manim would show it from that clip on. Effect Controls explains it.</li>
           <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
           <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
           <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>
@@ -319,8 +323,10 @@ const TOPICS: Topic[] = [
       <>
         <ul>
           <li>Every field accepts Python: click <code>{'{}'}</code> next to a field to type any expression manim accepts (<code>BLUE</code>, <code>UP * 2</code>, <code>lambda x: x**2</code>).</li>
-          <li><b>Code clips</b> (<i>+ Code</i> on the timeline) run any manim code inside <code>construct()</code>.</li>
-          <li><b>&lt;/&gt; Code</b> shows the generated scene and lets you add imports, helpers and custom classes in the header. <i>Save .py</i> writes a standalone manim file.</li>
+          <li><b>Code</b> steps (<i>+ Code</i> on the timeline) run any manim code inside <code>construct()</code>.</li>
+          <li>The <b>&lt;/&gt; Code</b> tab is the whole scene as a manim file, and it works both ways. Edit it and the timeline, canvas and inspector follow; edit those and the code follows. Clicking a line selects what it makes, and selecting a clip highlights its line.</li>
+          <li>Paste a whole manim file into it (or use <i>Open manim file…</i> on Home, or <code>manim-studio scene.py</code>) and its scene becomes the timeline. Each <code>self.play</code> becomes clips, objects are created where the code creates them, and anything else (loops, updaters, helper variables) is kept as code, so the scene runs exactly as written. Imports, helpers and custom classes stay at the top of the file, and other methods of the scene class stay in it.</li>
+          <li><i>Save .py</i> writes a standalone manim file.</li>
           <li><b>Export video</b> renders with manim at the quality you choose.</li>
         </ul>
       </>

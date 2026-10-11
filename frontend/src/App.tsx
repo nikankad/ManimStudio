@@ -6,6 +6,7 @@ import { SharedLists } from './components/ParamField';
 import { Panels, Toolbar, useShortcuts } from './components/Panels';
 import { Timeline } from './components/Timeline';
 import { Viewport } from './components/Viewport';
+import { CodeEditor } from './components/CodeEditor';
 import { Tour, WelcomeCard } from './components/Help';
 import { Home } from './components/Home';
 import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
@@ -20,19 +21,22 @@ function savedHeight(): number {
   } catch {
     /* storage unavailable */
   }
-  return Math.round(window.innerHeight * 0.4);
+  return Math.max(220, Math.round(window.innerHeight * 0.4)); // the window can be 0 tall while it opens
 }
 
 export function App() {
   const message = useStore((s) => s.toast);
   const home = useStore((s) => s.home);
+  const centerTab = useStore((s) => s.centerTab);
   const [tlHeight, setTlHeight] = useState(savedHeight);
   useShortcuts();
   useEffect(() => {
     api.initialProject()
       .then((r) => {
         if (r.missing) toast(`Couldn't find ${r.missing}: it may have been moved or renamed. Open it from here.`);
-        return r.home ? setState({ home: true }) : loadDoc(r.doc, r.path);
+        if (r.home) return setState({ home: true });
+        loadDoc(r.doc, r.path);
+        if (r.imported) setState({ centerTab: 'code', dirty: true });
       })
       .then(loadCatalog)
       .catch((e) => toast(String(e)));
@@ -75,7 +79,7 @@ export function App() {
     <div className="app" style={{ gridTemplateRows: `44px minmax(220px, 1fr) 6px ${tlHeight}px` }}>
       <Toolbar />
       <Library />
-      <Viewport />
+      {centerTab === 'code' ? <CodeEditor /> : <Viewport />}
       <Inspector />
       <div className="splitter" onPointerDown={startResize} title="Drag to resize the timeline" />
       <Timeline />

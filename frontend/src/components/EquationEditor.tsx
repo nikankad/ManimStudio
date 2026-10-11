@@ -6,7 +6,7 @@ import { api, type EquationCheck } from '../api';
 import { autoPairs, joinTerms, mergeTerms, normalizeLatex, splitTerms, termLabel } from '../equation';
 import { geoType } from '../construct';
 import { getState, setState, updateDoc, useStore } from '../store';
-import type { Clip, EqPart, SceneObject } from '../types';
+import type { Anim, EqPart, SceneObject } from '../types';
 import { ColorField, Field, quote, unquote } from './ParamField';
 
 type MathfieldLike = HTMLElement & { value: string; getValue(format: string): string; mathVirtualKeyboardPolicy: string };
@@ -186,8 +186,8 @@ function colorFor(c: string): string {
   return /^#/.test(s) ? s : table[s] ?? '#fff';
 }
 
-/** Source/destination views with editable term correspondence for a TransformTerms clip. */
-export function TermsClipEditor({ clip, onChange }: { clip: Clip; onChange: (fn: (c: Clip) => void) => void }) {
+/** Source/destination views with editable term correspondence for a TransformTerms animation. */
+export function TermsClipEditor({ anim: clip, onChange }: { anim: Anim; onChange: (fn: (c: Anim) => void) => void }) {
   const doc = useStore((s) => s.doc);
   const src = doc.objects.find((o) => o.name === clip.target);
   const dst = doc.objects.find((o) => o.id === clip.terms?.to);

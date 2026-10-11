@@ -5,6 +5,9 @@ widget writes (every option of every dropdown), built one at a time. "REJECTED c
 those are parameters the GUI offers that manim refuses. Errors from the generic sample values
 (e.g. parallel lines for TangentialArc) are reported as semantic and are expected.
 
+Statements are exercised too: every argument of target.animate(...), self.play and self.wait, and of every other
+method of each Scene class that a statement can call (self.next_section, ThreeDScene.move_camera...), run in a scene.
+
     .venv/bin/python scripts/verify_controls.py   # ~3 min
 """
 import collections, signal, sys, traceback, warnings
@@ -152,6 +155,62 @@ for e in cat["mobjects"]:
                 if p["name"] in req: continue
                 for v in (p.get("options") or [sample(p, p["name"] == "*")]):
                     if v is not None: attempt(f"{name}.{meth}.{p['name']}", call({**req, p["name"]: v}))
+
+# statements: .animate(**kwargs), self.play / self.wait options, and every other scene method a statement can call
+def run_scene(base, body):
+    """Run ``body`` (code using ``self``) in a scene of class ``base``, without rendering."""
+    with m.tempconfig({"dry_run": True, "write_to_movie": False, "disable_caching": True, "verbosity": "ERROR", "progress_bar": "none"}):
+        scene = NS[base]()
+        scene.setup()
+        exec(body, {**NS, "self": scene})
+    return True
+
+def attempt_scene(label, base, body):
+    signal.alarm(8)
+    try:
+        run_scene(base, body); results["ok"] += 1
+    except Timeout:
+        results["timeout"] += 1; timeouts.append(label)
+    except Exception as e:
+        msg = f"{type(e).__name__}: {e}"
+        if isinstance(e, (TypeError, NameError, AttributeError)) and (any(b in str(e) for b in BAD) or "has no attribute" in str(e)):
+            bad.append((label, body[:160], msg[:200]))
+        else:
+            semantic[type(e).__name__] += 1
+            sem_msgs[(type(e).__name__, str(e)[:90])].append(label)
+    finally:
+        signal.alarm(0)
+
+for p in C.signature("animate")["params"]:
+    for v in (p.get("options") or [sample(p)]):
+        if v is not None:
+            attempt_scene(f".animate.{p['name']}={v}", "Scene", f"self.play(Square().animate({p['name']}={v}).shift(UP))")
+for p in C.signature("Animation")["params"] + [q for q in C.signature("Scene.play")["params"] if q["name"] != "*"]:
+    for v in (p.get("options") or [sample(p)]):
+        if v is not None:
+            attempt_scene(f"self.play.{p['name']}={v}", "Scene", f"self.play(FadeIn(Square()), {p['name']}={v})")
+for base, methods in cat["scene_methods"].items():
+    if base == "SpecialThreeDScene":  # can't be built in manim itself (it never sets up a renderer)
+        continue
+    for meth in methods:
+        if meth in ("play",):
+            continue
+        msig = C.signature(f"{base}.{meth}")
+        req = {}
+        for p in msig["params"]:
+            if p["required"]:
+                v = sample(p, p["name"] == "*") or (p["options"][0] if p.get("options") else None)
+                if p["name"] == "sound_file": v = None
+                if v is None: break
+                req[p["name"]] = v
+        else:
+            def call(a, meth=meth, base=base):
+                return f"self.{meth}({codegen._call_args(a, before_star=codegen._method_leading({'scene': {'base': base}}, meth))})"
+            attempt_scene(f"{base}.{meth}()", base, call(req))
+            for p in msig["params"]:
+                if p["name"] in req: continue
+                for v in (p.get("options") or [sample(p, p["name"] == "*")]):
+                    if v is not None: attempt_scene(f"{base}.{meth}.{p['name']}={v}", base, call({**req, p["name"]: v}))
 
 print("calls:", dict(results))
 print("semantic errors from sample values (value fine for the type but not this object):", dict(semantic))

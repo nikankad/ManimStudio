@@ -161,6 +161,8 @@ def _callable_template(ann: str, name: str) -> str:
     argt = [a.strip() for a in inner.group(1).split(",") if a.strip()] if inner else []
     ret = inner.group(2) if inner else ""
     n = len(argt) or 1
+    if inner and not argt:  # Callable[[], bool]: a condition checked as the scene runs (stop_condition)
+        return "lambda: False" if "bool" in ret else "lambda: 0"
     if "homotopy" in name:
         return "lambda x, y, z, t: (x, y + 0.2 * np.sin(x + t), z)"
     if name == "length_func":
@@ -193,6 +195,9 @@ def classify(name: str, default: Any, annotation: str) -> dict:
         return {"kind": "rate_func"}
     if name in PATH_PARAMS:
         return {"kind": "path"}
+    if name == "path_func":  # how points travel: manim's own path functions (manim.utils.paths)
+        return {"kind": "choice", "options": ["straight_path()", "path_along_arc(PI / 2)", "path_along_arc(-PI / 2)",
+                                              "clockwise_path()", "counterclockwise_path()"]}
     if ann.startswith("type[") or "| type[" in ann:
         return {"kind": "choice", "options": _class_options(name, [ns[n] for n in names if isinstance(ns.get(n), type)])}
     if "Resampling" in ann:
@@ -982,7 +987,49 @@ def build(extra_namespace: dict[str, Any] | None = None) -> dict:
         "rate_samples": rate_samples(),
         "methods": COMMON_METHODS,
         "scene_bases": ["Scene", "MovingCameraScene", "ZoomedScene", "ThreeDScene", "VectorScene", "LinearTransformationScene"],
+        "scene_methods": {name: scene_methods(cls) for name, cls in namespace.items()
+                          if isinstance(cls, type) and issubclass(cls, m.Scene) and not name.startswith(("_", "OpenGL"))},
     }
+
+
+# Scene machinery: what manim itself calls while rendering, or what reads state instead of changing the scene.
+_SCENE_INTERNALS = ("get_", "is_", "should_", "on_", "mouse_", "check_", "compile_", "update_", "validate_", "restructure_",
+                    "interact", "embed", "interactive_embed", "render", "setup", "tear_down", "construct", "begin_animations",
+                    "play_internal", "set_key_function", "add_mobjects_from_animations", "wait_until_ready")
+
+
+def scene_methods(cls: type) -> list[str]:
+    """Methods of a Scene class that a construct() statement can call: self.play, self.wait, self.next_section,
+    self.add_sound, ThreeDScene.move_camera… (manim's own rendering machinery left out)."""
+    out = []
+    for n in dir(cls):
+        if n.startswith("_") or n.startswith(_SCENE_INTERNALS):
+            continue
+        attr = inspect.getattr_static(cls, n, None)
+        if isinstance(attr, (property, type, classmethod, staticmethod)) or not callable(getattr(cls, n, None)):
+            continue
+        out.append(n)
+    return out
+
+
+def _target_entry(cls: type) -> dict:
+    """The animated object of an Animation class, as a parameter: one mobject, several (FadeIn(*mobjects)),
+    animations (AnimationGroup) or nothing (Wait)."""
+    kind = target_kind(cls)
+    entry = {"name": "target", "label": "target", "kind": {"mobject": "mobject", "mobjects": "mobjects"}.get(kind, kind),
+             "default": "", "required": kind in ("mobject", "mobjects"), "annotation": "", "from": "", "accepts": []}
+    try:
+        params = list(inspect.signature(cls.__init__).parameters.values())[1:]
+    except (TypeError, ValueError):
+        return entry
+    name = target_param(cls)
+    p = next((q for q in params if q.name == name or (kind == "mobjects" and q.kind is q.VAR_POSITIONAL)), None)
+    if p is not None:
+        ann = _ann_str(p)
+        entry["annotation"] = ann
+        entry["accepts"] = _accepts(_names_in(ann)) if ann else []
+        entry["doc"] = _help(p.name, param_docs(cls), True)
+    return entry
 
 
 def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes: dict[str, str] | None = None) -> dict:
@@ -996,6 +1043,15 @@ def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes
     ns = dict(vars(m))
     if namespace:
         ns.update(namespace)
+    if expr == "animate":
+        # target.animate(**kwargs): manim sets each keyword on the animation it builds, a _MethodAnimation, which
+        # is a MoveToTarget (a Transform) whose target is the object after the methods.
+        from manim.animation.transform import _MethodAnimation
+
+        params = class_params(m.MoveToTarget, skip_first=True)
+        return {"name": expr, "params": params, "doc": "Animates the methods called after .animate, from how the object is to how "
+                "it is after them.", "animation": True, "vector": True, "returns": "",
+                "target": {**_target_entry(_MethodAnimation), "kind": "mobject"}}
     target = None
     is_anim = False
     if "." in expr:
@@ -1012,6 +1068,8 @@ def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes
         if issubclass(target, m.Mobject):
             out["methods"] = methods_of(target)
             out["factories"] = factories_of(target)
+        if is_anim:
+            out["target"] = _target_entry(target)
         return out
     if callable(target):
         params = []

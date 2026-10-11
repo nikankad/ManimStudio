@@ -16,6 +16,8 @@ export interface SceneObject {
   eq?: { parts: EqPart[] }; // equation split into terms
   param?: ParamMeta; // a ValueTracker used as a named parameter
   instance?: InstanceRef; // part of an inserted construction
+  after?: string; // created right after this timeline step (as in the imported code); none: at the top of construct()
+  comment?: string; // comment lines written above it in the code
 }
 
 /** Slider bounds of a parameter (a ValueTracker object; its value is args["*"]). */
@@ -72,14 +74,14 @@ type LinkSpec =
 
 export type LinkKind = Link['kind'];
 
-/** Reusable construction: objects + clips + exposed inputs (mathengine/starters.py). */
+/** Reusable construction: objects + timeline steps + exposed inputs (mathengine/starters.py). */
 export interface Template {
   id: string;
   name: string;
   description?: string;
   builtin?: boolean;
   objects: SceneObject[];
-  clips: Partial<Clip>[]; // relative start, targets by template-local name
+  timeline: Step[]; // inserted at the playhead, targets by template-local name
   inputs: TemplateInput[];
 }
 
@@ -91,32 +93,37 @@ export interface TemplateInput {
   targets: { object: string; key?: string }[];
 }
 
-export interface Track {
+/**
+ * The timeline is construct()'s statements, in order (mathengine/timeline.py). Each step is one manim statement:
+ * play: self.play(*anims, **args) · wait: self.wait(**args) · add / remove: self.add(*targets) · code: any Python ·
+ * couple / uncouple: switch constructions · call: self.<method>(**args), any other method of the scene
+ * (next_section, add_sound, move_camera…). A step starts when the one before it ends.
+ */
+export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call';
+
+export interface Step {
   id: string;
-  name: string;
-  hidden?: boolean; // track output off: clips are skipped
-  locked?: boolean;
+  kind: StepKind;
+  disabled?: boolean; // left out of the code
+  comment?: string; // comment lines above it in the code
+  anims?: Anim[]; // play
+  args?: Args; // play: self.play keyword arguments (run_time, rate_func…); wait: duration…; call: the method's arguments
+  method?: string; // call: the scene method
+  code?: string; // code
+  label?: string; // code: name shown on the timeline
+  targets?: string[]; // add / remove / couple / uncouple
+  duration?: number; // couple: glide back into place over this time
 }
 
-export type ClipKind = 'anim' | 'code' | 'hold' | 'add' | 'remove' | 'couple' | 'uncouple';
-
-export interface Clip {
+/** An animation: cls(target, **args), target.animate(**args).chain, or a composition of `anims`. */
+export interface Anim {
   id: string;
-  kind: ClipKind;
-  track: string;
-  start: number; // seconds
-  duration: number; // seconds (0 for add/remove)
+  cls: string; // "Create", ... or "animate"
+  target: string;
+  args: Args;
+  chain?: string; // cls === "animate"
+  anims?: Anim[]; // AnimationGroup, LaggedStart, Succession…: the child animations
   disabled?: boolean;
-  // anim
-  cls?: string; // "Create", ... or "animate"
-  target?: string;
-  args?: Args;
-  chain?: string; // for cls === "animate"
-  // code
-  code?: string;
-  label?: string;
-  // add / remove / couple / uncouple (couple: a duration glides the objects back into place)
-  targets?: string[];
   // TransformTerms: destination equation (object id) and term pairs [source part id, target part id]
   terms?: { to: string; pairs: [string, string][] };
 }
@@ -129,12 +136,11 @@ export interface Marker {
 
 export interface SceneDoc {
   version: number;
-  scene: { name: string; base: string };
+  scene: { name: string; base: string; members?: string; members_after?: string }; // members: other code of the class
   config: { pixel_width: number; pixel_height: number; frame_rate: number; background_color: string };
   header: string;
   objects: SceneObject[];
-  tracks: Track[];
-  clips: Clip[];
+  timeline: Step[];
   markers?: Marker[];
   constructions?: Template[];
 }
@@ -184,6 +190,7 @@ export interface Catalog {
   rate_funcs: string[];
   methods: string[];
   scene_bases: string[];
+  scene_methods: Record<string, string[]>; // methods a statement can call, per Scene class
   latex: boolean;
   latex_hint?: string; // how to install LaTeX on this OS
   ffmpeg: boolean;
@@ -199,12 +206,13 @@ export interface Signature {
   methods?: string[]; // chainable methods (mobject classes)
   factories?: string[]; // methods that build a new mobject from this one (axes.plot)
   returns?: string; // mobject class this expression builds
+  target?: Param & { kind: ParamKind | 'animations' | 'none' }; // animations: what they animate
 }
 
 export interface RunError {
   message: string;
   line: number | null;
-  kind: 'object' | 'clip' | 'header' | null;
+  kind: 'object' | 'step' | 'anim' | 'header' | null;
   id: string | null;
   trace: string;
 }
@@ -227,12 +235,13 @@ export interface Diagnostic {
   id: string;
   level: 'error' | 'warning';
   message: string;
-  kind: 'object' | 'clip';
+  kind: 'object' | 'anim';
 }
 
 export interface RunResult {
   duration: number;
-  steps: { id: string; start: number; end: number }[];
+  steps: { id: string; start: number; end: number }[]; // when each statement runs (measured by manim)
+  anims: { id: string; start: number; end: number }[]; // when manim runs each animation
   objects: ObjInfo[];
   camera: { center: [number, number]; width: number; height: number } | null;
   plays: number;
@@ -256,7 +265,7 @@ export interface Job {
 export type Selection =
   | { kind: 'object'; id: string; terms?: string[] } // terms: selected equation parts
   | { kind: 'objects'; ids: string[] }
-  | { kind: 'clips'; ids: string[] }
+  | { kind: 'clips'; ids: string[] } // timeline steps and animations (by id)
   | null;
 
 /** Canvas tool. */

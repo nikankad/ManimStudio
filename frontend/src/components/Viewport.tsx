@@ -698,7 +698,8 @@ export function Viewport() {
   return (
     <div className="monitor">
       <div className="monitor-title">
-        <span>Program: {doc.scene.name}</span>
+        <span className="tab-btn on">Program: {doc.scene.name}</span>
+        <button className="ghost small tab-btn" title="The same scene as manim code" onClick={() => setState({ centerTab: 'code' })}>Code</button>
         {record && <span className="rec-badge">● REC</span>}
         <div className="tools" role="toolbar" aria-label="Drawing tools" data-tour="tools">
           {TOOLS.map((t) => (
@@ -838,8 +839,8 @@ export function Viewport() {
           <div className={`error-bar ${!error ? 'warn' : ''}`} onClick={() => {
             if (!error) return;
             if (error.kind === 'object' && error.id) setState({ selection: { kind: 'object', id: error.id } });
-            if (error.kind === 'clip' && error.id) setState({ selection: { kind: 'clips', ids: [error.id] } });
-            if (error.kind === 'header') setState({ panel: 'code' });
+            if ((error.kind === 'step' || error.kind === 'anim') && error.id) setState({ selection: { kind: 'clips', ids: [error.id] } });
+            if (error.kind === 'header') setState({ centerTab: 'code' });
           }}>
             {error ? <><b>Error</b> {error.message}</> : <><b>{diag!.level === 'error' ? 'Construction error' : 'Note'}</b> {diag!.message}</>}
           </div>

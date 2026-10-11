@@ -4,14 +4,15 @@
 // objects. It is either an independent copy (no ties to the template afterwards) or linked:
 // each of its objects records `instance` = { template, instance, local, linked, inputs }, and
 // "Update instances" regenerates linked instances from the current template, keeping their ids
-// and names (so timeline clips stay attached) and their own input values.
+// and names (so their animations on the timeline stay attached) and their own input values.
 
 import { api } from './api';
 import { linkSources, objectDeps, remapLink, renameRefs, sortByDependencies, standsAlone } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { pyQuote, renameIdentifiers } from './pyparse';
-import { chooseTrack, frameSnap, getState, selectObjects, setState, toast, uid, uniqueName, updateDoc } from './store';
-import type { Clip, Pt, SceneDoc, SceneObject, Template, TemplateInput } from './types';
+import { frameSnap, getState, placeStepAt, selectObjects, setState, toast, uid, uniqueName, updateDoc } from './store';
+import { cloneStep, forgetObjects, layout, stepEstimate, targetsOf, walk } from './timeline';
+import type { Pt, SceneDoc, SceneObject, Step, Template, TemplateInput } from './types';
 
 /** Every template available: the project's own, the user's library, and the starters. */
 export function allTemplates(): Template[] {
@@ -86,39 +87,46 @@ function build(d: SceneDoc, t: Template, values: Record<string, string>, offset:
 export function insertTemplate(t: Template, values: Record<string, string>, linked: boolean, offset: Pt = [0, 0]) {
   const inst = uid('i');
   const newIds: string[] = [];
-  const at = frameSnap(getState().time);
+  let start = frameSnap(getState().time);
+  let intro = 0;
   updateDoc((d) => {
     const { objs, nameMap, hidden } = build(d, t, values, offset, inst, linked);
     d.objects.push(...objs);
     sortByDependencies(d);
     newIds.push(...objs.map((o) => o.id));
     const hiddenNames = new Set(objs.filter((o) => hidden.has(o.id)).map((o) => o.name));
-    for (const c of t.clips) addClip(d, c, nameMap, hiddenNames, at);
+    const steps = (t.timeline ?? []).map((s) => instanceStep(s, nameMap, hiddenNames)).filter((s): s is Step => !!s);
+    if (steps.length) start = placeStepAt(d, steps);
+    // Show the construction once its intro has played (the first animation of a parameter comes after it).
+    const first = steps.findIndex((s) => [...walk(s.anims)].some((a) => a.cls === 'animate' && a.chain?.includes('set_value')));
+    intro = steps.slice(0, first < 0 ? steps.length : first).reduce((acc, s) => acc + stepEstimate(s), 0);
   });
   selectObjects(newIds);
-  // Show the construction once its intro clips have played (the first animation of a parameter starts after them).
-  const intro = t.clips.filter((c) => !(c.cls === 'animate' && c.chain?.includes('set_value')));
-  const end = Math.max(0, ...intro.map((c) => (c.start ?? 0) + (c.duration ?? 0)));
-  setState({ time: at + end });
+  setState({ time: frameSnap(start + intro) });
   toast(`Inserted ${t.name}${linked ? ' (linked to its template)' : ''}`);
 }
 
-function addClip(d: SceneDoc, c: Partial<Clip>, nameMap: Map<string, string>, hidden: Set<string>, at: number) {
-  const clip = { ...structuredClone(c), id: uid('c') } as Clip;
-  clip.args ??= {};
-  clip.start = Math.max(0, at + (c.start ?? 0));
-  clip.duration = c.duration ?? (c.kind === 'anim' || c.kind === 'hold' || c.kind === 'code' ? 1 : 0);
-  if (clip.target) {
-    clip.target = nameMap.get(clip.target) ?? clip.target;
-    if (hidden.has(clip.target)) return;
+/** A template step for an instance: new ids, the instance's object names, hidden objects left out. */
+function instanceStep(s: Step, nameMap: Map<string, string>, hidden: Set<string>): Step | null {
+  const c = cloneStep(s);
+  const rename = (n: string) => renameIdentifiers(n, nameMap);
+  if (c.targets) {
+    c.targets = c.targets.map((n) => nameMap.get(n) ?? n).filter((n) => !hidden.has(n));
+    if (!c.targets.length) return null;
   }
-  if (clip.targets) {
-    clip.targets = clip.targets.map((n) => nameMap.get(n) ?? n).filter((n) => !hidden.has(n));
-    if (!clip.targets.length) return;
+  if (c.code) c.code = rename(c.code);
+  if (c.anims) {
+    const keep = (list: NonNullable<Step['anims']>): NonNullable<Step['anims']> => list.filter((a) => {
+      a.target = a.target ? rename(a.target) : a.target;
+      if (a.chain) a.chain = rename(a.chain);
+      for (const k in a.args) a.args[k] = rename(a.args[k]);
+      if (a.anims) a.anims = keep(a.anims);
+      return !(a.target && targetsOf({ ...a, anims: undefined }).every((n) => hidden.has(n))) && !(a.anims && !a.anims.length);
+    });
+    c.anims = keep(c.anims);
+    if (!c.anims.length) return null;
   }
-  if (clip.chain) clip.chain = renameIdentifiers(clip.chain, nameMap);
-  clip.track = chooseTrack(d, clip.start, clip.duration, { target: clip.target });
-  d.clips.push(clip);
+  return c;
 }
 
 /** Selected objects plus everything they're built from (a construction must be self-contained). */
@@ -150,9 +158,17 @@ export function suggestInputs(objs: SceneObject[]): (TemplateInput & { use: bool
 /** Make a template from objects (their ids become the template-local ids). */
 export function makeTemplate(doc: SceneDoc, objs: SceneObject[], name: string, description: string, inputs: TemplateInput[]): Template {
   const names = new Set(objs.map((o) => o.name));
-  const clips = doc.clips.filter((c) => (c.target && names.has(c.target)) || (c.targets?.length && c.targets.every((t) => names.has(t))));
-  const t0 = clips.length ? Math.min(...clips.map((c) => c.start)) : 0;
   const ids = new Set(objs.map((o) => o.id));
+  // The statements about these objects, in order: their animations, and adding or switching them.
+  const ours = (a: { target: string; anims?: unknown[] }) => a.anims !== undefined || (!!a.target && a.target.split(',').every((n) => names.has(n.trim())));
+  const steps: Step[] = [];
+  for (const s of doc.timeline) {
+    if (s.disabled) continue;
+    if (s.kind === 'play') {
+      const anims = structuredClone(s.anims ?? []).filter((a) => ours(a) && targetsOf(a).every((n) => names.has(n)) && !a.disabled);
+      if (anims.length) steps.push({ ...structuredClone(s), anims });
+    } else if (s.targets?.length && s.targets.every((n) => names.has(n))) steps.push(structuredClone(s));
+  }
   const outside = objs.flatMap((o) => linkSources(o.link)).filter((s) => !ids.has(s));
   if (outside.length) throw new Error('The construction refers to objects outside it');
   return {
@@ -164,12 +180,7 @@ export function makeTemplate(doc: SceneDoc, objs: SceneObject[], name: string, d
       delete c.instance;
       return c;
     }),
-    clips: clips.map((c) => {
-      const { id: _id, track: _track, ...rest } = structuredClone(c);
-      void _id;
-      void _track;
-      return { ...rest, start: Math.round((c.start - t0) * 1000) / 1000 };
-    }),
+    timeline: steps,
     inputs,
   };
 }
@@ -234,7 +245,7 @@ export function syncInstances(templateId: string) {
       const fresh = new Map(objs.map((o) => [o.id, o]));
       d.objects = d.objects.filter((o) => !old.includes(o) || fresh.has(o.id)).map((o) => fresh.get(o.id) ?? o);
       d.objects.push(...objs.filter((o) => !old.some((x) => x.id === o.id)));
-      d.clips = d.clips.filter((c) => !gone.includes(c.target ?? ''));
+      forgetObjects(d, layout(d, getState().timeline), new Set(gone), new Set(old.filter((o) => gone.includes(o.name)).map((o) => o.id)));
     }
     sortByDependencies(d);
   });

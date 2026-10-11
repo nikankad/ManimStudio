@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type FunctionAnalysis } from '../api';
 import { dependentsOf, geoType, literal, RESERVED_NAMES, sortByDependencies } from '../construct';
 import {
-  chooseTrack, createParam, deleteObjects, emptyDoc, frameSnap, getState, params, selectObjects, setState, toast, uid, uniqueName, updateDoc, useStore,
+  createParam, placeAt, deleteObjects, emptyDoc, frameSnap, getState, params, selectObjects, setState, toast, uid, uniqueName, updateDoc, useStore,
 } from '../store';
 import { closure, defaultInputs, insertTemplate, makeTemplate, saveTemplate, suggestInputs } from '../templates';
 import type { Pt, SceneDoc, SceneObject, Template, TemplateInput } from '../types';
 import { Modal } from './Modal';
+import { newAnim } from '../timeline';
 import { ColorField, Field } from './ParamField';
 
 const close = () => setState({ panel: null, panelData: null });
@@ -65,11 +66,8 @@ export function GraphBuilder() {
     let axes = d.objects.find((o) => o.id === axesId);
     let t = start;
     const show = (target: string) => {
-      if (intro === 'add') d.clips.push({ id: uid('c'), kind: 'add', track: chooseTrack(d, t, 0), start: t, duration: 0, targets: [target] });
-      else {
-        d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, t, 1), start: t, duration: 1, cls: 'Create', target, args: {} });
-        t += 1;
-      }
+      if (intro === 'add') d.timeline.push({ id: uid('s'), kind: 'add', targets: [target] });
+      else t = placeAt(d, [newAnim('Create', target)], { start: t }) + 1;
     };
     if (!axes) {
       axes = {
@@ -120,7 +118,7 @@ export function GraphBuilder() {
       const existing = doc.objects.find((o) => o.id === axesId);
       if (existing) {
         pd.objects.push(structuredClone(existing));
-        pd.clips.push({ id: uid('c'), kind: 'add', track: 't1', start: 0, duration: 0, targets: [existing.name] });
+        pd.timeline.push({ id: uid('s'), kind: 'add', targets: [existing.name] });
       }
       addGraph(pd, 0, 'add');
       setPreview((p) => ({ ...p, busy: true }));

@@ -106,10 +106,56 @@ def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None =
                     if not c.get("disabled") and c["id"] not in skip]
         expr = f"{cls}({_call_args(args, children)})"
     elif (kw_target := _target_keyword(cls)) and target:  # ApplyMatrix(matrix, mobject): the target isn't the first argument
-        expr = f"{cls}({_call_args({**args, kw_target: target})})"
+        expr = f"{cls}({_target_after(cls, kw_target, target, args)})"
     else:
         expr = f"{cls}({_call_args(args, [target], None, _leading(cls, skip=1))})"
     return f"self._me_tag({expr}, {anim['id']!r})" if tag else expr
+
+
+def _method_leading(doc: dict | None, method: str) -> tuple[str, ...]:
+    """Parameters of a scene method declared before ``*args``; they must stay positional."""
+    try:
+        import inspect
+
+        from .catalog import manim
+
+        base = ((doc or {}).get("scene") or {}).get("base") or "Scene"
+        cls = next((c for c in (getattr(manim(), b.strip(), None) for b in base.split(",")) if isinstance(c, type)), manim().Scene)
+        params = list(inspect.signature(getattr(cls, method)).parameters.values())[1:]
+    except Exception:
+        return ()
+    out = []
+    for p in params:
+        if p.kind is p.VAR_POSITIONAL:
+            return tuple(out)
+        if p.kind is not p.POSITIONAL_OR_KEYWORD:
+            break
+        out.append(p.name)
+    return ()
+
+
+def _target_after(cls: str, kw_target: str, target: str, args: dict) -> str:
+    """Arguments of an animation whose target comes after other parameters, all passed positionally up to the
+    target: ``LaggedStartMap(FadeOut, dots)`` (manim's Animation.__new__ takes its first argument as the mobject,
+    so ``LaggedStartMap(FadeOut, mobject=dots)`` fails)."""
+    try:
+        from .catalog import manim
+        import inspect
+
+        names = [p.name for p in list(inspect.signature(getattr(manim(), cls).__init__).parameters.values())[1:]
+                 if p.kind is p.POSITIONAL_OR_KEYWORD]
+    except Exception:
+        names = []
+    if kw_target not in names:
+        return _call_args({**args, kw_target: target})
+    rest = dict(args)
+    lead = []
+    for i, name in enumerate(names[:names.index(kw_target)]):
+        val = str(rest.pop(name, "") or (rest.pop("*", "") if i == 0 else "")).strip()
+        if not val:
+            return _call_args({**args, kw_target: target})
+        lead.append(val)
+    return _call_args(rest, lead + [target])
 
 
 def _leading(ctor: str, skip: int = 0) -> tuple[str, ...]:
@@ -174,12 +220,17 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
             shown.update(step.get("targets") or [])
         elif kind == "remove":
             shown.difference_update(step.get("targets") or [])
+        elif kind == "call":  # bring_to_front, add_foreground_mobjects…: trust it with the objects it names
+            shown.update(w for v in (step.get("args") or {}).values() for w in _WORD.findall(_STRING.sub("", str(v))))
         elif kind == "code":
-            for added in re.findall(r"self\.add\(([^)]*)\)", step.get("code") or ""):
-                shown.update(n.strip() for n in added.split(","))
+            # Code can show anything (loops, self.add of groups…): trust it with every object it mentions.
+            shown.update(_WORD.findall(_STRING.sub("", step.get("code") or "")))
         if kind != "play":
             continue
         anims = _playable(step, skip)
+        for a in timeline.walk(anims):  # animations built by an expression (LaggedStart(*[FadeIn(d) for d in dots]))
+            if (a.get("args") or {}).get("*"):
+                shown.update(_WORD.findall(_STRING.sub("", a["args"]["*"])))
         seen: dict[str, str] = {}
         for a in anims:
             label = ".animate" if a.get("cls") == "animate" else a.get("cls")
@@ -285,24 +336,46 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     emit("")
     emit("")
     emit(f"class {scene_name}({base}):")
+    members = (scene.get("members") or "").strip("\n")
+    if members:
+        emit(members, ("header", "members"), 4)
+        emit("")
     emit("def construct(self):", indent=4)
     B = 8
     start_len = len(w.lines)
     if plan.uses_constraints:
         emit(f"{plan.constraints_var} = Constraints(self)", None, B)
 
-    for obj in doc.get("objects", []):
-        ref = ("object", obj["id"])
-        name = obj["name"]
-        if obj["id"] in plan.lines:
-            for line in plan.lines[obj["id"]]:
-                emit(line, ref, B)
-            for line in plan.after.get(obj["id"], []):
-                emit(line, ref, B)
-            if preview:
-                emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
-            continue
-        emit(f"{name} = {(obj.get('ctor') or '').strip()}({_call_args(obj.get('args'), before_star=_leading((obj.get('ctor') or '').strip()))})", ref, B)
+    # Objects are created where the code creates them: at the top, or right after the step they follow.
+    full = doc.get("timeline") or []
+    groups = placement_groups(doc)
+    for obj in groups.get(-1, []):
+        _emit_object(obj, emit, B, preview, plan)
+    for i, step in enumerate(full):
+        if not step.get("disabled"):
+            _emit_step(step, emit, B, preview, doc, plan, skip)
+        for obj in groups.get(i, []):
+            _emit_object(obj, emit, B, preview, plan)
+
+    if len(w.lines) == start_len:
+        emit("pass", None, B)
+    after = (scene.get("members_after") or "").strip("\n")
+    if after:
+        emit("")
+        emit(after, ("header", "members"), 4)
+    return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
+
+
+def _emit_object(obj: dict, emit, B: int, preview: bool, plan: construct.Plan) -> None:
+    ref = ("object", obj["id"])
+    name = obj["name"]
+    _emit_comment(obj, emit, B, ref)
+    if obj["id"] in plan.lines:
+        for line in plan.lines[obj["id"]]:
+            emit(line, ref, B)
+    else:
+        ctor = (obj.get("ctor") or "").strip()
+        emit(f"{name} = {ctor}({_call_args(obj.get('args'), before_star=_leading(ctor))})", ref, B)
         chain = _join_chain(obj.get("chain", ""))
         if chain:
             emit(f"{name}{chain}", ref, B)
@@ -317,17 +390,88 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         pos = obj.get("pos")
         if pos is not None:
             emit(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0]))", ref, B)
-        for line in plan.after.get(obj["id"], []):
-            emit(line, ref, B)
-        if preview:
-            emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
+    for line in plan.after.get(obj["id"], []):
+        emit(line, ref, B)
+    if preview:
+        emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
 
-    for step in steps:
-        _emit_step(step, emit, B, preview, doc, plan, skip)
 
-    if len(w.lines) == start_len:
-        emit("pass", None, B)
-    return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
+def _emit_comment(elem: dict, emit, B: int, ref: tuple[str, str]) -> None:
+    for line in (elem.get("comment") or "").splitlines():
+        line = line.strip()
+        if line:
+            emit(line if line.startswith("#") else "# " + line, ref, B)
+
+
+_WORD = re.compile(r"\b[A-Za-z_]\w*\b")
+_STRING = re.compile(r"""(?:[rRbBuUfF]{0,2})("{3}[\s\S]*?"{3}|'{3}[\s\S]*?'{3}|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')""")
+
+
+def names_in(src: str) -> set[str]:
+    """Identifiers a Python expression reads (not the words inside its string literals)."""
+    import ast
+
+    try:
+        return {n.id for n in ast.walk(ast.parse(src.strip(), mode="eval")) if isinstance(n, ast.Name)}
+    except SyntaxError:
+        return set(_WORD.findall(_STRING.sub("", src)))
+
+
+def placement_groups(doc: dict) -> dict[int, list[dict]]:
+    """The objects created at each place (see ``placement``), each after the objects it is built from."""
+    at, deps = _placement(doc)
+    by_id = {o["id"]: o for o in doc.get("objects", [])}
+    out: dict[int, list[dict]] = {}
+    done: set[str] = set()
+
+    def visit(oid: str, stack: set[str]) -> None:
+        if oid in done or oid in stack:
+            return
+        stack.add(oid)
+        for d in sorted(deps[oid], key=list(by_id).index):
+            if at[d] == at[oid]:
+                visit(d, stack)
+        done.add(oid)
+        out.setdefault(at[oid], []).append(by_id[oid])
+
+    for oid in by_id:
+        visit(oid, set())
+    return out
+
+
+def placement(doc: dict) -> dict[str, int]:
+    """Where each object is created: -1 at the top of construct(), i right after timeline step i.
+
+    An object follows the step in its ``after`` (where the imported code created it), and never comes before
+    an object it is built from.
+    """
+    return _placement(doc)[0]
+
+
+def _placement(doc: dict) -> tuple[dict[str, int], dict[str, set[str]]]:
+    index = {s["id"]: i for i, s in enumerate(doc.get("timeline") or [])}
+    objects = doc.get("objects", [])
+    by_name = {o["name"]: o["id"] for o in objects}
+    ids = {o["id"] for o in objects}
+    at = {o["id"]: index.get(o.get("after") or "", -1) for o in objects}
+    deps: dict[str, set[str]] = {}
+    for o in objects:
+        words = names_in(o.get("ctor") or "") | names_in("__me__" + _join_chain(o.get("chain") or ""))
+        for v in (o.get("args") or {}).values():
+            words |= names_in(f"__me__({v})")
+        found = {by_name[w] for w in words if w in by_name}
+        found |= {s for s in construct.link_sources(o) if s in ids}
+        found.discard(o["id"])
+        deps[o["id"]] = found
+    changed = True
+    while changed:
+        changed = False
+        for o in objects:
+            best = max([at[o["id"]], *(at[d] for d in deps[o["id"]])])
+            if best != at[o["id"]]:
+                at[o["id"]] = best
+                changed = True
+    return at, deps
 
 
 def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None = None, preview: bool = False,
@@ -356,6 +500,11 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
     if kind in ("add", "remove"):
         targets = ", ".join(t for t in step.get("targets") or [] if t)
         return [(f"self.{kind}({targets})", ref)] if targets else []
+    if kind == "call":
+        method = (step.get("method") or "").strip()
+        if not IDENT.match(method):
+            return []
+        return [(f"self.{method}({_call_args(step.get('args'), before_star=_method_leading(doc, method))})", ref)]
     if kind == "code":
         body = textwrap.dedent(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []
@@ -372,6 +521,8 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
 def _emit_step(step: dict, emit, B: int, preview: bool, doc: dict, plan: construct.Plan, skip: set[str]) -> None:
     lines = statement(step, doc, plan, preview, skip)
     ref = ("step", step["id"])
+    if lines:
+        _emit_comment(step, emit, B, ref)
     if preview:
         emit(f"self._me_step({step['id']!r})", ref, B)
     for text, r in lines:

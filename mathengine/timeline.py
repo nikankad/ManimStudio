@@ -9,6 +9,8 @@ what the editor shows:
   ``args`` are ``self.play`` keyword arguments: manim sets them on every animation of the call.
 * ``wait``: ``self.wait(**args)``.
 * ``add`` / ``remove``: ``self.add(*targets)`` / ``self.remove(*targets)``.
+* ``call``: another method of the scene, ``self.<method>(**args)``: ``self.next_section(...)``,
+  ``self.add_sound(...)``, ``self.bring_to_front(...)``, ``ThreeDScene.move_camera(...)``…
 * ``code``: any Python, run in place.
 * ``couple`` / ``uncouple``: switch constructions (see construct.py) on or off.
 
@@ -94,6 +96,11 @@ def add(*targets: str) -> dict:
 
 def remove(*targets: str) -> dict:
     return {"kind": "remove", "targets": list(targets)}
+
+
+def call(method: str, **args) -> dict:
+    """``self.<method>(**args)``: a scene method other than play / wait / add / remove."""
+    return {"kind": "call", "method": method, "args": {k: str(v) for k, v in args.items()}}
 
 
 def switch(kind: str, *targets: str, duration: float | None = None) -> dict:

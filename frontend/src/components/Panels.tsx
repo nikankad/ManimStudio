@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
   addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
-  pasteClips, redo, sequenceEnd, setPlaying, setState, toast, undo, updateDoc, useStore,
+  pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
 import type { Job } from '../types';
@@ -15,6 +15,7 @@ import { NewProjectDialog } from './Home';
 
 /** Project files: .manimstudio, and .mathengine from versions before the rename. */
 const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
+const PYTHON_FILES = 'manim code (*.py)';
 const PROJECT_EXT = /\.(manimstudio|mathengine)$/;
 
 export async function saveProject(saveAs = false) {
@@ -37,13 +38,23 @@ export async function openPath(path: string) {
   try {
     const res = await api.openProject(path);
     loadDoc(res.doc, res.path);
+    if (res.imported) {
+      setState({ centerTab: 'code', dirty: true });
+      toast(`Opened ${res.imported.split(/[\\/]/).pop()} as a new project${res.notes?.length ? `. ${res.notes.length} statement${res.notes.length === 1 ? ' is' : 's are'} kept as code` : ''}`);
+    }
   } catch (e) {
     toast(`Couldn't open ${path}: ${e instanceof Error ? e.message : e}`);
   }
 }
 
 export async function openProject() {
-  const path = await askPath('open', '', [PROJECT_FILES], 'Open project path:');
+  const path = await askPath('open', '', [PROJECT_FILES, PYTHON_FILES], 'Open project (or manim .py file) path:');
+  if (path) await openPath(path);
+}
+
+/** Open a manim .py file as a new project: its code becomes the timeline. */
+export async function importManimFile() {
+  const path = await askPath('open', '', [PYTHON_FILES], 'manim .py file path:');
   if (path) await openPath(path);
 }
 
@@ -76,12 +87,22 @@ export function Toolbar() {
       <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
         <PreviewButton />
-        <button onClick={() => setState({ panel: 'code' })}>&lt;/&gt; Code</button>
+        <CodeToggle />
         <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
         <button className="primary" onClick={() => setState({ panel: 'export' })}>Export video</button>
       </span>
       <button data-tour="help" className="ghost help-btn" title="Guide and tour (? or F1)" onClick={() => setState({ panel: 'help', panelData: null })}>? Help</button>
     </header>
+  );
+}
+
+/** Switch the center panel between the canvas and the code (they show the same scene). */
+function CodeToggle() {
+  const tab = useStore((s) => s.centerTab);
+  return (
+    <button className={tab === 'code' ? 'on' : ''} title="The scene as manim code: edit it, or paste a manim file, and the timeline follows" onClick={() => setState({ centerTab: tab === 'code' ? 'program' : 'code' })}>
+      &lt;/&gt; Code
+    </button>
   );
 }
 
@@ -122,7 +143,6 @@ function poll(id: string, onUpdate: (j: Job) => boolean) {
 
 export function Panels() {
   const panel = useStore((s) => s.panel);
-  if (panel === 'code') return <CodePanel />;
   if (panel === 'settings') return <SettingsPanel />;
   if (panel === 'export') return <ExportPanel />;
   if (panel === 'graph') return <GraphBuilder />;
@@ -132,37 +152,6 @@ export function Panels() {
   if (panel === 'save-construction') return <SaveConstruction />;
   if (panel === 'new-project') return <NewProjectDialog />;
   return null;
-}
-
-function CodePanel() {
-  const doc = useStore((s) => s.doc);
-  const [code, setCode] = useState('');
-  useEffect(() => {
-    api.code(doc).then((r) => setCode(r.code)).catch((e) => toast(String(e)));
-  }, [doc]);
-  return (
-    <Modal title="Code" wide>
-      <div className="code-grid">
-        <div>
-          <h4>Header (module level)</h4>
-          <p className="muted small">Imports, helper functions and custom Mobject subclasses. Classes defined here show up in the library.</p>
-          <Field multiline className="mono code-input tall" value={doc.header} placeholder={'from manim_slides import Slide\n\nclass Pendulum(VGroup):\n    ...'} onChange={(v) => updateDoc((d) => void (d.header = v), 'header')} />
-        </div>
-        <div>
-          <h4>
-            Generated manim code{' '}
-            <button className="ghost small" onClick={() => navigator.clipboard.writeText(code).then(() => toast('Copied'))}>Copy</button>
-            <button className="ghost small" onClick={async () => {
-              const p = await askPath('save', 'scene.py', ['Python (*.py)'], 'Save .py to path:');
-              if (p) toast(`Saved ${(await api.exportCode(getState().doc, p)).path}`);
-            }}>Save .py</button>
-          </h4>
-          <pre className="code-view">{code}</pre>
-          <p className="muted small">Run it directly with <code>manim -pqh scene.py {doc.scene.name}</code></p>
-        </div>
-      </div>
-    </Modal>
-  );
 }
 
 export const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
@@ -350,10 +339,8 @@ export function useShortcuts() {
       else if (e.key === '=' || e.key === '+') zoomBy(1.4);
       else if (e.key === '-') zoomBy(1 / 1.4);
       else if (e.key === '\\') zoomToFit(document.querySelector('.tl-lanes')?.clientWidth);
-      else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') {
-        const ids = new Set(s.selection.ids);
-        updateDoc((d) => d.clips.filter((c) => ids.has(c.id)).forEach((c) => (c.disabled = !c.disabled)));
-      } else if (e.key === 'Escape') setState({ selection: null, panel: null });
+      else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') toggleDisabled(s.selection.ids);
+      else if (e.key === 'Escape') setState({ selection: null, panel: null });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

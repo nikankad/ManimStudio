@@ -7,7 +7,7 @@ import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geo
 import { countMeets } from '../intersect';
 import { fmtPt, freeShape, writeShape, type Shape } from '../geometry';
 import {
-  addClip, animateParam, coupleObjects, createParam, detachObjects, getState, params, recheckLatex, selectClips, selectObjects, setLink, setParamValue, setState,
+  addStep, animateParam, docLayout, coupleObjects, createParam, detachObjects, getState, params, recheckLatex, selectClips, selectObjects, setLink, setParamValue, setState,
   timecode, toast, uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { allTemplates, detachInstance, syncInstances, updateTemplateFromInstance } from '../templates';
@@ -141,20 +141,21 @@ const STATE_TEXT = {
 
 /** Couple / uncouple clips that switch this object on the timeline, and buttons to add them at the playhead. */
 function OverTime({ obj }: { obj: SceneObject }) {
-  const clips = useStore((s) => s.doc.clips);
+  const steps = useStore((s) => s.doc.timeline);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
   const time = useStore((s) => s.time);
-  const mine = clips.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(obj.name)).sort((a, b) => a.start - b.start);
+  const mine = steps.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(obj.name));
   return (
     <div className="fx-row wide-row">
       <span>over time</span>
       <div className="chips">
         {mine.map((c) => (
           <button key={c.id} className={`chip ${c.disabled ? 'off' : ''}`} title="Select the clip" onClick={() => selectClips([c.id])}>
-            {c.kind === 'couple' ? 'couple' : 'uncouple'} {timecode(c.start)}{c.kind === 'couple' && c.duration > 0 ? ` (glide ${Math.round(c.duration * 100) / 100}s)` : ''}
+            {c.kind === 'couple' ? 'couple' : 'uncouple'} {timecode(lay.steps.get(c.id)?.start ?? 0)}{c.kind === 'couple' && c.duration ? ` (glide ${Math.round(c.duration * 100) / 100}s)` : ''}
           </button>
         ))}
-        <button className="ghost small" title={`Add a clip that uncouples it at the playhead (${timecode(time)}): from then on it stays where it is and can be animated freely`} onClick={() => addClip('uncouple', { targets: [obj.name] })}>+ Uncouple at playhead</button>
-        <button className="ghost small" title={`Add a clip that couples it again at the playhead (${timecode(time)}); give the clip a duration to glide back into place`} onClick={() => addClip('couple', { targets: [obj.name] })}>+ Couple at playhead</button>
+        <button className="ghost small" title={`Add a clip that uncouples it at the playhead (${timecode(time)}): from then on it stays where it is and can be animated freely`} onClick={() => addStep('uncouple', { targets: [obj.name] })}>+ Uncouple at playhead</button>
+        <button className="ghost small" title={`Add a clip that couples it again at the playhead (${timecode(time)}); give the clip a duration to glide back into place`} onClick={() => addStep('couple', { targets: [obj.name] })}>+ Couple at playhead</button>
       </div>
     </div>
   );
@@ -475,7 +476,7 @@ export function ParamSection({ obj }: { obj: SceneObject }) {
           const v = Number(to), d = Number(dur);
           if (Number.isNaN(v) || !(d > 0)) return toast('Enter a number and a duration');
           animateParam(obj.name, v, d);
-        }}>Add clip</button>
+        }}>Add at playhead</button>
       </div>
       {users.length > 0 ? <p className="muted small">Used by {users.map((u) => u.name).join(', ')}.</p> : <p className="muted small">Not used yet. Use its name in expressions, e.g. <code>{obj.name}*x^2</code>.</p>}
     </section>

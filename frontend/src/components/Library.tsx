@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
 import {
-  addAnimation, addObject, coupleObjects, detachObjects, getState, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
+  addAnimation, addObject, addStep, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
   uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { syncInstances } from '../templates';
@@ -75,10 +75,24 @@ export function Library() {
           {!catalog && <div className="muted pad">Loading manim…</div>}
           <div className="scroll">
             {tab === 'animation' && !query && (
-              <div className="hint pad">Drag onto an object on the canvas (plays at the playhead) or onto any timeline track at any time. It targets the selected object.</div>
+              <div className="hint pad">Drag onto an object on the canvas (plays at the playhead) or onto a timeline track: dropped on a self.play it plays with it, dropped in a pause it starts there. It targets the selected object.</div>
             )}
             {tab === 'animation' && (
               <LibItem entry={{ name: 'animate', kind: 'animation', category: '', doc: 'mobject.animate.<method>(…) — animate any method call (shift, scale, set_color…)', bases: [], vector: true, starter: {}, featured: 0 }} onActivate={activate} label=".animate" />
+            )}
+            {tab === 'animation' && catalog && (!query || sceneCalls().some((m) => m.includes(query.toLowerCase()))) && (
+              <div className="group">
+                <div className="group-head" onClick={() => setOpen((o) => ({ ...o, __scene: !o.__scene }))} title="Other methods of the scene: a statement at the playhead">
+                  <span>{open.__scene || query ? '▾' : '▸'}</span> Scene <span className="muted">{sceneCalls().length}</span>
+                </div>
+                {(open.__scene || query) && (
+                  <div className="grid">
+                    {sceneCalls().filter((m) => !query || m.includes(query.toLowerCase())).map((m) => (
+                      <button key={m} className="lib-item mono" title={`self.${m}(…) at the playhead`} onClick={() => addStep('call', { method: m })}>{m}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             {groups.map(([cat, items]) =>
               items.length ? (
@@ -171,6 +185,7 @@ const STATE_LABEL: Record<LinkState, string> = { coupled: 'coupled', uncoupled: 
 /** Overview of every relationship: state, sources, timeline switches; couple, uncouple and forget from here. */
 function Relationships() {
   const doc = useStore((s) => s.doc);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
   const selection = useStore((s) => s.selection);
   const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
   const [filter, setFilter] = useState<'all' | LinkState>('all');
@@ -198,7 +213,7 @@ function Relationships() {
         const state = linkState(o)!;
         const sources = linkSources(o.link);
         const users = dependentsOf(doc, [o.id]);
-        const switches = doc.clips.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(o.name)).sort((a, b) => a.start - b.start);
+        const switches = doc.timeline.filter((c) => (c.kind === 'couple' || c.kind === 'uncouple') && c.targets?.includes(o.name));
         const problem = diagnostics?.find((d) => d.id === o.id && d.level === 'error');
         return (
           <div key={o.id} className={`rel-row ${state} ${sel.has(o.id) ? 'sel' : ''} ${problem ? 'err' : ''}`} title={problem?.message}>
@@ -215,7 +230,7 @@ function Relationships() {
               <div className="chips">
                 {sources.map((id) => <button key={id} className="chip" title="Built from (select)" onClick={() => selectObjects([id])}>← {name(id)}</button>)}
                 {users.map((u) => <button key={u.id} className="chip" title="Built from this (select)" onClick={() => selectObjects([u.id])}>→ {u.name}</button>)}
-                {switches.map((c) => <button key={c.id} className={`chip switch-chip ${c.kind}`} title="Select the clip" onClick={() => selectClips([c.id])}>{c.kind === 'couple' ? '⛓' : '⊘'} {timecode(c.start)}</button>)}
+                {switches.map((c) => <button key={c.id} className={`chip switch-chip ${c.kind}`} title="Select it on the timeline" onClick={() => selectClips([c.id])}>{c.kind === 'couple' ? '⛓' : '⊘'} {timecode(lay.steps.get(c.id)?.start ?? 0)}</button>)}
               </div>
             )}
           </div>

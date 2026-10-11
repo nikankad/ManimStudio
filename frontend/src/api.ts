@@ -23,6 +23,13 @@ export interface ValueCheck {
   literal?: number | null;
 }
 
+/** What a line of the generated code comes from. */
+export type LineKind = 'object' | 'step' | 'anim' | 'header';
+
+export type ImportResult =
+  | { ok: true; doc: SceneDoc; scenes: string[]; notes: string[] }
+  | { ok: false; error: string; line: number | null };
+
 export interface EquationCheck {
   ok: boolean;
   glyphs: number[];
@@ -90,14 +97,15 @@ export const api = {
     post<Signature>('/api/signature', { expr, header, object_classes }),
   run: (doc: SceneDoc, t: number | null, render: boolean, width = 960) =>
     post<RunResult>('/api/run', { doc, t, render, width }),
-  code: (doc: SceneDoc) => post<{ code: string }>('/api/code', { doc }),
+  code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]> }>('/api/code', { doc }),
+  importCode: (code: string, base: SceneDoc | null, scene?: string) => post<ImportResult>('/api/import_code', { code, base, scene }),
   exportCode: (doc: SceneDoc, path: string) => post<{ path: string }>('/api/export_code', { doc, path }),
   render: (doc: SceneDoc, quality: string, output?: string) => post<Job>('/api/render', { doc, quality, output }),
   job: (id: string) => get<Job>(`/api/render/${id}`),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
-  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null }>('/api/project/initial'),
-  openProject: (path: string) => post<{ doc: SceneDoc; path: string }>('/api/project/open', { path }),
+  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; imported?: string }>('/api/project/initial'),
+  openProject: (path: string) => post<{ doc: SceneDoc; path: string | null; imported?: string; notes?: string[] }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
   home: () => get<{ recent: RecentProject[]; samples: Sample[] }>('/api/home'),
   removeRecent: (path: string) => post<{ recent: RecentProject[] }>('/api/recent/remove', { path }),
