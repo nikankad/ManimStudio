@@ -266,10 +266,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def api_project_initial(self, _q: dict, _b: dict) -> dict:
         """The project to start with. Launched without one, the editor starts at the Home screen."""
-        if self.app.project_path and Path(self.app.project_path).exists():
-            recent.add(self.app.project_path)
-            return {"doc": load_project(self.app.project_path), "path": self.app.project_path, "home": False}
-        return {"doc": new_project(), "path": self.app.project_path, "home": not self.app.project_path}
+        path = self.app.project_path
+        if path and Path(path).exists():
+            recent.add(path)
+            return {"doc": load_project(path), "path": path, "home": False}
+        # No project given, or the file given doesn't exist (moved, renamed): start at Home.
+        self.app.project_path = None
+        return {"doc": new_project(), "path": None, "home": True, "missing": path}
 
     def api_project_open(self, _q: dict, body: dict) -> dict:
         doc = load_project(body["path"])

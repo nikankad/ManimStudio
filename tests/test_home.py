@@ -83,3 +83,18 @@ def test_home_endpoints(tmp_path):
         assert call("/api/recent/remove", {"path": home["recent"][0]["path"]})["recent"] == []
     finally:
         server.shutdown()
+
+
+def test_missing_project_file_starts_at_home(tmp_path):
+    from mathengine.server import make_server
+    import threading
+
+    server, app = make_server(str(tmp_path / "gone.mathengine"), 0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{server.server_address[1]}/api/project/initial?token={app.token}")
+        with urllib.request.urlopen(req) as res:
+            r = json.load(res)
+        assert r["home"] is True and r["path"] is None and r["missing"].endswith("gone.mathengine")
+    finally:
+        server.shutdown()

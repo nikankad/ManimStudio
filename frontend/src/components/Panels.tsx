@@ -59,6 +59,7 @@ export function Toolbar() {
   return (
     <header className="toolbar">
       <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</button>
+      <button className="ghost home-btn" title="Home: new, recent and sample projects" onClick={() => setState({ home: true })}>⌂ Home</button>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
       <button className="ghost" title="New project (choose its format)" onClick={() => setState({ panel: 'new-project' })}>New</button>
       <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>

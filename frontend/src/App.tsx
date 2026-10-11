@@ -30,7 +30,10 @@ export function App() {
   useShortcuts();
   useEffect(() => {
     api.initialProject()
-      .then((r) => (r.home ? setState({ home: true }) : loadDoc(r.doc, r.path)))
+      .then((r) => {
+        if (r.missing) toast(`Couldn't find ${r.missing}: it may have been moved or renamed. Open it from here.`);
+        return r.home ? setState({ home: true }) : loadDoc(r.doc, r.path);
+      })
       .then(loadCatalog)
       .catch((e) => toast(String(e)));
     void loadTemplates();

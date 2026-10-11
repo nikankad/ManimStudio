@@ -96,7 +96,7 @@ export const api = {
   job: (id: string) => get<Job>(`/api/render/${id}`),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
-  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean }>('/api/project/initial'),
+  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null }>('/api/project/initial'),
   openProject: (path: string) => post<{ doc: SceneDoc; path: string }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
   home: () => get<{ recent: RecentProject[]; samples: Sample[] }>('/api/home'),
