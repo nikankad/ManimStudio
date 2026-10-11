@@ -115,6 +115,7 @@ mathengine code scene.mathengine > scene.py # plain manim code
 - **ƒ Graph** (toolbar) is an expression-first graph builder. Type `y = a*x^2 + b` and it:
   - offers each unknown letter as a named parameter slider, with a value, bounds and a step;
   - creates the axes and the graph in one step, with the domain and axis ranges exposed;
+  - shows a live preview, rendered by manim, of exactly what will be added before you create it;
   - finds discontinuities (asymptotes, jumps) and leaves a gap around them so the curve isn't drawn across;
   - explains unsupported input in plain words: implicit equations (`x^2 + y^2 = 1`), inequalities,
     parametric or polar curves, and piecewise definitions.

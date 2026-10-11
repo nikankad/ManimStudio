@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, type FunctionAnalysis } from '../api';
 import { dependentsOf, geoType, literal, RESERVED_NAMES, sortByDependencies } from '../construct';
 import {
-  chooseTrack, createParam, deleteObjects, frameSnap, getState, params, selectObjects, setState, toast, uid, uniqueName, updateDoc, useStore,
+  chooseTrack, createParam, deleteObjects, emptyDoc, frameSnap, getState, params, selectObjects, setState, toast, uid, uniqueName, updateDoc, useStore,
 } from '../store';
 import { closure, defaultInputs, insertTemplate, makeTemplate, saveTemplate, suggestInputs } from '../templates';
-import type { Pt, SceneObject, Template, TemplateInput } from '../types';
+import type { Pt, SceneDoc, SceneObject, Template, TemplateInput } from '../types';
 import { Modal } from './Modal';
 import { ColorField, Field } from './ParamField';
 
@@ -56,38 +56,83 @@ export function GraphBuilder() {
   const breaks = disc ?? analysis?.discontinuities ?? [];
   const canCreate = analysis?.ok && !clashes.length;
 
+  /**
+   * Add the parameters, axes (if new) and graph to `d`; returns the graph and the end of its intro.
+   * Used both to create them and to build the preview, so the preview shows exactly what gets added.
+   */
+  const addGraph = (d: SceneDoc, start: number, intro: 'Create' | 'add'): { graph: SceneObject; end: number } => {
+    for (const p of newParams) createParam(d, p, defs[p]?.value ?? 1, { min: defs[p]?.min ?? -5, max: defs[p]?.max ?? 5, step: defs[p]?.step ?? 0.1 });
+    let axes = d.objects.find((o) => o.id === axesId);
+    let t = start;
+    const show = (target: string) => {
+      if (intro === 'add') d.clips.push({ id: uid('c'), kind: 'add', track: chooseTrack(d, t, 0), start: t, duration: 0, targets: [target] });
+      else {
+        d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, t, 1), start: t, duration: 1, cls: 'Create', target, args: {} });
+        t += 1;
+      }
+    };
+    if (!axes) {
+      axes = {
+        id: uid('o'), name: uniqueName(d, 'axes'), ctor: 'Axes', pos: null, chain: '',
+        args: { x_range: `[${ax.xmin}, ${ax.xmax}, ${ax.xstep}]`, y_range: `[${ax.ymin}, ${ax.ymax}, ${ax.ystep}]`, x_length: String(ax.xlen), y_length: String(ax.ylen) },
+      };
+      d.objects.push(axes);
+      show(axes.name);
+    }
+    const graph: SceneObject = {
+      id: uid('o'), name: uniqueName(d, 'graph'), ctor: `${axes.name}.plot`, args: { color }, pos: null, chain: '',
+      link: { kind: 'graph', axes: axes.id, expr: expr.trim(), x_min: dom[0], x_max: dom[1], ...(breaks.length ? { discontinuities: breaks, gap: analysis?.gap ?? 0.01 } : {}) },
+    };
+    d.objects.push(graph);
+    show(graph.name);
+    sortByDependencies(d);
+    return { graph, end: t };
+  };
+
   const create = () => {
     if (!analysis?.ok) return;
     const start = frameSnap(getState().time);
     let graphId = '';
     let endTime = start;
     updateDoc((d) => {
-      for (const p of newParams) createParam(d, p, defs[p]?.value ?? 1, { min: defs[p]?.min ?? -5, max: defs[p]?.max ?? 5, step: defs[p]?.step ?? 0.1 });
-      let axes = d.objects.find((o) => o.id === axesId);
-      let t = start;
-      if (!axes) {
-        axes = {
-          id: uid('o'), name: uniqueName(d, 'axes'), ctor: 'Axes', pos: null, chain: '',
-          args: { x_range: `[${ax.xmin}, ${ax.xmax}, ${ax.xstep}]`, y_range: `[${ax.ymin}, ${ax.ymax}, ${ax.ystep}]`, x_length: String(ax.xlen), y_length: String(ax.ylen) },
-        };
-        d.objects.push(axes);
-        d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, t, 1), start: t, duration: 1, cls: 'Create', target: axes.name, args: {} });
-        t += 1;
-      }
-      const g: SceneObject = {
-        id: uid('o'), name: uniqueName(d, 'graph'), ctor: `${axes.name}.plot`, args: { color }, pos: null, chain: '',
-        link: { kind: 'graph', axes: axes.id, expr: expr.trim(), x_min: dom[0], x_max: dom[1], ...(breaks.length ? { discontinuities: breaks, gap: analysis.gap ?? 0.01 } : {}) },
-      };
-      graphId = g.id;
-      d.objects.push(g);
-      d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, t, 1), start: t, duration: 1, cls: 'Create', target: g.name, args: {} });
-      endTime = t + 1;
-      sortByDependencies(d);
+      const r = addGraph(d, start, 'Create');
+      graphId = r.graph.id;
+      endTime = r.end;
     });
     close();
     selectObjects([graphId]);
     setState({ time: endTime }); // show the graph once its Create clip has played
   };
+
+  // Preview: the same objects in a scratch scene, rendered by manim (existing parameters at their playhead values).
+  const [preview, setPreview] = useState<{ image: string | null; error: string | null; busy: boolean }>({ image: null, error: null, busy: false });
+  const previewKey = canCreate ? JSON.stringify([expr, axesId, ax, dom, defs, color, breaks, analysis?.gap, values]) : '';
+  useEffect(() => {
+    if (!previewKey) return;
+    let alive = true;
+    const timer = setTimeout(() => {
+      const pd = emptyDoc();
+      pd.config = { ...doc.config };
+      for (const p of params(doc)) {
+        const v = values[p.name];
+        pd.objects.push({ ...structuredClone(p), args: { ...p.args, ...(v !== undefined ? { '*': String(v) } : {}) } });
+      }
+      const existing = doc.objects.find((o) => o.id === axesId);
+      if (existing) {
+        pd.objects.push(structuredClone(existing));
+        pd.clips.push({ id: uid('c'), kind: 'add', track: 't1', start: 0, duration: 0, targets: [existing.name] });
+      }
+      addGraph(pd, 0, 'add');
+      setPreview((p) => ({ ...p, busy: true }));
+      api.run(pd, 0, true, 560)
+        .then((r) => alive && setPreview({ image: r.image, error: r.error?.message ?? null, busy: false }))
+        .catch((e) => alive && setPreview({ image: null, error: String(e), busy: false }));
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const num = (v: number, set: (v: number) => void, w = 'narrow') => <input className={`field num ${w}`} value={v} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) set(n); }} />;
 
@@ -118,6 +163,13 @@ export function GraphBuilder() {
           ))}
         </div>
         <div>
+          <div className={`graph-preview ${preview.busy ? 'busy' : ''}`} style={{ aspectRatio: `${doc.config.pixel_width} / ${doc.config.pixel_height}`, background: doc.config.background_color }}>
+            {canCreate && preview.image && <img src={preview.image} alt="Preview of the graph" />}
+            {!canCreate && <span className="muted small">{analysis && !analysis.ok ? 'Fix the expression to see a preview' : clashes.length ? 'Rename the clashing parameter to see a preview' : 'Preview'}</span>}
+            {canCreate && preview.error && <span className="err-text small">{preview.error}</span>}
+            {canCreate && !preview.image && !preview.error && <span className="muted small">Rendering preview…</span>}
+            <span className="graph-preview-label">Preview · rendered by manim{preview.busy ? ' · updating…' : ''}</span>
+          </div>
           <label className="param"><span className="pname">Axes</span>
             <select className="field" value={axesId} onChange={(e) => { setAxesId(e.target.value); setDomain(null); }}>
               {axesList.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}

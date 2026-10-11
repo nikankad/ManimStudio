@@ -412,3 +412,8 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .constructions h4:first-of-type { margin-top: 16px; }
 .construction-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .construction-name { flex: 1; text-align: left; background: var(--panel-2); }
+.graph-preview { position: relative; width: 100%; border-radius: 8px; border: 1px solid var(--line); overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+.graph-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transition: opacity .2s; }
+.graph-preview.busy img { opacity: .55; }
+.graph-preview > span:not(.graph-preview-label) { position: relative; padding: 8px; text-align: center; }
+.graph-preview-label { position: absolute; left: 8px; bottom: 6px; font-size: 10.5px; color: rgba(255, 255, 255, .55); }
