@@ -71,6 +71,17 @@ def by_name(doc):
     return {o["name"]: o for o in doc["objects"]}
 
 
+def new_project(page):
+    """A new, empty project: from the Home screen (shown at launch) or the editor's New button."""
+    page.wait_for_selector(".toolbar, .home", timeout=60000)
+    if page.locator(".home").count():
+        page.locator(".home button", has_text="New project").click()
+    else:
+        page.locator(".toolbar button", has_text="New").click()
+    page.locator(".modal button", has_text="Create").click()
+    page.wait_for_selector(".toolbar", timeout=60000)
+
+
 def open_page(p):
     exe = os.environ.get("CHROMIUM")
     browser = p.chromium.launch(executable_path=exe) if exe else p.chromium.launch()
@@ -87,8 +98,7 @@ def drawing_graphs_equations(p):
     """Drawing tools, connections, graph builder, equations, starter insertion."""
     browser, page, requests = open_page(p)
     page.goto(URL)
-    page.wait_for_selector(".lib-item", timeout=60000)
-    page.locator(".toolbar button", has_text="New").click()  # start from an empty document
+    new_project(page)  # start from an empty document
     page.wait_for_timeout(500)
     page.locator("body").click(position={"x": 5, "y": 5})
 
@@ -214,8 +224,7 @@ def connections_records_constructions(p):
     """Label offsets, undo, delete + detach, record-mode parameter drags, saved constructions, TransformTerms."""
     browser, page, _requests = open_page(p)
     page.goto(URL)
-    page.wait_for_selector(".lib-item", timeout=60000)
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(500)
     page.locator("body").click(position={"x": 5, "y": 5})
 
@@ -298,7 +307,7 @@ def connections_records_constructions(p):
     shot(page, "2_record")
 
     # Save a construction from the selection and insert it again as an independent copy.
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(300)
     page.keyboard.press("2")
     click_scene(page, -2, 0)
@@ -356,7 +365,7 @@ def connections_records_constructions(p):
     assert "does not check" in page.locator(".terms-editor .note").inner_text()
 
     # Two instances of the same construction get separate names; renaming never touches string literals.
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(300)
     page.locator(".library .tabs button", has_text="Build").click()
     for _ in range(2):
@@ -376,8 +385,7 @@ def intersections_and_perpendiculars(p):
     """Altitudes of a triangle meet at a linked intersection; the point tool snaps to crossings."""
     browser, page, requests = open_page(p)
     page.goto(URL)
-    page.wait_for_selector(".lib-item", timeout=60000)
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(500)
     page.locator("body").click(position={"x": 5, "y": 5})
 
@@ -474,7 +482,7 @@ def intersections_and_perpendiculars(p):
     shot(page, "2_snapped")
 
     # A graph's roots and y-intercept, and dropping a point on the curve to the x-axis.
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(500)
     page.locator("button", has_text="ƒ Graph").first.click()
     page.locator(".graph-builder input.big").fill("y = x^2 - 2")
@@ -533,8 +541,7 @@ def timeline_editing(p):
     """Search ranking, where moved clips land, keyboard focus after library drops, timecode entry, order warnings."""
     browser, page, requests = open_page(p)
     page.goto(URL)
-    page.wait_for_selector(".lib-item", timeout=60000)
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(500)
 
     def clips():
@@ -627,8 +634,7 @@ def coupling_relationships(p):
     """Couple existing objects, uncouple without losing the relationship, couple again, switch over time."""
     browser, page, requests = open_page(p)
     page.goto(URL)
-    page.wait_for_selector(".lib-item", timeout=60000)
-    page.locator(".toolbar button", has_text="New").click()
+    new_project(page)
     page.wait_for_timeout(500)
     page.locator("body").click(position={"x": 5, "y": 5})
 
@@ -712,6 +718,39 @@ def coupling_relationships(p):
     browser.close()
 
 
+def home_samples_recent(p):
+    """Home screen: open a sample, save it, and find it under Recent with a preview; New project sets the format."""
+    browser, page, requests = open_page(p)
+    page.goto(URL)
+    page.wait_for_selector(".toolbar, .home", timeout=60000)
+    if not page.locator(".home").count():  # the server reopens the last saved project; Home is a click away
+        page.locator("button.brand").click()
+    page.wait_for_selector(".sample-card", timeout=10000)
+    page.wait_for_timeout(500)
+    cards = page.locator(".sample-card b").all_inner_texts()
+    print("samples:", cards)
+    assert len(cards) >= 3 and all(page.locator(".sample-thumb img").nth(i).evaluate("i => i.naturalWidth") > 0 for i in range(len(cards)))
+    page.locator(".sample-card", has_text="Altitudes of a triangle").click()
+    page.wait_for_selector(".lib-item", timeout=60000)
+    wait_frame(page, 3000)
+    doc = saved(page)
+    assert doc["scene"]["name"] == "Orthocenter" and "H" in by_name(doc)
+    page.wait_for_timeout(4000)  # the Home preview is made in the background
+    page.locator("button.brand").click()
+    page.wait_for_selector(".recent-table tbody tr", timeout=10000)
+    row = page.locator(".recent-table tbody tr").first
+    assert os.path.splitext(os.path.basename(SAVE))[0] in row.inner_text()
+    assert row.locator(".recent-thumb img").count() == 1, "no preview for the saved project"
+    shot(page, "home")
+    page.locator(".home button", has_text="New project").click()
+    page.locator(".modal select").first.select_option("1080x1920")
+    page.locator(".modal button", has_text="Create").click()
+    page.wait_for_selector(".lib-item", timeout=60000)
+    doc = saved(page)
+    assert (doc["config"]["pixel_width"], doc["config"]["pixel_height"]) == (1080, 1920) and doc["objects"] == []
+    browser.close()
+
+
 SAVE = os.path.join(OUT, "smoke.manimstudio")
 with sync_playwright() as p:
     drawing_graphs_equations(p)
@@ -719,6 +758,7 @@ with sync_playwright() as p:
     intersections_and_perpendiculars(p)
     timeline_editing(p)
     coupling_relationships(p)
+    home_samples_recent(p)
 print("screenshots in", OUT)
 print("ERRORS:", errors)
 sys.exit(1 if errors else 0)

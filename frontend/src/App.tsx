@@ -7,7 +7,8 @@ import { Panels, Toolbar, useShortcuts } from './components/Panels';
 import { Timeline } from './components/Timeline';
 import { Viewport } from './components/Viewport';
 import { Tour, WelcomeCard } from './components/Help';
-import { getState, loadCatalog, loadDoc, toast, useStore } from './store';
+import { Home } from './components/Home';
+import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
 import { loadTemplates } from './templates';
 
 const TL_KEY = 'mathengine.timelineHeight';
@@ -24,10 +25,14 @@ function savedHeight(): number {
 
 export function App() {
   const message = useStore((s) => s.toast);
+  const home = useStore((s) => s.home);
   const [tlHeight, setTlHeight] = useState(savedHeight);
   useShortcuts();
   useEffect(() => {
-    api.initialProject().then((r) => loadDoc(r.doc, r.path)).then(loadCatalog).catch((e) => toast(String(e)));
+    api.initialProject()
+      .then((r) => (r.home ? setState({ home: true }) : loadDoc(r.doc, r.path)))
+      .then(loadCatalog)
+      .catch((e) => toast(String(e)));
     void loadTemplates();
     const beforeUnload = (e: BeforeUnloadEvent) => {
       if (getState().dirty) e.preventDefault();
@@ -53,6 +58,15 @@ export function App() {
       }
     }, { once: true });
   };
+
+  if (home)
+    return (
+      <>
+        <Home />
+        <Panels />
+        {message && <div className="toast">{message}</div>}
+      </>
+    );
 
   return (
     <div className="app" style={{ gridTemplateRows: `44px minmax(220px, 1fr) 6px ${tlHeight}px` }}>

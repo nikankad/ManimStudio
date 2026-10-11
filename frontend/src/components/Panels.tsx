@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, emptyDoc, fps, frameSnap, getState, loadDoc, selectedObjectIds,
+  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
@@ -11,6 +11,7 @@ import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
 import { HelpPanel } from './Help';
 import { AppSettings, UpdateNotice } from './Updates';
+import { NewProjectDialog } from './Home';
 
 /** Project files: .manimstudio, and .mathengine from versions before the rename. */
 const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
@@ -19,7 +20,8 @@ const PROJECT_EXT = /\.(manimstudio|mathengine)$/;
 export async function saveProject(saveAs = false) {
   const s = getState();
   let path = s.path;
-  if (!path || saveAs) path = await askPath('save', 'scene.manimstudio', [PROJECT_FILES], 'Save project to path:');
+  const suggested = `${s.doc.scene.name.replace(/Scene$/, '') || 'scene'}.manimstudio`;
+  if (!path || saveAs) path = await askPath('save', suggested, [PROJECT_FILES], 'Save project to path:');
   if (!path) return;
   if (!PROJECT_EXT.test(path)) path += '.manimstudio'; // projects from earlier versions keep their .mathengine name
   await api.saveProject(path, s.doc);
@@ -27,11 +29,22 @@ export async function saveProject(saveAs = false) {
   toast(`Saved ${path}`);
 }
 
+/** Leave the current project (asks first when it has unsaved changes). */
+export const discardOk = () => !getState().hasProject || !getState().dirty || confirm('Discard unsaved changes to the current project?');
+
+export async function openPath(path: string) {
+  if (!discardOk()) return;
+  try {
+    const res = await api.openProject(path);
+    loadDoc(res.doc, res.path);
+  } catch (e) {
+    toast(`Couldn't open ${path}: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 export async function openProject() {
   const path = await askPath('open', '', [PROJECT_FILES], 'Open project path:');
-  if (!path) return;
-  const res = await api.openProject(path);
-  loadDoc(res.doc, res.path);
+  if (path) await openPath(path);
 }
 
 export function Toolbar() {
@@ -45,9 +58,9 @@ export function Toolbar() {
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
     <header className="toolbar">
-      <span className="brand"><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</span>
+      <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</button>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
-      <button className="ghost" onClick={() => { if (!getState().dirty || confirm('Discard unsaved changes?')) loadDoc(emptyDoc(), null); }}>New</button>
+      <button className="ghost" title="New project (choose its format)" onClick={() => setState({ panel: 'new-project' })}>New</button>
       <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
       <button className="ghost" onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
       <span className="sep" />
@@ -116,6 +129,7 @@ export function Panels() {
   if (panel === 'delete') return <DeleteDialog />;
   if (panel === 'insert') return <InsertConstruction />;
   if (panel === 'save-construction') return <SaveConstruction />;
+  if (panel === 'new-project') return <NewProjectDialog />;
   return null;
 }
 
@@ -150,7 +164,7 @@ function CodePanel() {
   );
 }
 
-const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
+export const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
 
 function SettingsPanel() {
   const doc = useStore((s) => s.doc);
@@ -264,9 +278,23 @@ export function useShortcuts() {
       const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
+      if (getState().home) {
+        // Home screen: only the project shortcuts (the editor behind it isn't shown).
+        if (mod && (k === 'o' || k === 'n')) {
+          e.preventDefault();
+          if (k === 'o') void openProject().catch((err) => toast(String(err)));
+          else setState({ panel: 'new-project' });
+        } else if (e.key === 'F1') setState({ panel: 'help', panelData: null });
+        return;
+      }
       if (mod && k === 's') {
         e.preventDefault();
         void saveProject(e.shiftKey).catch((err) => toast(String(err)));
+        return;
+      }
+      if (mod && k === 'o') {
+        e.preventDefault();
+        void openProject().catch((err) => toast(String(err)));
         return;
       }
       if (e.key === 'F1') {

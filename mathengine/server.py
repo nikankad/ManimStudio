@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, mathexpr, render, runtime, starters, tex, version
+from . import catalog, codegen, mathexpr, recent, render, runtime, samples, starters, tex, version
 from .project import load_project, new_project, save_project
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -111,6 +111,9 @@ class Handler(BaseHTTPRequestHandler):
             ("GET", "/api/project/initial"): self.api_project_initial,
             ("POST", "/api/project/open"): self.api_project_open,
             ("POST", "/api/project/save"): self.api_project_save,
+            ("GET", "/api/home"): self.api_home,
+            ("POST", "/api/recent/remove"): self.api_recent_remove,
+            ("POST", "/api/samples/open"): self.api_sample_open,
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
             ("POST", "/api/expr"): self.api_expr,
@@ -262,19 +265,46 @@ class Handler(BaseHTTPRequestHandler):
         return job.to_json()
 
     def api_project_initial(self, _q: dict, _b: dict) -> dict:
+        """The project to start with. Launched without one, the editor starts at the Home screen."""
         if self.app.project_path and Path(self.app.project_path).exists():
-            return {"doc": load_project(self.app.project_path), "path": self.app.project_path}
-        return {"doc": new_project(), "path": self.app.project_path}
+            recent.add(self.app.project_path)
+            return {"doc": load_project(self.app.project_path), "path": self.app.project_path, "home": False}
+        return {"doc": new_project(), "path": self.app.project_path, "home": not self.app.project_path}
 
     def api_project_open(self, _q: dict, body: dict) -> dict:
         doc = load_project(body["path"])
         self.app.project_path = body["path"]
+        recent.add(body["path"])
         return {"doc": doc, "path": body["path"]}
 
     def api_project_save(self, _q: dict, body: dict) -> dict:
         save_project(body["path"], body["doc"])
         self.app.project_path = body["path"]
+        recent.add(body["path"])
+        threading.Thread(target=self._thumbnail, args=(body["path"], body["doc"]), daemon=True).start()
         return {"path": body["path"]}
+
+    def _thumbnail(self, path: str, doc: dict) -> None:
+        """The Home screen's preview of a saved project: its frame at 70% of the video (in the background)."""
+        try:
+            with self.app.manim_lock:
+                end = runtime.run(doc, None, render=False).duration
+                frame = runtime.run(doc, end * 0.7, render=True, preview_width=320)
+            if frame.image and not frame.error:
+                recent.set_thumbnail(path, frame.image)
+        except Exception:  # a broken scene just has no preview
+            pass
+
+    def api_home(self, _q: dict, _b: dict) -> dict:
+        return {"recent": recent.listing(), "samples": samples.sample_list()}
+
+    def api_recent_remove(self, _q: dict, body: dict) -> dict:
+        recent.remove(str(body.get("path", "")))
+        return {"recent": recent.listing()}
+
+    def api_sample_open(self, _q: dict, body: dict) -> dict:
+        """A sample opens as a new, unsaved project (saving asks where, so the sample itself never changes)."""
+        return {"doc": samples.sample(str(body.get("id", ""))), "path": None}
 
     def api_expr(self, _q: dict, body: dict) -> dict:
         """Analyse a math expression: a function for the graph builder, or a value over parameters."""

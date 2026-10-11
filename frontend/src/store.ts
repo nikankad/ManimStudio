@@ -28,7 +28,7 @@ export interface AppState {
   playing: boolean;
   past: SceneDoc[];
   future: SceneDoc[];
-  panel: null | 'code' | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help';
+  panel: null | 'code' | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project';
   tour: number | null; // guided tour step
   panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
   tool: Tool; // canvas drawing tool
@@ -45,6 +45,8 @@ export interface AppState {
   showVideo: boolean; // playing the rendered preview video instead of live frames
   autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
+  home: boolean; // the Home screen (projects, samples) instead of the editor
+  hasProject: boolean; // a project is open behind the Home screen (it can go back to it)
 }
 
 export const emptyDoc = (): SceneDoc => ({
@@ -90,6 +92,8 @@ let state: AppState = {
   showVideo: false,
   autoRender: true,
   toast: null,
+  home: false,
+  hasProject: false,
 };
 
 const listeners = new Set<() => void>();
@@ -150,7 +154,7 @@ export function redo() {
 export function loadDoc(doc: SceneDoc, path: string | null) {
   doc.markers ??= [];
   doc.constructions ??= [];
-  setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null });
+  setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
 }
 
 export function toast(msg: string) {

@@ -61,6 +61,12 @@ manim-studio render scene.manimstudio -q 1080p -o scene.mp4   # headless render
 manim-studio code scene.manimstudio > scene.py # plain manim code
 ```
 
+- **Home** (at launch, and from the toolbar's Manim Studio button): *New project…* (name, format such as 1080p,
+  4K, vertical or square, frame rate, background), *Open project…*, **Recent** projects with a preview, when they
+  were opened, size and folder (filter, or remove one from the list), and **samples** to start from: *The
+  derivative is a slope*, *Riemann sums*, *Altitudes of a triangle* and *Couple and uncouple*. A sample opens as
+  an unsaved copy; select anything to see how it is built. Opening a project file directly skips Home.
+
 - **Timeline** (bottom, the main workspace): a Premiere Pro–style, non-linear editor. Clips sit on stacked
   tracks (V1, V2, …) at any time and can overlap or leave gaps. Drag a clip to move it in time or to another
   track, drag its edges to trim, Alt-drag to duplicate, shift-click or drag a box to select several, and

@@ -215,7 +215,7 @@ class Constraints:
 
         def target(m):
             new = build()
-            new.match_style(m)
+            self._restyle(new, m)
             return new
 
         def update(m, force=False):
@@ -227,7 +227,7 @@ class Constraints:
                 new = target(m)
             except Exception:  # e.g. an Angle while its lines are parallel: keep the last shape
                 return
-            m.become(new)
+            self._replace(m, new)
 
         return self._add(mob, update, target, paused)
 
@@ -306,11 +306,35 @@ class Constraints:
             start.align_data(end)
             now = start.copy()
             now.interpolate(start, end, alpha)
-            self.mobject.become(now)
+            Constraints._replace(self.mobject, now)
 
         def finish(self):
             super().finish()
+            # Back to the parts and style it had (the glide's in-between shapes have padding parts),
+            # then coupled: rebuilt in place.
+            Constraints._replace(self.mobject, self.start)
             self.constraints.resume(self.mobject)
+
+    @staticmethod
+    def _restyle(new, old):
+        """Give ``new`` the current style of ``old`` (colors and opacity set by animations), part by part.
+
+        A part ``old`` doesn't have (a dashed line that got longer has more dashes) takes the style of its
+        last part, so the new dashes look like the others.
+        """
+        parts = old.family_members_with_points()
+        if parts:
+            for i, part in enumerate(new.family_members_with_points()):
+                part.match_style(parts[min(i, len(parts) - 1)], family=False)
+
+    @staticmethod
+    def _replace(mob, new):
+        """``mob.become(new)``, with ``new``'s exact structure. (become() pads a mobject with fewer parts
+        with invisible copies; their opacity would then be carried into every later rebuild.)"""
+        if len(mob.get_family()) != len(new.get_family()):
+            mob.remove(*mob.submobjects)
+            mob.add(*[part.copy() for part in new.submobjects])
+        mob.become(new)
 
     @staticmethod
     def _key(sources):

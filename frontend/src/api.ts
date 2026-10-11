@@ -62,6 +62,24 @@ export interface UpdateInfo extends AppInfo {
   url?: string;
 }
 
+export interface RecentProject {
+  path: string;
+  name: string;
+  folder: string;
+  opened: number | null; // seconds since the epoch
+  modified: number | null;
+  size: number | null; // bytes
+  exists: boolean;
+  thumbnail: string | null; // data URL
+}
+export interface Sample {
+  id: string;
+  name: string;
+  description: string;
+  duration: number;
+  thumbnail: string | null;
+}
+
 export const api = {
   version: () => get<AppInfo>('/api/version'),
   updateCheck: () => post<UpdateInfo>('/api/update_check', {}),
@@ -78,9 +96,12 @@ export const api = {
   job: (id: string) => get<Job>(`/api/render/${id}`),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
-  initialProject: () => get<{ doc: SceneDoc; path: string | null }>('/api/project/initial'),
+  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean }>('/api/project/initial'),
   openProject: (path: string) => post<{ doc: SceneDoc; path: string }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
+  home: () => get<{ recent: RecentProject[]; samples: Sample[] }>('/api/home'),
+  removeRecent: (path: string) => post<{ recent: RecentProject[] }>('/api/recent/remove', { path }),
+  openSample: (id: string) => post<{ doc: SceneDoc; path: null }>('/api/samples/open', { id }),
   analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number]) =>
     post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range }),
   checkValue: (expr: string, params: string[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params }),

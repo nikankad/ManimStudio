@@ -374,3 +374,32 @@ def test_new_construction_diagnostics():
     assert "different objects" in by["x7"]
     r = runtime.run(d, 0, render=False)
     assert r.error is None
+
+
+def test_redrawn_dashed_line_keeps_every_dash_visible():
+    """A dashed construction rebuilt many times keeps all its dashes and its animated color (become() pads
+    with invisible copies, whose opacity used to spread to later rebuilds until the line disappeared)."""
+    from mathengine import construct
+
+    ns = {}
+    exec("from manim import *\nimport numpy as np\n" + construct.CONSTRAINTS_SOURCE, ns)
+
+    class Scene:
+        def add_updater(self, f):
+            pass
+
+        def add(self, *m):
+            pass
+
+    c = ns["Constraints"](Scene())
+    a, b = ns["Dot"]([-3, 0, 0]), ns["Dot"]([3, 0, 0])
+    line = c.redraw(lambda: ns["DashedLine"](a.get_center(), b.get_center(), color=ns["YELLOW"]), a, b)
+    line.set_color(ns["RED"])
+    for i in range(60):
+        b.move_to([3 - i * 0.08 if i < 40 else -0.2 + (i - 40) * 0.3, i * 0.04, 0])
+        c.update()
+        parts = line.family_members_with_points()
+        fresh = ns["DashedLine"](a.get_center(), b.get_center())
+        assert len(parts) == len(fresh.submobjects)
+        assert all(p.get_stroke_opacity() > 0.5 for p in parts)
+    assert {p.get_color().to_hex() for p in parts} == {ns["RED"].to_hex()}
