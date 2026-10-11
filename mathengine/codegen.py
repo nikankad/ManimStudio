@@ -252,6 +252,9 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
             names = [t.strip() for t in (a.get("target") or "").split(",") if t.strip()]
             if cls == "Add" or _flag(cls, "is_introducer"):
                 continue
+            # LaggedStartMap(FadeIn, dots): the animation it applies to each part is an intro
+            if any(_flag(w, "is_introducer") for w in _WORD.findall(_STRING.sub("", str((a.get("args") or {}).get("*", ""))))):
+                continue
             for t in names:
                 if t not in shown and t in plan.mobject_names:
                     plan.diag(a["id"], "warning", f"{t} isn't on screen before this self.play, so manim adds it as the play "

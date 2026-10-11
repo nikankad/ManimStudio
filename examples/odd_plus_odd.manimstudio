@@ -1,0 +1,940 @@
+{
+  "version": 4,
+  "scene": {
+    "name": "OddPlusOdd",
+    "base": "Scene"
+  },
+  "config": {
+    "pixel_width": 1920,
+    "pixel_height": 1080,
+    "frame_rate": 60,
+    "background_color": "#000000"
+  },
+  "header": "",
+  "objects": [
+    {
+      "id": "o6dc86a0",
+      "name": "title",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Odd + Odd = Even\"",
+        "font_size": "72",
+        "t2c": "{\"Odd\": YELLOW, \"Even\": GREEN}"
+      },
+      "pos": null,
+      "chain": "",
+      "comment": "# ---- Title"
+    },
+    {
+      "id": "o234c402",
+      "name": "subtitle",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Why adding two odd numbers always gives an even number\"",
+        "font_size": "28",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(title, DOWN, buff=0.4)"
+    },
+    {
+      "id": "o0af27cb",
+      "name": "heading",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Even numbers pair up. Odd numbers have one left over.\"",
+        "font_size": "34"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "s09d14f6",
+      "comment": "# ---- Even numbers pair up; odd numbers have one left over"
+    },
+    {
+      "id": "o657563d",
+      "name": "six",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.2, color=BLUE) for _ in range(6)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=2, cols=3, buff=0.4).shift(LEFT * 3.2 + UP * 0.3)",
+      "after": "s09d14f6"
+    },
+    {
+      "id": "ob49a6aa",
+      "name": "seven",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.2, color=BLUE) for _ in range(6)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=2, cols=3, buff=0.4).shift(RIGHT * 2.4 + UP * 0.3)",
+      "after": "s09d14f6"
+    },
+    {
+      "id": "odbd2946",
+      "name": "six_label",
+      "ctor": "Text",
+      "args": {
+        "*": "\"6 = 2k  \u2192  even\"",
+        "font_size": "34",
+        "t2c": "{\"even\": GREEN}"
+      },
+      "pos": null,
+      "chain": ".next_to(six, DOWN, buff=0.7)",
+      "after": "s1b4157f"
+    },
+    {
+      "id": "of32b59e",
+      "name": "seven_label",
+      "ctor": "Text",
+      "args": {
+        "*": "\"7 = 2k + 1  \u2192  odd\"",
+        "font_size": "34",
+        "t2c": "{\"+ 1\": YELLOW, \"odd\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(seven, DOWN, buff=0.7)",
+      "after": "s1b4157f"
+    },
+    {
+      "id": "of2d07d8",
+      "name": "heading2",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Add any two odd numbers\"",
+        "font_size": "44"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "sc4dd874",
+      "comment": "# ---- The algebra"
+    },
+    {
+      "id": "oc725d2e",
+      "name": "line1",
+      "ctor": "Text",
+      "args": {
+        "*": "\"m = 2a + 1,    n = 2b + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(heading2, DOWN, buff=0.7)",
+      "after": "sc4dd874"
+    },
+    {
+      "id": "o57dad1e",
+      "name": "line2",
+      "ctor": "Text",
+      "args": {
+        "*": "\"m + n = (2a + 1) + (2b + 1)\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(line1, DOWN, buff=0.45)",
+      "after": "sc4dd874"
+    },
+    {
+      "id": "ob466b4b",
+      "name": "line3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 2a + 2b + 2\"",
+        "font_size": "40",
+        "t2c": "{\"[11:13]\": GREEN}"
+      },
+      "pos": null,
+      "chain": ".next_to(line2, DOWN, buff=0.45)",
+      "after": "sc4dd874"
+    },
+    {
+      "id": "of26c561",
+      "name": "line4",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 2(a + b + 1)\"",
+        "font_size": "40"
+      },
+      "pos": null,
+      "chain": ".next_to(line3, DOWN, buff=0.45)",
+      "after": "sc4dd874"
+    },
+    {
+      "id": "of3dc9a2",
+      "name": "line5",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 2k\"",
+        "font_size": "40",
+        "t2c": "{\"2k\": GREEN}"
+      },
+      "pos": null,
+      "chain": ".next_to(line4, DOWN, buff=0.45)",
+      "after": "sc4dd874"
+    },
+    {
+      "id": "oa363dd3",
+      "name": "note3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"the two 1s make 2\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line3, RIGHT, buff=0.6)",
+      "after": "sc4cb255"
+    },
+    {
+      "id": "o886ff61",
+      "name": "note4",
+      "ctor": "Text",
+      "args": {
+        "*": "\"take out a 2\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line4, RIGHT, buff=0.6)",
+      "after": "sc4cb255"
+    },
+    {
+      "id": "o33930cd",
+      "name": "note5",
+      "ctor": "Text",
+      "args": {
+        "*": "\"where k = a + b + 1\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line5, RIGHT, buff=0.6)",
+      "after": "sc4cb255"
+    },
+    {
+      "id": "o05e2dfe",
+      "name": "box",
+      "ctor": "SurroundingRectangle",
+      "args": {
+        "*": "line5",
+        "color": "GREEN",
+        "buff": "0.15"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "sc4cb255"
+    },
+    {
+      "id": "o64add03",
+      "name": "heading3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"See it with dots:  5 + 7\"",
+        "font_size": "44"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "s8fb44f5",
+      "comment": "# ---- See it with dots: the two left-over dots make one more pair"
+    },
+    {
+      "id": "o597129a",
+      "name": "five",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.2, color=BLUE) for _ in range(4)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=2, cols=2, buff=0.4).shift(LEFT * 3 + UP * 0.3)",
+      "after": "s8fb44f5"
+    },
+    {
+      "id": "oaaa6fef",
+      "name": "seven2",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.2, color=BLUE) for _ in range(6)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=2, cols=3, buff=0.4).shift(RIGHT * 2.4 + UP * 0.3)",
+      "after": "s4b35416"
+    },
+    {
+      "id": "od5d4fbf",
+      "name": "five_label",
+      "ctor": "Text",
+      "args": {
+        "*": "\"5\"",
+        "font_size": "40"
+      },
+      "pos": null,
+      "chain": ".next_to(VGroup(five, five_extra), DOWN, buff=0.5)",
+      "after": "sa614d43"
+    },
+    {
+      "id": "o3434468",
+      "name": "seven_label2",
+      "ctor": "Text",
+      "args": {
+        "*": "\"7\"",
+        "font_size": "40"
+      },
+      "pos": null,
+      "chain": ".next_to(VGroup(seven2, seven2_extra), DOWN, buff=0.5)",
+      "after": "sa614d43"
+    },
+    {
+      "id": "o31f750a",
+      "name": "dominoes",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[SurroundingRectangle(VGroup(a, b), buff=0.12, corner_radius=0.18, color=GREEN)\nfor a, b in [(five[0], five[2]), (five[1], five[3]), (five_extra, seven2_extra),\n             (seven2[0], seven2[3]), (seven2[1], seven2[4]), (seven2[2], seven2[5])]]"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "s879d656"
+    },
+    {
+      "id": "o23a41be",
+      "name": "count",
+      "ctor": "Text",
+      "args": {
+        "*": "\"5 + 7 = 12 = 6 pairs, nothing left over: even\"",
+        "font_size": "34",
+        "t2c": "{\"even\": GREEN}"
+      },
+      "pos": null,
+      "chain": ".next_to(seven2, DOWN, buff=0.9).set_x(0)",
+      "after": "s879d656"
+    },
+    {
+      "id": "o6896f46",
+      "name": "general",
+      "ctor": "Text",
+      "args": {
+        "*": "\"The two left-over ones always make one more pair\"",
+        "font_size": "30",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(count, DOWN, buff=0.35)",
+      "after": "s879d656"
+    },
+    {
+      "id": "o8b6f02e",
+      "name": "final",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Odd + Odd = Even\"",
+        "font_size": "72",
+        "t2c": "{\"Odd\": YELLOW, \"Even\": GREEN}"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "sf3c8d0e",
+      "comment": "# ---- Conclusion"
+    },
+    {
+      "id": "o1b997bb",
+      "name": "proof",
+      "ctor": "Text",
+      "args": {
+        "*": "\"(2a + 1) + (2b + 1) = 2(a + b + 1)\"",
+        "font_size": "40",
+        "t2c": "{\"2(a + b + 1)\": GREEN}"
+      },
+      "pos": null,
+      "chain": ".next_to(final, DOWN, buff=0.5)",
+      "after": "sf3c8d0e"
+    }
+  ],
+  "timeline": [
+    {
+      "id": "scfe74bc",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aace8e74",
+          "cls": "Write",
+          "target": "title",
+          "args": {}
+        }
+      ],
+      "args": {
+        "run_time": "1.5"
+      }
+    },
+    {
+      "id": "s623b507",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a68da269",
+          "cls": "FadeIn",
+          "target": "subtitle",
+          "args": {
+            "shift": "UP * 0.3"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s5c5afc1",
+      "kind": "wait",
+      "args": {
+        "duration": "1.5"
+      }
+    },
+    {
+      "id": "s09d14f6",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a20da44d",
+          "cls": "FadeOut",
+          "target": "title, subtitle",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s1b4157f",
+      "kind": "code",
+      "code": "seven_extra = Dot(radius=0.2, color=YELLOW).next_to(seven, RIGHT, buff=0.4).align_to(seven, UP)"
+    },
+    {
+      "id": "s88d54f6",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "afcd68f1",
+          "cls": "Write",
+          "target": "heading",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s35855d8",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ad9a1bbf",
+          "cls": "LaggedStartMap",
+          "target": "six",
+          "args": {
+            "*": "GrowFromCenter",
+            "lag_ratio": "0.1"
+          }
+        },
+        {
+          "id": "a023b27b",
+          "cls": "LaggedStartMap",
+          "target": "seven",
+          "args": {
+            "*": "GrowFromCenter",
+            "lag_ratio": "0.1"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sf61050d",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ad55db90",
+          "cls": "FadeIn",
+          "target": "seven_extra",
+          "args": {
+            "scale": "2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s4aab679",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aefa10ff",
+          "cls": "Indicate",
+          "target": "seven_extra",
+          "args": {
+            "color": "YELLOW",
+            "scale_factor": "1.6"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s913db77",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a3a85c3b",
+          "cls": "Write",
+          "target": "six_label",
+          "args": {}
+        },
+        {
+          "id": "ac172a23",
+          "cls": "Write",
+          "target": "seven_label",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sd9dd002",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "sc4dd874",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a9d7554b",
+          "cls": "FadeOut",
+          "target": "heading, six, seven, seven_extra, six_label, seven_label",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sc4cb255",
+      "kind": "code",
+      "code": "line3.align_to(line2[3], LEFT)\nline4.align_to(line2[3], LEFT)\nline5.align_to(line2[3], LEFT)"
+    },
+    {
+      "id": "s8f2648f",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a7130b29",
+          "cls": "Write",
+          "target": "heading2",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s61082e0",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ad1a7c45",
+          "cls": "Write",
+          "target": "line1",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s28b38dc",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s5706451",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a3cded33",
+          "cls": "Write",
+          "target": "line2",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s17047eb",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "sa4c23d0",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a9b72001",
+          "cls": "Write",
+          "target": "line3",
+          "args": {}
+        },
+        {
+          "id": "a972f64d",
+          "cls": "FadeIn",
+          "target": "note3",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s0858c44",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "sf38aa93",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ab83259f",
+          "cls": "Write",
+          "target": "line4",
+          "args": {}
+        },
+        {
+          "id": "ab26fa24",
+          "cls": "FadeIn",
+          "target": "note4",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "saf4d663",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s7a7178c",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a5a146f0",
+          "cls": "Write",
+          "target": "line5",
+          "args": {}
+        },
+        {
+          "id": "a12c5456",
+          "cls": "FadeIn",
+          "target": "note5",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sdc5a365",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a051e6f1",
+          "cls": "Create",
+          "target": "box",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sfd31c3e",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "affe86e7",
+          "cls": "Indicate",
+          "target": "line5",
+          "args": {
+            "color": "GREEN"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s73e3e05",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "s8fb44f5",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "acb03173",
+          "cls": "FadeOut",
+          "target": "heading2, line1, line2, line3, line4, line5, note3, note4, note5, box",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s4b35416",
+      "kind": "code",
+      "code": "five_extra = Dot(radius=0.2, color=YELLOW).next_to(five, RIGHT, buff=0.4).align_to(five, UP)"
+    },
+    {
+      "id": "sa614d43",
+      "kind": "code",
+      "code": "seven2_extra = Dot(radius=0.2, color=YELLOW).next_to(seven2, RIGHT, buff=0.4).align_to(seven2, UP)"
+    },
+    {
+      "id": "sfb94c60",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a753b243",
+          "cls": "Write",
+          "target": "heading3",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sd74d5d4",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a5b80f3d",
+          "cls": "LaggedStartMap",
+          "target": "five",
+          "args": {
+            "*": "FadeIn",
+            "lag_ratio": "0.1"
+          }
+        },
+        {
+          "id": "ac15f302",
+          "cls": "LaggedStartMap",
+          "target": "seven2",
+          "args": {
+            "*": "FadeIn",
+            "lag_ratio": "0.1"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s10d8053",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a52e72e9",
+          "cls": "FadeIn",
+          "target": "five_extra",
+          "args": {
+            "scale": "2"
+          }
+        },
+        {
+          "id": "aa1db526",
+          "cls": "FadeIn",
+          "target": "seven2_extra",
+          "args": {
+            "scale": "2"
+          }
+        },
+        {
+          "id": "a45e1125",
+          "cls": "Write",
+          "target": "five_label",
+          "args": {}
+        },
+        {
+          "id": "a9654477",
+          "cls": "Write",
+          "target": "seven_label2",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s6c0c99b",
+      "kind": "wait",
+      "args": {
+        "duration": "1"
+      }
+    },
+    {
+      "id": "s879d656",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "abb06118",
+          "cls": "animate",
+          "target": "five_extra",
+          "args": {},
+          "chain": ".move_to(five[1].get_center() + RIGHT * 2.2)"
+        },
+        {
+          "id": "ae9ffec6",
+          "cls": "animate",
+          "target": "seven2_extra",
+          "args": {},
+          "chain": ".move_to(five[3].get_center() + RIGHT * 2.2)"
+        },
+        {
+          "id": "af157867",
+          "cls": "FadeOut",
+          "target": "five_label, seven_label2",
+          "args": {}
+        }
+      ],
+      "args": {
+        "run_time": "1.5"
+      },
+      "comment": "# the two left-overs meet in the middle"
+    },
+    {
+      "id": "sf0b04f6",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "acebcc6b",
+          "cls": "LaggedStartMap",
+          "target": "dominoes",
+          "args": {
+            "*": "Create",
+            "lag_ratio": "0.2"
+          }
+        }
+      ],
+      "args": {
+        "run_time": "2.5"
+      }
+    },
+    {
+      "id": "sfff9674",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a6185004",
+          "cls": "Indicate",
+          "target": "dominoes[2]",
+          "args": {
+            "color": "YELLOW"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sbb6b591",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a7aff98f",
+          "cls": "Write",
+          "target": "count",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s27529e5",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a57716dd",
+          "cls": "FadeIn",
+          "target": "general",
+          "args": {
+            "shift": "UP * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s2b707f1",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "sf3c8d0e",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ad5a4e35",
+          "cls": "FadeOut",
+          "target": "heading3, five, five_extra, seven2, seven2_extra, dominoes, count, general",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s0e49958",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a3a1867c",
+          "cls": "Write",
+          "target": "final",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sbbf5774",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aed487df",
+          "cls": "FadeIn",
+          "target": "proof",
+          "args": {
+            "shift": "UP * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sad05b29",
+      "kind": "wait",
+      "args": {
+        "duration": "3"
+      }
+    }
+  ],
+  "markers": [],
+  "constructions": []
+}

@@ -1,0 +1,836 @@
+{
+  "version": 4,
+  "scene": {
+    "name": "OddTimesOdd",
+    "base": "Scene"
+  },
+  "config": {
+    "pixel_width": 1920,
+    "pixel_height": 1080,
+    "frame_rate": 60,
+    "background_color": "#000000"
+  },
+  "header": "",
+  "objects": [
+    {
+      "id": "o60c3a3e",
+      "name": "title",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Odd \u00d7 Odd = Odd\"",
+        "font_size": "72",
+        "t2c": "{\"Odd\": YELLOW}"
+      },
+      "pos": null,
+      "chain": "",
+      "comment": "# ---- Title"
+    },
+    {
+      "id": "o0b12be2",
+      "name": "subtitle",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Why multiplying two odd numbers always gives an odd number\"",
+        "font_size": "28",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(title, DOWN, buff=0.4)"
+    },
+    {
+      "id": "o52ebbd2",
+      "name": "heading",
+      "ctor": "Text",
+      "args": {
+        "*": "\"What makes a number odd?\"",
+        "font_size": "44"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "se01f506",
+      "comment": "# ---- What makes a number odd: pairs plus one left over"
+    },
+    {
+      "id": "ocbb2936",
+      "name": "pairs",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.2, color=BLUE) for _ in range(6)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=2, cols=3, buff=0.4).shift(LEFT * 0.4 + UP * 0.6)",
+      "after": "se01f506"
+    },
+    {
+      "id": "o54c28af",
+      "name": "seven",
+      "ctor": "Text",
+      "args": {
+        "*": "\"7 = 2 \u00d7 3 + 1\"",
+        "font_size": "44",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(pairs, DOWN, buff=0.7)",
+      "after": "sf338ef1"
+    },
+    {
+      "id": "o825dc9e",
+      "name": "rule",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Every odd number is pairs plus one left over:  2k + 1\"",
+        "font_size": "32",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(seven, DOWN, buff=0.6)",
+      "after": "sf338ef1"
+    },
+    {
+      "id": "o3381a8f",
+      "name": "heading2",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Take any two odd numbers\"",
+        "font_size": "44"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "sbea666b",
+      "comment": "# ---- The algebra"
+    },
+    {
+      "id": "obcef403",
+      "name": "line1",
+      "ctor": "Text",
+      "args": {
+        "*": "\"m = 2a + 1,    n = 2b + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(heading2, DOWN, buff=0.7)",
+      "after": "sbea666b"
+    },
+    {
+      "id": "o480ee82",
+      "name": "line2",
+      "ctor": "Text",
+      "args": {
+        "*": "\"m \u00d7 n = (2a + 1)(2b + 1)\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(line1, DOWN, buff=0.45)",
+      "after": "sbea666b"
+    },
+    {
+      "id": "o7c690eb",
+      "name": "line3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 4ab + 2a + 2b + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(line2, DOWN, buff=0.45)",
+      "after": "sbea666b"
+    },
+    {
+      "id": "o34ebe42",
+      "name": "line4",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 2(2ab + a + b) + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(line3, DOWN, buff=0.45)",
+      "after": "sbea666b"
+    },
+    {
+      "id": "o8390462",
+      "name": "line5",
+      "ctor": "Text",
+      "args": {
+        "*": "\"= 2k + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(line4, DOWN, buff=0.45)",
+      "after": "sbea666b"
+    },
+    {
+      "id": "o038ff26",
+      "name": "note3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"multiply out\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line3, RIGHT, buff=0.6)",
+      "after": "s102b20c"
+    },
+    {
+      "id": "o8d371f6",
+      "name": "note4",
+      "ctor": "Text",
+      "args": {
+        "*": "\"take out a 2\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line4, RIGHT, buff=0.6)",
+      "after": "s102b20c"
+    },
+    {
+      "id": "o697253f",
+      "name": "note5",
+      "ctor": "Text",
+      "args": {
+        "*": "\"where k = 2ab + a + b\"",
+        "font_size": "26",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(line5, RIGHT, buff=0.6)",
+      "after": "s102b20c"
+    },
+    {
+      "id": "o028ffc8",
+      "name": "box",
+      "ctor": "SurroundingRectangle",
+      "args": {
+        "*": "line5",
+        "color": "YELLOW",
+        "buff": "0.15"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "s102b20c"
+    },
+    {
+      "id": "o4dff84c",
+      "name": "heading3",
+      "ctor": "Text",
+      "args": {
+        "*": "\"See it with dots:  3 \u00d7 5\"",
+        "font_size": "44"
+      },
+      "pos": null,
+      "chain": ".to_edge(UP, buff=0.6)",
+      "after": "s903ced5",
+      "comment": "# ---- See it with dots: a 3 \u00d7 5 grid pairs up except one corner"
+    },
+    {
+      "id": "o0301f5a",
+      "name": "grid",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[Dot(radius=0.18, color=BLUE) for _ in range(15)]"
+      },
+      "pos": null,
+      "chain": ".arrange_in_grid(rows=3, cols=5, buff=0.55).shift(DOWN * 0.2)",
+      "after": "s903ced5"
+    },
+    {
+      "id": "o0e8389d",
+      "name": "dominoes",
+      "ctor": "VGroup",
+      "args": {
+        "*": "*[SurroundingRectangle(VGroup(grid[i], grid[j]), buff=0.12, corner_radius=0.18, color=GREEN)\nfor i, j in [(0, 1), (2, 3), (5, 6), (7, 8), (10, 11), (12, 13), (4, 9)]]"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "s903ced5"
+    },
+    {
+      "id": "o513b335",
+      "name": "count",
+      "ctor": "Text",
+      "args": {
+        "*": "\"7 pairs + 1 left over = 15, which is odd\"",
+        "font_size": "34",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(grid, DOWN, buff=0.8)",
+      "after": "s903ced5"
+    },
+    {
+      "id": "o10a1ed0",
+      "name": "general",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Any odd \u00d7 odd grid pairs up except one corner dot\"",
+        "font_size": "30",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".next_to(count, DOWN, buff=0.35)",
+      "after": "s903ced5"
+    },
+    {
+      "id": "o6e010ea",
+      "name": "final",
+      "ctor": "Text",
+      "args": {
+        "*": "\"Odd \u00d7 Odd = Odd\"",
+        "font_size": "72",
+        "t2c": "{\"Odd\": YELLOW}"
+      },
+      "pos": null,
+      "chain": "",
+      "after": "s8424e42",
+      "comment": "# ---- Conclusion"
+    },
+    {
+      "id": "ocbd995c",
+      "name": "proof",
+      "ctor": "Text",
+      "args": {
+        "*": "\"(2a + 1)(2b + 1) = 2k + 1\"",
+        "font_size": "40",
+        "t2c": "{\"+ 1\": YELLOW}"
+      },
+      "pos": null,
+      "chain": ".next_to(final, DOWN, buff=0.5)",
+      "after": "s8424e42"
+    },
+    {
+      "id": "odec8a0c",
+      "name": "aside",
+      "ctor": "Text",
+      "args": {
+        "*": "\"But odd + odd is even: the two left-over ones make a pair.\"",
+        "font_size": "28",
+        "color": "GREY_B"
+      },
+      "pos": null,
+      "chain": ".to_edge(DOWN, buff=0.8)",
+      "after": "s8424e42"
+    }
+  ],
+  "timeline": [
+    {
+      "id": "s88bba81",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a6116cad",
+          "cls": "Write",
+          "target": "title",
+          "args": {}
+        }
+      ],
+      "args": {
+        "run_time": "1.5"
+      }
+    },
+    {
+      "id": "s17b6854",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a1287ea8",
+          "cls": "FadeIn",
+          "target": "subtitle",
+          "args": {
+            "shift": "UP * 0.3"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s6ed50db",
+      "kind": "wait",
+      "args": {
+        "duration": "1.5"
+      }
+    },
+    {
+      "id": "se01f506",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a95ed45f",
+          "cls": "FadeOut",
+          "target": "title, subtitle",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sf338ef1",
+      "kind": "code",
+      "code": "extra = Dot(radius=0.2, color=YELLOW).next_to(pairs, RIGHT, buff=0.4).align_to(pairs, UP)"
+    },
+    {
+      "id": "s1643448",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a05936c6",
+          "cls": "Write",
+          "target": "heading",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s4df2c4e",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a99fcd5d",
+          "cls": "LaggedStartMap",
+          "target": "pairs",
+          "args": {
+            "*": "GrowFromCenter",
+            "lag_ratio": "0.15"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sb5de0d6",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a5820087",
+          "cls": "FadeIn",
+          "target": "extra",
+          "args": {
+            "scale": "2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s8c6c93a",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a2049441",
+          "cls": "Indicate",
+          "target": "extra",
+          "args": {
+            "color": "YELLOW",
+            "scale_factor": "1.6"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s980aaae",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a8fca50a",
+          "cls": "Write",
+          "target": "seven",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "scd77cb9",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aee39d05",
+          "cls": "FadeIn",
+          "target": "rule",
+          "args": {
+            "shift": "UP * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sdcd661c",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "sbea666b",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a33e7881",
+          "cls": "FadeOut",
+          "target": "heading, pairs, extra, seven, rule",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s102b20c",
+      "kind": "code",
+      "code": "line3.align_to(line2[3], LEFT)\nline4.align_to(line2[3], LEFT)\nline5.align_to(line2[3], LEFT)"
+    },
+    {
+      "id": "s0bbe02f",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a59a9caa",
+          "cls": "Write",
+          "target": "heading2",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sc9ae3e6",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aa22a35a",
+          "cls": "Write",
+          "target": "line1",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s3cd4f18",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s77014c9",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a1c0b9bd",
+          "cls": "Write",
+          "target": "line2",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sd0af200",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s775f74c",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "af7d73fa",
+          "cls": "Write",
+          "target": "line3",
+          "args": {}
+        },
+        {
+          "id": "aef732c6",
+          "cls": "FadeIn",
+          "target": "note3",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "se161b4e",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s2ce941b",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a7101677",
+          "cls": "Write",
+          "target": "line4",
+          "args": {}
+        },
+        {
+          "id": "a5c88182",
+          "cls": "FadeIn",
+          "target": "note4",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s6ad8eb5",
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      }
+    },
+    {
+      "id": "s01ade6c",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "af9f4c1e",
+          "cls": "Write",
+          "target": "line5",
+          "args": {}
+        },
+        {
+          "id": "a9d7cb61",
+          "cls": "FadeIn",
+          "target": "note5",
+          "args": {
+            "shift": "LEFT * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "se3c3f68",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a2b12d0c",
+          "cls": "Create",
+          "target": "box",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s1a9911c",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ad18ab93",
+          "cls": "Indicate",
+          "target": "line5",
+          "args": {
+            "color": "YELLOW"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "sdb9c362",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "s903ced5",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a9892915",
+          "cls": "FadeOut",
+          "target": "heading2, line1, line2, line3, line4, line5, note3, note4, note5, box",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s1aecd07",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a5cbe9f6",
+          "cls": "Write",
+          "target": "heading3",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "se24dbff",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a18aaab4",
+          "cls": "LaggedStartMap",
+          "target": "grid",
+          "args": {
+            "*": "FadeIn",
+            "lag_ratio": "0.05"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s47b7645",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a24345b0",
+          "cls": "LaggedStartMap",
+          "target": "dominoes",
+          "args": {
+            "*": "Create",
+            "lag_ratio": "0.2"
+          }
+        }
+      ],
+      "args": {
+        "run_time": "2.5"
+      }
+    },
+    {
+      "id": "s8d2e72b",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a897ffb7",
+          "cls": "animate",
+          "target": "grid[14]",
+          "args": {},
+          "chain": ".set_color(YELLOW).scale(1.5)"
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "scf09fa9",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ac3f22c6",
+          "cls": "Write",
+          "target": "count",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s8c223b0",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "aa561e3b",
+          "cls": "FadeIn",
+          "target": "general",
+          "args": {
+            "shift": "UP * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s716c266",
+      "kind": "wait",
+      "args": {
+        "duration": "2"
+      }
+    },
+    {
+      "id": "s8424e42",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "a5990f21",
+          "cls": "FadeOut",
+          "target": "heading3, grid, dominoes, count, general",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s5724358",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "ac945c33",
+          "cls": "Write",
+          "target": "final",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s9d2bd7e",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "adc628e2",
+          "cls": "FadeIn",
+          "target": "proof",
+          "args": {
+            "shift": "UP * 0.2"
+          }
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s438b0bc",
+      "kind": "wait",
+      "args": {
+        "duration": "1.5"
+      }
+    },
+    {
+      "id": "saac7b73",
+      "kind": "play",
+      "anims": [
+        {
+          "id": "abc2beb8",
+          "cls": "FadeIn",
+          "target": "aside",
+          "args": {}
+        }
+      ],
+      "args": {}
+    },
+    {
+      "id": "s2cbac68",
+      "kind": "wait",
+      "args": {
+        "duration": "2.5"
+      }
+    }
+  ],
+  "markers": [],
+  "constructions": []
+}
