@@ -12,6 +12,79 @@ export interface SceneObject {
   scale?: number;
   stretch?: [number, number];
   rotation?: number; // degrees
+  link?: Link; // defined by its relationship to other objects (mathengine/construct.py)
+  eq?: { parts: EqPart[] }; // equation split into terms
+  param?: ParamMeta; // a ValueTracker used as a named parameter
+  instance?: InstanceRef; // part of an inserted construction
+}
+
+/** Slider bounds of a parameter (a ValueTracker object; its value is args["*"]). */
+export interface ParamMeta {
+  min: number;
+  max: number;
+  step: number;
+}
+
+/** A term of an equation; ids stay stable across edits so styling and correspondences survive. */
+export interface EqPart {
+  id: string;
+  tex: string;
+  color?: string;
+}
+
+export interface InstanceRef {
+  template: string; // template id
+  instance: string; // id shared by all objects of one inserted instance
+  local: string; // the object's id inside the template
+  linked?: boolean; // regenerated when the template changes
+  inputs?: Record<string, string>; // the instance's input values
+  offset?: [number, number]; // where it was placed relative to the template
+}
+
+/** Follow links own an object's position; redraw links own its shape. Sources are object ids; expressions are math text. */
+export type Link =
+  | { kind: 'attach'; to: string; parts?: string[]; offset: [number, number]; frozen?: boolean }
+  | { kind: 'midpoint'; a: string; b?: string; frozen?: boolean }
+  | { kind: 'on_graph'; graph: string; x: string; frozen?: boolean }
+  | { kind: 'on_circle'; circle: string; angle: string; frozen?: boolean }
+  | { kind: 'coords'; axes: string; x: string; y: string; frozen?: boolean }
+  // Lines are extended both ways; an axes source means its x-axis, or its y-axis with axis: 'y'.
+  | { kind: 'intersection'; a: string; b: string; which?: number; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'projection'; point: string; onto: string; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'measure'; what: 'length' | 'angle' | 'slope' | 'integral' | 'value'; of?: string; expr?: string; offset?: [number, number]; degrees?: boolean; frozen?: boolean }
+  | { kind: 'segment'; a: string; b: string; mode?: 'center' | 'boundary'; frozen?: boolean }
+  | { kind: 'circle2'; a: string; b: string; mode?: 'center' | 'diameter'; frozen?: boolean }
+  | { kind: 'perpendicular'; line: string; through: string; mode?: 'line' | 'foot'; length?: string; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'parallel'; line: string; through: string; length?: string; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'polygon'; points: string[]; frozen?: boolean }
+  | { kind: 'angle'; l1: string; l2: string; radius?: string; other?: boolean; quadrant?: [number, number]; frozen?: boolean }
+  | { kind: 'graph'; axes: string; expr: string; x_min?: number; x_max?: number; discontinuities?: number[]; gap?: number; frozen?: boolean }
+  | { kind: 'tangent'; graph: string; x: string; length?: string; frozen?: boolean }
+  | { kind: 'secant'; graph: string; x: string; dx: string; length?: string; frozen?: boolean }
+  | { kind: 'area'; graph: string; a: string; b: string; bounded?: string; frozen?: boolean }
+  | { kind: 'riemann'; graph: string; a: string; b: string; dx: string; sample?: 'left' | 'right' | 'center'; bounded?: string; frozen?: boolean }
+  | { kind: 'brace'; target: string; parts?: string[]; direction?: string; frozen?: boolean }
+  | { kind: 'highlight'; target: string; parts?: string[]; style?: 'box' | 'background' | 'underline'; frozen?: boolean };
+
+export type LinkKind = Link['kind'];
+
+/** Reusable construction: objects + clips + exposed inputs (mathengine/starters.py). */
+export interface Template {
+  id: string;
+  name: string;
+  description?: string;
+  builtin?: boolean;
+  objects: SceneObject[];
+  clips: Partial<Clip>[]; // relative start, targets by template-local name
+  inputs: TemplateInput[];
+}
+
+export interface TemplateInput {
+  id: string;
+  kind: 'param' | 'text' | 'color' | 'visible';
+  label: string;
+  default: string;
+  targets: { object: string; key?: string }[];
 }
 
 export interface Track {
@@ -40,6 +113,8 @@ export interface Clip {
   label?: string;
   // add / remove
   targets?: string[];
+  // TransformTerms: destination equation (object id) and term pairs [source part id, target part id]
+  terms?: { to: string; pairs: [string, string][] };
 }
 
 export interface Marker {
@@ -57,6 +132,7 @@ export interface SceneDoc {
   tracks: Track[];
   clips: Clip[];
   markers?: Marker[];
+  constructions?: Template[];
 }
 
 export interface Param {
@@ -75,6 +151,7 @@ export interface Param {
   pos?: number; // positional index (the "*" arg fills pos 0 when the class has no *args)
   kwonly?: boolean;
   accepts?: string[]; // mobject(s): classes the referenced object must be (Angle.line1 -> Line…)
+  doc?: string; // what it is and what changing it does (manim's docstrings, or MathEngine's own words)
 }
 
 export type ParamKind =
@@ -127,12 +204,25 @@ export interface RunError {
   trace: string;
 }
 
+export type Pt = [number, number];
+
 export interface ObjInfo {
   id: string;
   name: string;
   visible: boolean;
   box: [number, number, number, number] | null; // x0, y0, x1, y1 (scene units, y up)
-  center: [number, number] | null;
+  center: Pt | null;
+  geom?: { kind: 'line'; start: Pt; end: Pt } | { kind: 'point'; center: Pt } | { kind: 'circle'; center: Pt; radius: number } | { kind: 'polygon'; vertices: Pt[] };
+  path?: Pt[]; // sampled outline (graphs, circles) for snapping
+  axes?: { origin: Pt; ux: Pt; uy: Pt; x_range: [number, number]; y_range: [number, number] };
+  parts?: { id: string; box: [number, number, number, number] | null }[];
+}
+
+export interface Diagnostic {
+  id: string;
+  level: 'error' | 'warning';
+  message: string;
+  kind: 'object' | 'clip';
 }
 
 export interface RunResult {
@@ -144,6 +234,8 @@ export interface RunResult {
   image: string | null;
   error: RunError | null;
   elapsed_ms: number;
+  values: Record<string, number>; // ValueTracker values at this time
+  diagnostics: Diagnostic[];
 }
 
 export interface Job {
@@ -156,4 +248,11 @@ export interface Job {
   error?: RunError;
 }
 
-export type Selection = { kind: 'object'; id: string } | { kind: 'clips'; ids: string[] } | null;
+export type Selection =
+  | { kind: 'object'; id: string; terms?: string[] } // terms: selected equation parts
+  | { kind: 'objects'; ids: string[] }
+  | { kind: 'clips'; ids: string[] }
+  | null;
+
+/** Canvas tool. */
+export type Tool = 'select' | 'point' | 'line' | 'arrow' | 'circle' | 'rect' | 'polygon';

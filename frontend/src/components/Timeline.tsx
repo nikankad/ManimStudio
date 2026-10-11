@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
-  addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, chooseTrack, clipDuration, deleteSelection, docKey, fps, previewFresh,
-  frameSnap, getState, isLocked, parseTimecode, selectClips, sequenceEnd, setPlaying, setState, timecode, trackIsFree, uid,
+  addAnimation, addClip, addMarker, addObject, addTrack, addTrackTo, clipDuration, deleteSelection, docKey, fps, previewFresh,
+  frameSnap, getState, isLocked, parseTimecode, selectClips, sequenceEnd, setPlaying, setState, timecode, toast, trackIsFree, uid,
   updateDoc, useStore,
 } from '../store';
-import type { Clip } from '../types';
+import type { Clip, SceneDoc } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 import { ratePath } from './rates';
 
@@ -42,6 +42,7 @@ export function Timeline() {
   const targetTrack = useStore((s) => s.targetTrack);
   const catalog = useStore((s) => s.catalog);
   const error = useStore((s) => s.frame?.error ?? s.timeline?.error);
+  const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
   const bodyRef = useRef<HTMLDivElement>(null);
   const laneRef = useRef<HTMLDivElement>(null);
   const [laneW, setLaneW] = useState(800);
@@ -162,6 +163,16 @@ export function Timeline() {
     };
   }, [drag?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Row a moved clip lands on: the one it's dropped on when that's free (and unlocked), else the nearest
+   * free row above it, else a new track on top (-1). The drag ghost shows exactly this.
+   */
+  const landingRow = (d: SceneDoc, ri: number, start: number, dur: number, ignore: Set<string>): number => {
+    const free = (r: number) => !rows[r].locked && trackIsFree(d, rows[r].id, start, start + Math.max(dur, 0.05), ignore);
+    for (let r = Math.min(ri, rows.length - 1); r >= 0; r--) if (free(r)) return r;
+    return -1;
+  };
+
   const trimBounds = (c: Clip) => {
     const others = doc.clips.filter((k) => k.track === c.track && k.id !== c.id);
     const prevEnd = Math.max(0, ...others.filter((k) => k.start + k.duration <= c.start + 1e-6).map((k) => k.start + k.duration));
@@ -196,13 +207,10 @@ export function Timeline() {
       let newTrack: string | null = null;
       for (const orig of list) {
         const c = d.alt ? { ...structuredClone(orig), id: uid('c') } : orig;
-        const ri = rows.findIndex((t) => t.id === orig.track) + d.drow;
-        let track = ri < 0 ? (newTrack ??= addTrackTo(nd).id) : rows[Math.min(ri, rows.length - 1)].id;
         c.start = round(Math.max(0, orig.start + d.dt));
         const ignore = new Set([...(d.alt ? [] : list.map((k) => k.id).filter((id) => !placed.has(id)))]);
-        if (!trackIsFree(nd, track, c.start, c.start + Math.max(c.duration, 0.05), ignore) || nd.tracks.find((t) => t.id === track)?.locked)
-          track = chooseTrack(nd, c.start, c.duration, { ignore });
-        c.track = track;
+        const row = landingRow(nd, rows.findIndex((t) => t.id === orig.track) + d.drow, c.start, c.duration, ignore);
+        c.track = row < 0 ? (newTrack ??= addTrackTo(nd).id) : rows[row].id;
         placed.add(orig.id);
         if (d.alt) {
           nd.clips.push(c);
@@ -270,6 +278,7 @@ export function Timeline() {
     const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name;
     if (!target) return setState({ toast: 'Add an object first, then drop animations' });
     addAnimation(p.name, target, { start: t, track });
+    if (!sel) toast(`${p.name} animates ${target}, the newest object. Select an object first to target it, or change it in Effect Controls`);
   };
 
   // ------------------------------------------------------------ ruler
@@ -282,14 +291,11 @@ export function Timeline() {
   }
 
   // ------------------------------------------------------------ layout of clips (with drag ghosts)
-  const layout = (c: Clip): { start: number; dur: number; row: number; ghost?: boolean; bad?: boolean; pushed?: boolean } => {
+  const layout = (c: Clip): { start: number; dur: number; row: number; ghost?: boolean; pushed?: boolean } => {
     let start = c.start, dur = clipDuration(c, timeline), row = rows.findIndex((t) => t.id === c.track);
     if (drag?.mode === 'move' && drag.moved && drag.ids.includes(c.id) && !drag.alt) {
       start = Math.max(0, start + drag.dt);
-      row = clamp(row + drag.drow, -1, rows.length - 1);
-      const track = rows[row]?.id;
-      const bad = track ? !trackIsFree(doc, track, start, start + Math.max(dur, 0.05), new Set(drag.ids)) : false;
-      return { start, dur, row, ghost: true, bad };
+      return { start, dur, row: landingRow(doc, row + drag.drow, start, dur, new Set(drag.ids)), ghost: true };
     }
     if ((drag?.mode === 'trim-start' || drag?.mode === 'trim-end') && drag.id === c.id) {
       const r = trimmed(c, drag);
@@ -301,7 +307,9 @@ export function Timeline() {
     return { start, dur, row };
   };
   const altGhosts = drag?.mode === 'move' && drag.moved && drag.alt ? doc.clips.filter((c) => drag.ids.includes(c.id)) : [];
-  const newTrackRow = drag?.mode === 'move' && drag.moved && doc.clips.some((c) => drag.ids.includes(c.id) && rows.findIndex((t) => t.id === c.track) + drag.drow < 0);
+  const altRow = (c: Clip, d: Extract<Drag, { mode: 'move' }>) =>
+    landingRow(doc, rows.findIndex((t) => t.id === c.track) + d.drow, Math.max(0, c.start + d.dt), clipDuration(c, timeline), new Set());
+  const newTrackRow = drag?.mode === 'move' && drag.moved && doc.clips.some((c) => drag.ids.includes(c.id) && (drag.alt ? altRow(c, drag) : layout(c).row) < 0);
 
   const totalH = RULER + (rows.length + (newTrackRow ? 1 : 0)) * ROW + 24;
   const rowTop = (r: number) => RULER + (r + (newTrackRow ? 1 : 0)) * ROW;
@@ -313,12 +321,13 @@ export function Timeline() {
     if (left + w < -40 || left > laneW + 40) return null;
     const color = clipColor(c, catalog?.animations);
     const label = clipLabel(c);
+    const warn = diagnostics?.find((x) => x.id === c.id && x.kind === 'clip');
     return (
       <div
         key={key}
-        className={`clip ${c.kind} ${instant ? 'instant' : ''} ${selected.has(c.id) ? 'sel' : ''} ${c.disabled ? 'disabled' : ''} ${error?.id === c.id ? 'err' : ''} ${l.ghost ? 'ghost' : ''} ${l.bad ? 'bad' : ''} ${l.pushed ? 'pushed' : ''} ${extraClass}`}
+        className={`clip ${c.kind} ${instant ? 'instant' : ''} ${selected.has(c.id) ? 'sel' : ''} ${c.disabled ? 'disabled' : ''} ${error?.id === c.id ? 'err' : ''} ${l.ghost ? 'ghost' : ''} ${l.pushed ? 'pushed' : ''} ${warn && !l.ghost ? 'warn' : ''} ${extraClass}`}
         style={{ left: instant ? left - 7 : left, width: instant ? 14 : Math.max(w, 3), top: rowTop(l.row) + 3, height: ROW - 6, ['--clip' as string]: color }}
-        title={`${label.title}\n${timecode(l.start)} → ${timecode(l.start + l.dur)}  (${l.dur.toFixed(2)}s)${l.pushed ? `\nPlaced at ${timecode(c.start)} but runs later: clips that start before it must finish first` : ''}`}
+        title={`${label.title}\n${timecode(l.start)} → ${timecode(l.start + l.dur)}  (${l.dur.toFixed(2)}s)${l.pushed ? `\nPlaced at ${timecode(c.start)} but runs later: clips that start before it must finish first` : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
         onPointerDown={(e) => onClipDown(e, c)}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -330,6 +339,7 @@ export function Timeline() {
         {!instant && (
           <>
             <div className="clip-head">
+              {warn && <span className="clip-warn">!</span>}
               {c.kind === 'anim' && <span className="fx">fx</span>}
               <span className="clip-name">{label.name}</span>
               {label.sub && <span className="clip-sub">{label.sub}</span>}
@@ -347,7 +357,7 @@ export function Timeline() {
   };
 
   return (
-    <div className="timeline" onWheel={onWheel}>
+    <div className="timeline" data-tour="timeline" onWheel={onWheel}>
       <div className="tl-header">
         <div className="seq-tab">{doc.scene.name}</div>
         <TimecodeInput value={time} onChange={(t) => setState({ time: t, showVideo: false })} />
@@ -420,8 +430,8 @@ export function Timeline() {
             ))}
             {doc.clips.map((c) => renderClip(c, layout(c), c.id))}
             {altGhosts.map((c) => {
-              const row = clamp(rows.findIndex((t) => t.id === c.track) + (drag as { drow: number }).drow, -1, rows.length - 1);
-              return renderClip(c, { start: Math.max(0, c.start + (drag as { dt: number }).dt), dur: clipDuration(c, timeline), row, ghost: true }, 'alt' + c.id, 'copy');
+              const d = drag as Extract<Drag, { mode: 'move' }>;
+              return renderClip(c, { start: Math.max(0, c.start + d.dt), dur: clipDuration(c, timeline), row: altRow(c, d), ghost: true }, 'alt' + c.id, 'copy');
             })}
             {drag?.mode === 'marquee' && (
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
@@ -527,8 +537,8 @@ function ClipMenu({ x, y, clip, onClose }: { x: number; y: number; clip: Clip; o
       {item(clip.disabled ? 'Enable' : 'Disable', () => updateDoc((d) => d.clips.filter((c) => ids.includes(c.id)).forEach((c) => (c.disabled = !clip.disabled))), 'Shift+E')}
       {item('Delete', () => deleteSelection(), 'Del')}
       {item('Ripple Delete', () => deleteSelection(true), '⇧Del')}
-      {item('Move playhead to start', () => setState({ time: clip.start }))}
-      {item('Move playhead to end', () => setState({ time: clip.start + clipDuration(clip, s.timeline) }))}
+      {item('Move playhead to start', () => setState({ time: frameSnap(clip.start), showVideo: false }))}
+      {item('Move playhead to end', () => setState({ time: frameSnap(clip.start + clipDuration(clip, s.timeline)), showVideo: false }))}
       {clip.target && item(`Select ${clip.target}`, () => {
         const o = s.doc.objects.find((k) => k.name === clip.target);
         if (o) setState({ selection: { kind: 'object', id: o.id } });
@@ -544,6 +554,7 @@ function TimecodeInput({ value, onChange }: { value: number; onChange: (t: numbe
       <input
         className="timecode editing"
         autoFocus
+        onFocus={(e) => e.target.select()}
         value={editing}
         onChange={(e) => setEditing(e.target.value)}
         onBlur={() => setEditing(null)}

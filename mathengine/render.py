@@ -37,6 +37,16 @@ def cache_root() -> Path:
     return path
 
 
+def manim_command() -> list[str]:
+    """How to run manim's command line: ``python -m manim``, or the packaged app's console executable,
+    which runs manim when given ``manim`` as its first argument (see __main__.py and packaging/)."""
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable)
+        cli = exe.with_name("mathengine-cli" + (".exe" if sys.platform == "win32" else ""))
+        return [str(cli if cli.exists() else exe), "manim"]
+    return [sys.executable, "-m", "manim"]
+
+
 class RenderJob:
     def __init__(self, doc: dict, quality: str, output: str | None, project_key: str, plays: int = 1):
         self.id = uuid.uuid4().hex[:12]
@@ -85,7 +95,7 @@ class RenderJob:
             out_name = "preview" if self.quality == "preview" else "render"
             media = self.workdir / "media"
             cmd = [
-                sys.executable, "-m", "manim", "render", str(script), scene_name,
+                *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,
                 "-r", f"{w},{h}", "--fps", str(fps), "--progress_bar", "display",
             ]

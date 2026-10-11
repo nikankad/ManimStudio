@@ -40,6 +40,53 @@ export function splitTop(src: string, sep = ','): string[] {
   return out.filter((x, i, a) => x !== '' || i < a.length - 1);
 }
 
+/**
+ * Replace whole-word identifiers outside string literals (renaming `A` must not touch `Text("A")`
+ * or `r"\theta"`). `names` maps old identifiers to new ones.
+ */
+export function renameIdentifiers(src: string, names: Map<string, string>): string {
+  if (!names.size || !src) return src;
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      const q = src.startsWith(ch.repeat(3), i) ? ch.repeat(3) : ch;
+      let j = i + q.length;
+      while (j < src.length && !src.startsWith(q, j)) j += src[j] === '\\' ? 2 : 1;
+      j = Math.min(src.length, j + q.length);
+      out += src.slice(i, j);
+      i = j;
+      continue;
+    }
+    if (ch === '#') {
+      // A comment runs to the end of the line.
+      const nl = src.indexOf('\n', i);
+      const j = nl < 0 ? src.length : nl;
+      out += src.slice(i, j);
+      i = j;
+      continue;
+    }
+    const num = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(src.slice(i)); // 1e5 is a number; in "2a" only "2" is
+    if (num) {
+      out += num[0];
+      i += num[0].length;
+      continue;
+    }
+    const m = /^[A-Za-z_]\w*/.exec(src.slice(i));
+    if (m) {
+      const attribute = i > 0 && src[i - 1] === '.'; // obj.plot: "plot" is an attribute, not a variable
+      const prefix = /^(r|b|f|u|rb|br|fr|rf)$/i.test(m[0]) && (src[i + m[0].length] === '"' || src[i + m[0].length] === "'"); // r"…"
+      out += !attribute && !prefix && names.has(m[0]) ? names.get(m[0])! : m[0];
+      i += m[0].length;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 /** Index of the bracket closing the one at `start`, or -1. */
 function closing(src: string, start: number): number {
   let depth = 0;

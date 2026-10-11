@@ -5,6 +5,7 @@ import { evalNumber, evalVector, fmtNum, formatDict, formatVector, parseDict, pa
 import { ensureSignature, getState, useSignature, useStore } from '../store';
 import type { Param, ParamKind } from '../types';
 import { ratePath } from './rates';
+import { Tip, type TipContent } from './Tip';
 
 /** Text input that keeps local state while typing and commits on every change. */
 export function Field({ value, onChange, placeholder, className, list, multiline, onBlur }: {
@@ -97,7 +98,7 @@ const SHADES = ['BLUE', 'TEAL', 'GREEN', 'YELLOW', 'GOLD', 'RED', 'MAROON', 'PUR
 
 /** Color swatch that opens a picker with the manim palette, a hex field and the system picker. */
 export function ColorField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  const table = useStore((s) => s.catalog?.color_hex ?? {});
+  const table = useStore((s) => s.catalog?.color_hex) ?? {};
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
   const hex = colorHex(value || placeholder || '', table);
@@ -219,6 +220,32 @@ function snapshotNames() {
   return getState().doc.objects.map((o) => o.name).concat('self.camera.frame');
 }
 
+const TYPE_WORDS: [RegExp, string][] = [
+  [/^(Parsable)?ManimColor$/, 'a color'], [/^float$/, 'a number'], [/^int$/, 'a whole number'], [/^bool$/, 'True or False'],
+  [/^str$/, 'text'], [/^(Point|Vector)3D(Like)?$|^(np\.)?ndarray$|^InternalPoint3D$/, 'a point or direction (e.g. UP * 2)'],
+  [/^V?Mobject$/, 'an object'], [/^(Callable.*|RateFunction|PathFuncType)$/, 'a function'], [/^None$/, 'None'],
+];
+
+/** manim's type annotation in words ("float | None" -> "a number or None"). */
+function plainType(annotation: string): string {
+  const words = annotation.split('|').map((t) => {
+    const k = t.trim();
+    return TYPE_WORDS.find(([re]) => re.test(k))?.[1] ?? k;
+  });
+  return [...new Set(words)].join(' or ');
+}
+
+/** Hover help for a parameter: what it does, its default, what it expects. */
+export function paramTip(param: Param, scrubbable = false): TipContent {
+  const notes = [
+    param.required ? 'Required.' : param.default ? `Empty uses manim's default: ${param.default}` : 'Empty leaves it to manim.',
+    param.annotation && `Expects ${plainType(param.annotation)}.`,
+    param.from && `Comes from ${param.from}.`,
+    scrubbable && 'Drag the name left or right to change it (Shift ×10, Alt ÷10).',
+  ].filter(Boolean) as string[];
+  return { title: param.label, text: param.doc || 'manim doesn’t document this setting; its default is usually right.', notes };
+}
+
 export function ParamField({ param, value, onChange, onRemove, siblings }: { param: Param; value: string; onChange: (v: string) => void; onRemove?: () => void; siblings?: Record<string, string> }) {
   const [rawMode, setRaw] = useState(false);
   const kind: ParamKind = isColorKey(param.name) && param.kind === 'expr' ? 'color' : param.kind;
@@ -231,10 +258,9 @@ export function ParamField({ param, value, onChange, onRemove, siblings }: { par
     ? scrubber(() => evalNumber(value) ?? evalNumber(param.default) ?? 0, step, (v) => onChange(String(v)), param.int || step === 1)
     : undefined;
   return (
-    <div className={`param ${param.required && !value ? 'missing' : ''} ${STRUCTURED.has(kind) && !['string', 'path', 'choice', 'mobject', 'vertex', 'svgpath'].includes(kind) ? 'wide' : ''}`}
-      title={param.annotation ? `${param.label}: ${param.annotation}${param.from ? `  (from ${param.from})` : ''}` : param.label}>
-      <span className={`pname ${scrub ? 'scrubbable' : ''}`} onPointerDown={scrub} title={scrub ? 'Drag to change · Shift ×10 · Alt ÷10' : undefined}>
-        {param.label}
+    <div className={`param ${param.required && !value ? 'missing' : ''} ${STRUCTURED.has(kind) && !['string', 'path', 'choice', 'mobject', 'vertex', 'svgpath'].includes(kind) ? 'wide' : ''}`}>
+      <span className={`pname ${scrub ? 'scrubbable' : ''}`} onPointerDown={scrub}>
+        <Tip tip={paramTip(param, !!scrub)}>{param.label}</Tip>
         {onRemove && <button className="x-btn" title="Remove" onClick={onRemove}>×</button>}
       </span>
       <div className="pcontrol">

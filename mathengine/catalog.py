@@ -484,6 +484,37 @@ def sets_run_time(cls_name: str) -> bool:
 
 
 @functools.lru_cache(maxsize=256)
+def is_introducer(cls_name: str) -> bool:
+    """True for animations that put their mobject on screen to stay (Create, Write, FadeIn, GrowFromCenter…).
+
+    A flash that adds and removes a copy (ShowPassingFlash) doesn't count.
+    """
+    m = manim()
+    cls = vars(m).get(cls_name)
+    if not isinstance(cls, type) or not issubclass(cls, m.Animation):
+        return False
+    for extra in ((), (m.ORIGIN,)):  # GrowFromPoint(mobject, point) needs a point
+        try:
+            anim = cls(m.Square(), *extra)
+            return bool(anim.is_introducer() and not anim.is_remover())
+        except Exception:
+            pass
+    # Can't build one with a square: read the defaults instead.
+    flags = {}
+    for klass in cls.__mro__:
+        if "__init__" not in klass.__dict__:
+            continue
+        try:
+            params = inspect.signature(klass.__init__).parameters
+        except (TypeError, ValueError):
+            continue
+        for name in ("introducer", "remover"):
+            if name in params and params[name].default is not inspect.Parameter.empty:
+                flags.setdefault(name, bool(params[name].default))
+    return flags.get("introducer", False) and not flags.get("remover", False)
+
+
+@functools.lru_cache(maxsize=256)
 def target_keyword(cls_name: str) -> str | None:
     """Keyword the clip target must be passed as, when it isn't the first argument (ApplyMatrix(matrix, mobject))."""
     cls = vars(manim()).get(cls_name)
@@ -505,6 +536,8 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
     pos = 0
     target = target_param(cls) if skip_first else None
     fixed_pos, fixed_names = 0, frozenset()  # what the previous __init__ already passes up
+    docs = param_docs(cls)
+    is_anim = issubclass(cls, manim().Animation)
     for level, klass in enumerate(cls.__mro__):
         init = klass.__dict__.get("__init__")
         if init is None:
@@ -531,6 +564,7 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
                         continue  # Arrow(*args) only forwards Line's start/end, which have their own fields
                     entry = _param(p, "*", f"*{p.name}", klass.__name__, False)
                     entry.update(_special(cls, "*", entry))
+                    entry["doc"] = _help(p.name, docs, is_anim)
                     out.append(entry)
                 continue
             if p.name in seen or p.name.startswith("_") or p.name in hidden or p.name in INTERNAL_PARAMS:
@@ -541,6 +575,7 @@ def class_params(cls: type, skip_first: bool = False) -> list[dict]:
             own = level == 0 or klass.__name__.startswith("_")
             entry = _param(p, p.name, p.name, "" if own else klass.__name__, p.default is inspect.Parameter.empty)
             entry.update(_special(cls, p.name, entry))
+            entry["doc"] = _help(p.name, docs, is_anim)
             if level == 0 and p.kind is p.POSITIONAL_OR_KEYWORD and not star_done:
                 entry["pos"] = pos
                 pos += 1
@@ -703,6 +738,116 @@ def _category(cls: type) -> str:
     return "Custom"
 
 
+# What the settings every animation shares do, in the editor's terms (manim's own descriptions are
+# technical or missing for these). They win over docstrings.
+ANIMATION_HELP = {
+    "rate_func": "How the motion is paced within the clip. smooth eases in and out, linear keeps a constant "
+                 "speed, there_and_back goes to the end and returns. Changing it changes how the motion feels, "
+                 "not how long the clip is or where it ends (except for there-and-back styles, which end where "
+                 "they started).",
+    "lag_ratio": "Staggers the animation across the object's parts (the letters of a text, the members of a "
+                 "group). 0: every part at once. 1: one part after another. In between: they overlap. The whole "
+                 "animation still takes the clip's duration, so a larger value makes each part faster.",
+    "introducer": "Whether this animation puts the object on screen when it starts. Automatic uses the class's "
+                  "own choice (yes for Create, Write, FadeIn). Turn it off to animate an object that is already "
+                  "on screen; turn it on to make the object appear with this clip.",
+    "remover": "Whether the object leaves the screen when the animation ends. Automatic uses the class's own "
+               "choice (yes for FadeOut, Uncreate). Turn it on to remove the object after this clip.",
+    "suspend_mobject_updating": "Pauses the object's updaters, and its MathEngine construction, while this clip "
+                                "plays, so the animation alone moves it. Turn it off to keep them running during "
+                                "the clip (the object then follows both).",
+    "reverse_rate_function": "Plays the animation backwards: it starts from the end state and finishes at the "
+                             "start state.",
+    "run_time": "How long the animation takes, in seconds. On the timeline this is the clip's duration.",
+    "name": "A name for the animation, used only in manim's logs. It changes nothing on screen.",
+    "use_override": "Lets a mobject class supply its own version of this animation (manim's override_animation). "
+                    "Rarely needs changing.",
+    "reverse": "Runs it in the opposite order: the last part first.",
+}
+# Common mobject settings, used when a class's docstring doesn't describe them.
+MOBJECT_HELP = {
+    "color": "The object's color (outline and fill, unless those are set separately).",
+    "fill_color": "Color of the object's interior.",
+    "fill_opacity": "How opaque the interior is: 0 is transparent (only the outline shows), 1 is solid.",
+    "stroke_color": "Color of the outline.",
+    "stroke_width": "Thickness of the outline. 0 hides it.",
+    "stroke_opacity": "How opaque the outline is: 0 hides it, 1 is solid.",
+    "background_stroke_width": "Width of the dark outline drawn behind the object (used to make text readable over "
+                               "other objects).",
+    "z_index": "Drawing order: objects with a higher z_index are drawn on top.",
+    "sheen_factor": "Strength of a gradient highlight across the object's fill.",
+    "font_size": "Size of the text.",
+    "radius": "Radius, in scene units (the scene is 8 units tall).",
+    "buff": "Gap, in scene units, between this object and what it's placed against.",
+    "about_point": "The point that stays fixed while it scales or rotates. Empty: the object's center.",
+    "about_edge": "Scale or rotate around this edge or corner of the object (UP, DL…) instead of its center.",
+    "family": "Also apply to the object's parts (its submobjects). Off: only the object itself.",
+    "arc_center": "Position of the center, in scene coordinates.",
+}
+
+
+def _plain(text: str) -> str:
+    """reST to plain text: roles (:class:`~.Mobject`) become names, literals lose their backticks."""
+    text = re.sub(r":math:`([^`]*)`", lambda mt: mt.group(1).replace("\\", ""), text)
+    text = re.sub(r":\w+:`~?\.?([^`<]*?)(?:\s*<[^>]*>)?`", lambda mt: mt.group(1).split(".")[-1], text)
+    text = text.replace("temporally", "temporarily")  # a recurring typo in manim's docstrings
+    return re.sub(r"\s+", " ", text.replace("``", "").replace("`", "")).strip()
+
+
+def _numpydoc_params(doc: str) -> dict[str, str]:
+    """Parameter descriptions from a numpydoc ``Parameters`` section."""
+    lines = (doc or "").expandtabs().splitlines()
+    out: dict[str, str] = {}
+    i = next((k + 1 for k in range(len(lines) - 1) if lines[k].strip() == "Parameters" and set(lines[k + 1].strip()) == {"-"}), None)
+    if i is None:
+        return out
+    names: list[str] = []
+    body: list[str] = []
+
+    def flush() -> None:
+        text = _plain(" ".join(body))
+        if len(text) > 420:  # keep whole sentences
+            cut = text.rfind(". ", 0, 420)
+            text = text[: cut + 1] if cut > 80 else text[:417] + "…"
+        for n in names:
+            if text and n not in out:
+                out[n] = text
+
+    for k in range(i + 1, len(lines)):
+        line = lines[k]
+        if not line.strip():
+            body.append("")
+            continue
+        if not line.startswith(" "):
+            if k + 1 < len(lines) and set(lines[k + 1].strip()) == {"-"}:
+                break  # next section
+            flush()
+            names = [n.strip().lstrip("*") for n in line.split(":")[0].split(",") if n.strip()]
+            body = []
+        else:
+            body.append(line.strip())
+    flush()
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def param_docs(cls: type) -> dict[str, str]:
+    """Descriptions of a class's constructor parameters, from its docstrings and its bases'."""
+    out: dict[str, str] = {}
+    for klass in cls.__mro__:
+        init = klass.__dict__.get("__init__")
+        for doc in (klass.__dict__.get("__doc__"), getattr(init, "__doc__", None)):
+            for name, text in _numpydoc_params(inspect.cleandoc(doc) if doc else "").items():
+                out.setdefault(name, text)
+    return out
+
+
+def _help(name: str, docs: dict[str, str], animation: bool) -> str:
+    if animation and name in ANIMATION_HELP:
+        return ANIMATION_HELP[name]
+    return docs.get(name) or MOBJECT_HELP.get(name, "")
+
+
 def _clean_doc(doc: str) -> str:
     """First paragraph of a docstring with reST roles (:class:`~.Mobject`) reduced to plain names."""
     text = doc.split("\n\n")[0].replace("\n", " ")
@@ -798,11 +943,13 @@ def signature(expr: str, namespace: dict[str, Any] | None = None, object_classes
             sig = inspect.signature(target)
         except (TypeError, ValueError):
             sig = None
+        docs = _numpydoc_params(inspect.getdoc(target) or "")
         for p in list(sig.parameters.values())[1:] if sig else []:
             if p.kind is p.VAR_KEYWORD or p.name.startswith("_"):
                 continue
             star = p.kind is p.VAR_POSITIONAL
             params.append(_param(p, "*" if star else p.name, p.name, "", p.default is inspect.Parameter.empty and not star))
+            params[-1]["doc"] = _help(p.name, docs, False)
             if star and params[-1]["kind"] == "expr":
                 params[-1]["kind"] = "values"
             if p.kind is p.KEYWORD_ONLY:

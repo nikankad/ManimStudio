@@ -8,6 +8,22 @@ real constructor signature, appears in the library, including classes you define
 header code. Nothing is reimplemented: previews are drawn by manim's own renderer, and exports run
 the `manim` CLI.
 
+## Download
+
+Every push to `main` publishes a release with ready-to-run builds for Windows, macOS (Apple Silicon and Intel)
+and Linux: see the repository's **Releases** page. Unzip and run `MathEngine`; `mathengine-cli` next to it
+renders from a terminal. The builds include Python, manim and ffmpeg, but not LaTeX (see below).
+
+The release workflow (`.github/workflows/release.yml`) runs the tests, packages the app on each platform with
+PyInstaller (`packaging/mathengine.spec`), checks that each package opens the editor and renders the example
+project, and attaches them to a release tagged `v<major>.<minor>.<run number>` (major.minor from
+`pyproject.toml`). To build one yourself:
+
+```bash
+pip install . pyinstaller              # on Linux also: pip install "pywebview[qt]"
+cd packaging && pyinstaller mathengine.spec   # -> packaging/dist/MathEngine (MathEngine.app on macOS)
+```
+
 ## Install
 
 ```bash
@@ -15,8 +31,10 @@ uv venv --python 3.12 && uv pip install -e .     # or: pip install -e .
 cd frontend && npm install && npm run build        # builds the UI into mathengine/web
 ```
 
-manim's system requirements also apply:
-- **LaTeX** for `MathTex` / `Tex` (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
+MathEngine needs manim 0.22 or newer: equations split into terms rely on how newer `MathTex` delimits its
+parts. manim's system requirements also apply:
+- **LaTeX** for `MathTex` / `Tex`, and for `DecimalNumber`, which measurements, value labels and the starter
+  constructions use (MacTeX or BasicTeX on macOS, TeX Live on Linux, MiKTeX on Windows). `Text` works without it.
 - **ffmpeg** is bundled with manim via PyAV; no separate install is needed.
 
 ## Use
@@ -35,11 +53,20 @@ mathengine code scene.mathengine > scene.py # plain manim code
   right-click for more (enable/disable, ripple delete…). It snaps to the playhead, markers and clip edges
   (toggle with **S**). Each track has output and lock toggles, and clicking a track name targets it for new
   clips. Ctrl/⌘ + wheel zooms, the scroll bar's ends zoom too, and `\` zooms to fit.
+  - A clip dropped where its track is taken (or locked) goes to the nearest free track above, or a new one;
+    the drag preview shows where it will land.
+  - Clips that animate the same object at overlapping times **add up**: a move and a color change, two moves,
+    or a rotation or fade-out during a move all happen together. (In plain manim the later animation would
+    take the object over.) Animations that replace the object, turn it into another shape, or set a
+    ValueTracker keep manim's rule: the later one wins.
+  - A clip that animates an object before its intro (Create, FadeIn, an Add clip…) is marked with **!** and
+    explained in Effect Controls: manim would show the object from that clip on.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track at any time. The
   *Effects* tab holds animations; dropping one on a track targets the selected object.
 - **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
   corner handles to scale it, the edge handles to stretch it, or the top knob to rotate it. Arrow keys
   nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
+  Shift-click or drag a box on empty canvas to select several objects; right-click for actions.
 - **Inspector** (right): *Properties* for objects (scrubbable Transform values, Style with color pickers
   and sliders, every constructor argument), or *Effect Controls* for clips (start, duration, track and all
   animation arguments). Constructors can be methods of other objects, such as `axes.plot`.
@@ -64,31 +91,153 @@ mathengine code scene.mathengine > scene.py # plain manim code
 - **Raw Python**: every structured field has a `{}` toggle that shows the Python behind it. Anything manim accepts can be typed there (`BLUE`, `UP * 2`, `lambda x: x**2`, other object names).
 - `scripts/verify_controls.py` runs the value every widget writes through manim, for every parameter of every class, animation and method. Rerun it after upgrading manim.
 - **Code clips** run any manim code inside `construct()` (updaters, ValueTrackers, loops…).
+
+### Visual construction
+
+- **Drawing tools** (above the canvas, keys `1`–`7`): select, point, segment, arrow, circle, rectangle and
+  polygon. A segment takes two clicks (its endpoints), a circle a center and a point on it, a rectangle two
+  corners, and a polygon its vertices: click the first vertex again, double-click or press Enter to finish.
+  The pointer snaps to points, crossings, endpoints, vertices, centers, midpoints, curves and the grid. For exact values,
+  type them into the entry box next to the tools (`x, y`, a radius, or `width, height`) and press Enter.
+- **Shapes stay editable through their defining parameters.** A drawn segment is `Line(start, end)`, a circle
+  `Circle(radius)` at a position, a rectangle `Rectangle(width, height)`, and a polygon `Polygon(*vertices)`.
+  Round handles edit endpoints, vertices, the radius and the corners, and the inspector's *Geometry* section
+  takes exact numbers. The whole-object move, scale, stretch and rotate handles still work. For these shapes
+  they are written back into the defining parameters, so the handles keep working afterwards.
+- **Connected objects**: select objects and pick an action from the inspector or the right-click menu:
+  - segments, arrows, midpoints and circles between points (center + point, or a diameter);
+  - intersections of two lines, circles, graphs or axes (*Intersection*; a graph's *Mark roots* and *y-intercept*);
+  - perpendicular and parallel lines through a point, altitudes (from a point to a line), feet of perpendiculars,
+    drops from a point to the x- or y-axis, and perpendicular bisectors;
+  - polygons through points;
+  - arrows connecting two shapes' boundaries;
+  - labels attached to any object or equation term;
+  - points on a graph, circle or axes;
+  - angle marks between two lines.
+
+  A segment drawn from one existing point to another connects to both points, a point clicked onto a
+  graph or circle is constrained to it, and a point clicked where two objects cross is their intersection.
+  These chain: the altitudes of a triangle meet at an intersection (the orthocenter) that moves with the vertices.
+
+  Lines count as extended both ways for intersections, perpendiculars and feet. When objects meet more than once,
+  the inspector picks which crossing (ordered along a line from its start, left then right for two circles, by x on
+  a graph); while they don't meet, the point stays where it was. Graph crossings are found numerically, and a jump
+  at a discontinuity isn't counted as one.
+  Connections refer to objects by stable id, so renaming is safe. They stay correct while you edit, during
+  animations, when you scrub the timeline, and in the exported file.
+
+  Dragging an attached label changes its offset. Dragging a constrained point changes its parameter: its `x`
+  on the graph or its angle on the circle. If that value is a parameter, the drag sets the parameter's starting
+  value; in **Record** mode it adds a `.set_value` clip instead.
+- **Who owns what**: a connection owns either an object's *position* (labels, constrained points, midpoints,
+  intersections, feet, measurements) or its *shape* (segments, perpendicular and parallel lines, circles, angle
+  marks, graphs, tangents, areas, braces). Animations
+  keep everything else: color, opacity, scale, rotation, and Create/FadeIn/Write. An animation that would move
+  or reshape a connected object is flagged in its clip's Effect Controls.
+- **Editing relationships**: the inspector's *Construction* section shows the sources (pickers limited to
+  compatible objects), the expressions, the offset and the mode. **Detach** turns a connected object into an
+  independent one at its current place or shape. Unticking *keep updated* freezes it: it is built once and
+  then no longer updated.
+- **Deleting** an object that others are built from asks whether to delete those too, or to detach them.
+  Detached points, labels, segments, perpendicular and parallel lines, circles and polygons stay where they are; angle marks, areas, braces and
+  tangents are always deleted, because they can't exist without their source.
+- **Duplicating** several objects keeps the links among the copies; links to objects outside the selection
+  keep pointing at the originals.
+- **Problems are reported, not fatal**: missing sources, incompatible objects (an angle between points), objects
+  defined in the wrong order, dependency cycles and undefined parameters each show on the object, and the rest
+  of the scene still renders.
+- **ƒ Graph** (toolbar) is an expression-first graph builder. Type `y = a*x^2 + b` and it:
+  - offers each unknown letter as a named parameter slider, with a value, bounds and a step;
+  - creates the axes and the graph in one step, with the domain and axis ranges exposed;
+  - shows a live preview, rendered by manim, of exactly what will be added before you create it;
+  - finds discontinuities (asymptotes, jumps) and leaves a gap around them so the curve isn't drawn across;
+  - explains unsupported input in plain words: implicit equations (`x^2 + y^2 = 1`), inequalities,
+    parametric or polar curves, and piecewise definitions.
+
+  Parameters are ValueTrackers. Graphs, constrained points and number labels share them. A slider sets a
+  parameter's starting value. To animate one, use *Animate to… → Add clip*, or drag a point bound to it on the
+  canvas in Record mode; either adds `.animate.set_value(…)` at the playhead. The *Scene* inspector lists every
+  parameter as a slider.
+- **Annotations offered for each kind of object**:
+  - segment: *Show length*;
+  - two lines: *Mark angle*;
+  - graph: *Point on curve*, *Tangent*, *Secant*, *Shade interval* and *Riemann rectangles*;
+  - shaded area or Riemann rectangles: *Show integral (numerical)*;
+  - tangent or secant: *Show slope*;
+  - angle: *Show angle value*;
+  - equation terms: *Brace*, *Label*, *Highlight* and *Color*.
+
+  Interval bounds and the x of a tangent get handles on the axis. Shaded regions are visual only.
+  Measurements are numbers computed in the scene, and the inspector says how: from manim, or numerically
+  with the trapezoid rule.
+- **Equations**: a `MathTex` gets structured math input (MathLive) and a LaTeX box. *Split into terms* makes
+  each symbol one MathTex part, so `eq[i]` is that term. Repeated symbols are separate terms (`x #1`, `x #2`),
+  so you choose the occurrence. Click terms in the inspector or on the canvas to color, brace, label or
+  highlight them. Terms keep their identity when you edit the LaTeX, so their colors and pairings survive.
+  *Check with manim* compiles the equation with real LaTeX and flags terms that render no glyphs.
+- **Transform terms…** adds a `TransformTerms` clip. Its Effect Controls show the source and destination
+  equations. Click a source term, then the term it becomes, or use *Pair identical terms*; unpaired terms fade.
+  This only describes how terms move on screen. It does not check that the equations are equivalent.
+- **Reusable constructions** (library *Build* tab): *Save as construction…* stores the selection, plus the
+  objects it's built from and its clips, with the inputs you choose to expose: parameters, label texts, colors
+  and visibility. Save it to this project or to your library (`~/.mathengine/constructions.json`, shared by all
+  projects).
+  - Inserting always creates new objects and names. An *independent copy* has no further tie to the template.
+  - A *linked* instance can be regenerated with *Update instances* when the template changes, keeping its ids,
+    names and inputs.
+  - Starters: a labeled triangle, a unit circle, a number line, and a secant-to-tangent demonstration.
 - **</> Code**: the header (imports, helpers, custom Mobject classes) and the generated scene.
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**
   renders at full quality.
 
+**Help**: the toolbar's **? Help** button (or `?` / `F1`) opens a searchable guide to every feature, with
+buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
+users are offered the tour once.
+
 Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
-S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object.
+S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object(s) ·
+1–7 drawing tools · Enter finish polygon · Esc cancel drawing · ? or F1 help.
 
 ## How it works
 
 ```
 frontend/ (React)  ──HTTP (127.0.0.1 + session token)──▶  mathengine/server.py
-                                                            ├─ catalog.py   introspects manim → palette & forms
-                                                            ├─ codegen.py   tracks/clips → manim Python (+ timed.py)
-                                                            ├─ runtime.py   seek to time t in-process, render one frame
-                                                            └─ render.py    `manim render` subprocess for video
+                                                            ├─ catalog.py    introspects manim → palette & forms
+                                                            ├─ codegen.py    tracks/clips → manim Python (+ timed.py)
+                                                            ├─ construct.py  linked objects, equation terms → manim code
+                                                            ├─ mathexpr.py   math expressions (y = a*x^2 + b) → Python
+                                                            ├─ starters.py   built-in reusable constructions
+                                                            ├─ runtime.py    seek to time t in-process, render one frame
+                                                            └─ render.py     `manim render` subprocess for video
 ```
 
-A project (`.mathengine`) is JSON: objects, tracks and timed clips. Every value is stored as Python
-source, so anything manim accepts is representable. When compiling, clips whose time ranges overlap are
+A project (`.mathengine`) is JSON: objects, tracks and timed clips. Every argument is stored as Python
+source, so anything manim accepts is representable. Format 3 adds optional fields, each upgraded explicitly
+and losslessly from older projects (`project.upgrade`):
+
+- `link`: an object's relationship to others, by id;
+- `eq.parts`: equation terms with stable ids;
+- `param`: slider bounds of a ValueTracker;
+- `instance`: membership of an inserted construction;
+- `clips[].terms`: TransformTerms pairs;
+- `constructions`: the project's templates.
+
+Links store math expressions, not Python. Their dependencies are explicit: source ids, plus parameter names
+that must be ValueTracker objects. Nothing is inferred from arbitrary Python. When compiling, clips whose time ranges overlap are
 grouped. Gaps become `self.wait(...)`, a group whose clips all start together becomes a plain `self.play(...)`,
 and any other group becomes `self.play(TimedAnimations(...))`. That small helper (`mathengine/timed.py`,
 copied into the exported file) builds each clip *when its start time arrives*, so `.animate` begins from
-the object's current state and objects only appear when their intro starts. Seeking re-runs `construct()` with a `play()` that skips animations instead of
+the object's current state and objects only appear when their intro starts. Inside it, animations of the same object that overlap run on private copies and their changes are added to the object each frame. Constructions compile to plain manim code too: a small `Constraints` helper, emitted into the file,
+re-evaluates every construction in document order each frame and after each `self.play`. It skips any
+mobject an animation is playing on (manim's `updating_suspended`). Segments become
+`constraints.redraw(lambda: Line(A.get_center(), B.get_center()), A, B)`, attached labels
+`constraints.follow(label, lambda m: m.move_to(A.get_center() + offset), A)`, and term-split equations
+`MathTex(r"a^2", r"+", r"b^2", ...)` with `TransformTerms` for term correspondences. Seeking re-runs `construct()` with a `play()` that skips animations instead of
 rendering them, stops partway through at the requested time, and draws that moment with the scene's
 camera. This takes about 50 to 150 ms per frame, and the frame is exactly what the final render shows.
 
 Development: `cd frontend && npm run dev` rebuilds the UI on change, and `mathengine --serve --port 8765`
-runs only the server.
+runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render real frames with manim,
+and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
+(Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in
+[`docs/research/math-object-creation.md`](docs/research/math-object-creation.md).

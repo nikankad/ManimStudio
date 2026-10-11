@@ -9,12 +9,19 @@ description = "Drag-and-drop visual editor for manim (Community Edition) videos"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "manim>=0.19",
+  "manim>=0.22",  # term-split equations rely on MathTex's per-part \special groups (0.20+); tested on 0.22
   "pywebview>=5.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [project.scripts]
 mathengine = "mathengine.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::SyntaxWarning"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mathengine"]

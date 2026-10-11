@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
-import type { Args, Catalog, CatalogEntry, Clip, Job, RunResult, SceneDoc, SceneObject, Selection, Signature, Track } from './types';
+import { renameIdentifiers } from './pyparse';
+import { dependentsOf, FOLLOW_KINDS, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
+import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
+import type { Args, Catalog, CatalogEntry, Clip, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Template, Tool, Track } from './types';
 
 export interface VideoState {
   jobId: string | null;
@@ -25,7 +28,12 @@ export interface AppState {
   playing: boolean;
   past: SceneDoc[];
   future: SceneDoc[];
-  panel: null | 'code' | 'settings' | 'export';
+  panel: null | 'code' | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help';
+  tour: number | null; // guided tour step
+  panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
+  tool: Tool; // canvas drawing tool
+  starters: Template[]; // built-in constructions
+  library: Template[]; // the user's saved constructions (~/.mathengine/constructions.json)
   snap: boolean; // canvas snapping
   timelineSnap: boolean;
   autoIntro: boolean;
@@ -39,7 +47,7 @@ export interface AppState {
 }
 
 export const emptyDoc = (): SceneDoc => ({
-  version: 2,
+  version: 3,
   scene: { name: 'MainScene', base: 'Scene' },
   config: { pixel_width: 1920, pixel_height: 1080, frame_rate: 60, background_color: '#000000' },
   header: '',
@@ -47,6 +55,7 @@ export const emptyDoc = (): SceneDoc => ({
   tracks: [1, 2, 3].map((i) => ({ id: `t${i}`, name: `V${i}` })),
   clips: [],
   markers: [],
+  constructions: [],
 });
 
 let state: AppState = {
@@ -64,6 +73,11 @@ let state: AppState = {
   past: [],
   future: [],
   panel: null,
+  panelData: null,
+  tool: 'select',
+  tour: null,
+  starters: [],
+  library: [],
   snap: true,
   timelineSnap: true,
   autoIntro: true,
@@ -133,6 +147,7 @@ export function redo() {
 
 export function loadDoc(doc: SceneDoc, path: string | null) {
   doc.markers ??= [];
+  doc.constructions ??= [];
   setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null });
 }
 
@@ -181,17 +196,30 @@ async function pumpFrames() {
 }
 
 let timelineTimer: number | undefined;
+let timelineBusy = false;
+let timelineWanted = false;
 function scheduleTimeline() {
   clearTimeout(timelineTimer);
-  timelineTimer = window.setTimeout(async () => {
-    const doc = state.doc;
-    try {
-      const timeline = await api.run(doc, null, false);
-      if (state.doc === doc) setState({ timeline });
-    } catch (e) {
-      toast(String(e));
-    }
-  }, 150);
+  timelineTimer = window.setTimeout(() => void runTimeline(), 150);
+}
+
+/** One timeline analysis at a time (each waits for manim): queued edits collapse into one request for the latest document. */
+async function runTimeline() {
+  if (timelineBusy) {
+    timelineWanted = true;
+    return;
+  }
+  timelineBusy = true;
+  timelineWanted = false;
+  const doc = state.doc;
+  try {
+    const timeline = await api.run(doc, null, false);
+    if (state.doc === doc) setState({ timeline });
+  } catch (e) {
+    toast(String(e));
+  }
+  timelineBusy = false;
+  if (timelineWanted || state.doc !== doc) void runTimeline();
 }
 
 let catalogHeader: string | null = null;
@@ -394,14 +422,34 @@ function introFor(entry: CatalogEntry | undefined, ctor: string): string | null 
   return 'Create';
 }
 
+/** Ids of the selected objects (one or several). */
+export function selectedObjectIds(sel: Selection = state.selection): string[] {
+  if (sel?.kind === 'object') return [sel.id];
+  if (sel?.kind === 'objects') return sel.ids;
+  return [];
+}
+
+/** Select objects: one (with optional equation terms) or several. */
+export function selectObjects(ids: string[], terms?: string[]) {
+  setState({ selection: ids.length === 0 ? null : ids.length === 1 ? { kind: 'object', id: ids[0], terms } : { kind: 'objects', ids } });
+}
+
+/** Shift-click: add to or remove from the object selection. */
+export function toggleObjectSelection(id: string) {
+  const ids = selectedObjectIds();
+  selectObjects(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
+}
+
 export function selectClips(ids: string[]) {
   setState({ selection: ids.length ? { kind: 'clips', ids } : null });
 }
 
-export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: { start?: number; track?: string }, initial?: Args) {
+export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: { start?: number; track?: string }, initial?: Args): string {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
-  const args: Record<string, string> = { ...initial };
+  const args: Record<string, string> = {};
   for (const [k, v] of Object.entries(entry?.starter ?? {})) args[k] = v === '@target' ? targetName ?? '' : v;
+  Object.assign(args, initial); // explicit arguments (drawn geometry, factory defaults) win over starters
+  if (initial?.start !== undefined || initial?.end !== undefined) delete args['*'];
   const intro = state.autoIntro ? introFor(entry, ctor) : null;
   const start = frameSnap(at?.start ?? state.time);
   let newId = '';
@@ -419,6 +467,7 @@ export function addObject(ctor: string, pos: [number, number] | null, targetName
     }
   });
   setState({ selection: { kind: 'object', id: newId }, time: end });
+  return newId;
 }
 
 export function addAnimation(cls: string, target: string, at?: { start?: number; track?: string }) {
@@ -467,19 +516,17 @@ export function addTrack() {
   updateDoc((d) => void addTrackTo(d));
 }
 
-const wordRe = (name: string) => new RegExp(`\\b${name.replace(/[^\w]/g, '')}\\b`, 'g');
 
 export function renameObject(id: string, newName: string) {
   const obj = state.doc.objects.find((o) => o.id === id);
   if (!obj || obj.name === newName) return;
-  const re = wordRe(obj.name);
-  const rep = (s: string) => s.replace(re, newName);
+  if (RESERVED_NAMES.has(newName)) return toast(`"${newName}" is used by the generated code`);
+  const names = new Map([[obj.name, newName]]);
+  const rep = (s: string) => renameIdentifiers(s, names); // code outside string literals only
   updateDoc((d) => {
     for (const o of d.objects) {
       if (o.id === id) o.name = newName;
-      o.ctor = rep(o.ctor);
-      o.chain = rep(o.chain);
-      for (const k in o.args) o.args[k] = rep(o.args[k]);
+      renameRefs(o, names); // Python fields and link expressions (parameter names); link sources are ids
     }
     for (const c of d.clips) {
       if (c.target) c.target = rep(c.target);
@@ -496,13 +543,13 @@ export const isLocked = (d: SceneDoc, c: Clip) => !!d.tracks.find((t) => t.id ==
 export function deleteSelection(ripple = false) {
   const sel = state.selection;
   if (!sel) return;
+  if (sel.kind === 'object' || sel.kind === 'objects') {
+    const ids = selectedObjectIds(sel);
+    const deps = dependentsOf(state.doc, ids);
+    if (deps.length) return setState({ panel: 'delete', panelData: ids }); // ask: delete them too, or detach
+    return deleteObjects(ids, 'cascade');
+  }
   updateDoc((d) => {
-    if (sel.kind === 'object') {
-      const obj = d.objects.find((o) => o.id === sel.id);
-      d.objects = d.objects.filter((o) => o.id !== sel.id);
-      if (obj) d.clips = d.clips.filter((c) => c.target !== obj.name);
-      return;
-    }
     const ids = new Set(sel.ids);
     const removed = d.clips.filter((c) => ids.has(c.id) && !isLocked(d, c));
     d.clips = d.clips.filter((c) => !removed.includes(c));
@@ -519,21 +566,222 @@ export function deleteSelection(ripple = false) {
   setState({ selection: null });
 }
 
-export function duplicateObject(id: string) {
-  const src = state.doc.objects.find((o) => o.id === id);
-  if (!src) return;
-  let newId = '';
+/**
+ * Remove objects. Objects built from them are either deleted too ('cascade'), or 'detach'ed:
+ * converted to plain objects at their current geometry where possible (points, labels, segments,
+ * circles, polygons); constructions that can't exist without their source (angles, areas, braces…)
+ * are always deleted.
+ */
+export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
+  const frame = state.frame;
+  const remove = new Set(ids);
   updateDoc((d) => {
-    const copy: SceneObject = { ...structuredClone(src), id: uid('o'), name: uniqueName(d, src.name.replace(/\d+$/, '')) };
-    if (copy.pos) copy.pos = [copy.pos[0] + 0.5, copy.pos[1] - 0.5];
-    newId = copy.id;
-    d.objects.splice(d.objects.findIndex((o) => o.id === id) + 1, 0, copy);
-    const entry = state.catalog?.mobjects.find((m) => m.name === src.ctor);
-    const intro = state.autoIntro ? introFor(entry, src.ctor) : null;
-    const start = frameSnap(state.time);
-    if (intro) d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, start, 1, { target: src.name }), start, duration: 1, cls: intro, target: copy.name, args: {} });
+    // Handle objects built directly from removed ones; only removals propagate further.
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const o of d.objects) {
+        if (remove.has(o.id) || !objectDeps(o, d).some((x) => remove.has(x))) continue;
+        // Objects referring to a removed one through Python (axes.plot on deleted axes) can't be detached.
+        if (mode === 'cascade' || !o.link || !detachInPlace(o, frame?.objects.find((i) => i.id === o.id), true)) {
+          remove.add(o.id);
+          grew = true;
+        }
+      }
+    }
+    const names = new Set(d.objects.filter((o) => remove.has(o.id)).map((o) => o.name));
+    d.objects = d.objects.filter((o) => !remove.has(o.id));
+    d.clips = d.clips.filter((c) => !names.has(c.target ?? '') && !(c.terms && remove.has(c.terms.to)));
+    for (const c of d.clips) if (c.targets) c.targets = c.targets.filter((t) => !names.has(t));
   });
-  setState({ selection: { kind: 'object', id: newId } });
+  setState({ selection: null, panel: null, panelData: null });
+}
+
+/**
+ * Turn a constructed object into an independent one. Follow links keep the object at its current
+ * position; segments, perpendicular and parallel lines, circles and polygons become plain shapes
+ * with their current geometry. Others
+ * are frozen (built once from their sources, no longer updated) unless `convertOnly`, which reports
+ * false so the caller can delete them.
+ */
+export function detachInPlace(o: SceneObject, info: ObjInfo | undefined, convertOnly = false): boolean {
+  const l = o.link;
+  if (!l) return true;
+  const g = info?.geom;
+  if (isFollow(o) || (l.frozen && FOLLOW_KINDS.has(l.kind))) {
+    delete o.link;
+    if (info?.center) o.pos = [Math.round(info.center[0] * 1000) / 1000, Math.round(info.center[1] * 1000) / 1000];
+    return true;
+  }
+  if ((l.kind === 'segment' || l.kind === 'perpendicular' || l.kind === 'parallel') && g?.kind === 'line') {
+    delete o.link;
+    writeShape(o, { kind: 'line', start: g.start, end: g.end });
+    return true;
+  }
+  if (l.kind === 'circle2' && g?.kind === 'circle') {
+    delete o.link;
+    writeShape(o, { kind: 'circle', center: g.center, r: g.radius });
+    return true;
+  }
+  if (l.kind === 'polygon' && g?.kind === 'polygon') {
+    delete o.link;
+    o.ctor = 'Polygon';
+    writeShape(o, { kind: 'polygon', vertices: g.vertices });
+    return true;
+  }
+  if (convertOnly) return false;
+  l.frozen = true;
+  return true;
+}
+
+export function detachObjects(ids: string[]) {
+  const frame = state.frame;
+  updateDoc((d) => {
+    for (const o of d.objects) if (ids.includes(o.id)) detachInPlace(o, frame?.objects.find((i) => i.id === o.id));
+  });
+}
+
+export function duplicateObject(id: string) {
+  duplicateObjects([id]);
+}
+
+/**
+ * Copy objects. Links between copied objects point at the copies; links to objects outside the
+ * selection keep pointing at the originals (a duplicated label stays attached to the same point).
+ * Free geometry is offset so the copy is visible; constructed copies follow their sources.
+ */
+export function duplicateObjects(ids: string[]) {
+  const srcs = state.doc.objects.filter((o) => ids.includes(o.id));
+  if (!srcs.length) return;
+  const newIds: string[] = [];
+  updateDoc((d) => {
+    const idMap = new Map<string, string>();
+    const nameMap = new Map<string, string>();
+    const copies: SceneObject[] = [];
+    for (const src of srcs) {
+      const copy: SceneObject = { ...structuredClone(src), id: uid('o'), name: uniqueName(d, src.name.replace(/\d+$/, '')) };
+      delete copy.instance; // a copy of part of an instance is an independent object
+      idMap.set(src.id, copy.id);
+      nameMap.set(src.name, copy.name);
+      d.objects.push(copy); // reserve the name for the next uniqueName
+      copies.push(copy);
+    }
+    for (const copy of copies) {
+      remapLink(copy, idMap);
+      renameRefs(copy, nameMap);
+      if (!copy.link) {
+        const shape = freeShape(copy);
+        const moved = shape && bakeTransform(shape, { move: [0.5, -0.5] }, shapeCenter(shape));
+        if (moved) writeShape(copy, moved);
+        else if (copy.pos) copy.pos = [copy.pos[0] + 0.5, copy.pos[1] - 0.5];
+      } else if (copy.link.kind === 'attach' || copy.link.kind === 'measure') {
+        const off = copy.link.offset ?? [0, 0];
+        copy.link.offset = [off[0] + 0.3, off[1] - 0.3];
+      }
+      newIds.push(copy.id);
+    }
+    // Copies go right after their originals, then dependencies decide the final order.
+    d.objects = d.objects.filter((o) => !copies.includes(o));
+    const last = Math.max(...srcs.map((s) => d.objects.findIndex((o) => o.id === s.id)));
+    d.objects.splice(last + 1, 0, ...copies);
+    sortByDependencies(d);
+    const start = frameSnap(state.time);
+    for (const copy of copies) {
+      const entry = state.catalog?.mobjects.find((m) => m.name === copy.ctor);
+      const intro = state.autoIntro ? introFor(entry, copy.ctor) : null;
+      if (intro) d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, start, 1), start, duration: 1, cls: intro, target: copy.name, args: {} });
+    }
+  });
+  selectObjects(newIds);
+}
+
+// ---------------------------------------------------------------- constructions
+
+export interface LinkedSpec {
+  ctor: string;
+  link: Link;
+  name?: string;
+  args?: Args;
+  pos?: [number, number] | null;
+  intro?: string | null; // undefined: automatic
+}
+
+/** Add an object defined by a link (sources must already exist). Returns its id, or null if invalid. */
+export function createLinked(spec: LinkedSpec, opts: { select?: boolean; time?: number } = {}): string | null {
+  const id = uid('o');
+  if (wouldCycle(state.doc, id, linkSources(spec.link))) {
+    toast('That would make the construction depend on itself');
+    return null;
+  }
+  const entry = state.catalog?.mobjects.find((m) => m.name === spec.ctor);
+  const intro = spec.intro !== undefined ? spec.intro : state.autoIntro ? introFor(entry, spec.ctor) : null;
+  const start = frameSnap(opts.time ?? state.time);
+  updateDoc((d) => {
+    const name = uniqueName(d, spec.name ?? snake(spec.ctor.split('.').pop() || 'obj'));
+    d.objects.push({ id, name, ctor: spec.ctor, args: { ...spec.args }, pos: spec.pos ?? null, chain: '', link: spec.link });
+    sortByDependencies(d);
+    if (intro) d.clips.push({ id: uid('c'), kind: 'anim', track: chooseTrack(d, start, 1), start, duration: 1, cls: intro, target: name, args: {} });
+    else if (spec.intro === undefined && !NO_INTRO.has(spec.ctor)) d.clips.push({ id: uid('c'), kind: 'add', track: chooseTrack(d, start, 0), start, duration: 0, targets: [name] });
+  });
+  if (opts.select !== false) selectObjects([id]);
+  if (intro) setState({ time: start + 1 }); // like addObject: show the object once its intro has played
+  return id;
+}
+
+/** Change an object's link (cycle-checked; reorders objects so sources come first). */
+export function setLink(id: string, fn: (l: Link) => void, coalesce?: string) {
+  const o = state.doc.objects.find((x) => x.id === id);
+  if (!o?.link) return;
+  const next = structuredClone(o.link);
+  fn(next);
+  if (wouldCycle(state.doc, id, linkSources(next))) return toast('That would make the construction depend on itself');
+  updateDoc((d) => {
+    d.objects.find((x) => x.id === id)!.link = next;
+    sortByDependencies(d);
+  }, coalesce ?? `${id}:link`);
+}
+
+/** Apply an edit to a scratch copy shown on the canvas while dragging (not committed). */
+export function previewEdit(fn: (d: SceneDoc) => void) {
+  const doc = structuredClone(state.doc);
+  fn(doc);
+  setState({ previewDoc: doc });
+}
+
+/** Commit a canvas edit. */
+export function commitEdit(fn: (d: SceneDoc) => void, coalesce?: string) {
+  setState({ previewDoc: null });
+  updateDoc(fn, coalesce);
+}
+
+// ---------------------------------------------------------------- parameters
+
+export const params = (doc: SceneDoc) => doc.objects.filter((o) => o.ctor === 'ValueTracker');
+
+/** Create a parameter (a ValueTracker at the top of the scene, so everything can use it); returns its name. */
+export function createParam(d: SceneDoc, name: string, value: number, meta: ParamMeta): string {
+  const existing = d.objects.find((o) => o.name === name);
+  if (existing) return existing.name;
+  const obj: SceneObject = { id: uid('o'), name: uniqueName(d, name), ctor: 'ValueTracker', args: { '*': String(value) }, pos: null, chain: '', param: meta };
+  d.objects.unshift(obj);
+  return obj.name;
+}
+
+export function setParamValue(name: string, v: number) {
+  updateDoc((d) => {
+    const o = d.objects.find((x) => x.name === name && x.ctor === 'ValueTracker');
+    if (o) o.args['*'] = String(v);
+  }, `param:${name}`);
+}
+
+/** Animate a parameter to a value at the playhead (an .animate.set_value clip on the timeline). */
+export function animateParam(name: string, to: number, duration = 1) {
+  const start = frameSnap(state.time);
+  const clip: Clip = { id: uid('c'), kind: 'anim', track: '', start, duration, cls: 'animate', target: name, args: {}, chain: `.set_value(${Math.round(to * 1000) / 1000})` };
+  updateDoc((d) => {
+    clip.track = chooseTrack(d, start, duration, { target: name });
+    d.clips.push(clip);
+  });
+  setState({ selection: { kind: 'clips', ids: [clip.id] }, time: start + duration });
 }
 
 // ---------------------------------------------------------------- clipboard
@@ -576,6 +824,22 @@ export interface TransformDelta {
 }
 
 function applyTransform(o: SceneObject, t: TransformDelta, center: [number, number] | null) {
+  // Free shapes keep their defining parameters (endpoints, vertices, radius, size) instead of a transform.
+  const shape = freeShape(o);
+  if (shape) {
+    const baked = bakeTransform(shape, t.move ? { move: t.move } : t, shapeCenter(shape));
+    if (baked) {
+      if (t.move && state.snap && baked.kind !== 'polygon' && baked.kind !== 'line') {
+        const c = shapeCenter(baked);
+        const sc = [snapV(c[0]), snapV(c[1])] as [number, number];
+        const fix = bakeTransform(baked, { move: [sc[0] - c[0], sc[1] - c[1]] }, c);
+        if (fix) return writeShape(o, fix);
+      }
+      return writeShape(o, baked);
+    }
+  }
+  if (isRedraw(o)) return; // the construction defines its shape and position
+  if (t.move && ownsPosition(o)) return; // position comes from the construction (handled by the canvas)
   if (t.move) {
     const base = o.pos ?? center ?? [0, 0];
     o.pos = [snapV(base[0] + t.move[0]), snapV(base[1] + t.move[1])];

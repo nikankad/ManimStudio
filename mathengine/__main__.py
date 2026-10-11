@@ -4,6 +4,7 @@
     mathengine --browser [project]           open the editor in the default browser
     mathengine render project -q 1080p -o out.mp4
     mathengine code project > scene.py       print the generated manim code
+    mathengine manim …                       run manim's own command line (used by packaged apps)
 """
 
 from __future__ import annotations
@@ -40,18 +41,14 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
         except ImportError:
             print("pywebview not installed; opening in your browser instead.")
     if webview is None:
-        import webbrowser
+        return _open_editor_in_browser(url)
 
-        print(f"MathEngine running at {url}  (Ctrl+C to quit)")
-        webbrowser.open(url)
-        try:
-            while True:
-                time.sleep(3600)
-        except KeyboardInterrupt:
-            return
-
-    window = webview.create_window("MathEngine", url, width=1500, height=940, min_size=(1000, 640),
-                                   background_color="#111216")
+    try:
+        window = webview.create_window("MathEngine", url, width=1500, height=940, min_size=(1000, 640),
+                                       background_color="#111216")
+    except Exception as exc:  # no usable GUI toolkit (e.g. a Linux system without Qt or GTK)
+        print(f"Can't open a window ({exc}); opening in your browser instead.")
+        return _open_editor_in_browser(url)
 
     def dialogs(kind: str, filename: str, types: list[str]) -> str | None:
         file_types = tuple(types) if types else ()
@@ -64,8 +61,25 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
         return res if isinstance(res, str) else res[0]
 
     app.dialogs = dialogs
-    webview.start()
+    try:
+        webview.start()
+    except Exception as exc:
+        print(f"Can't open a window ({exc}); opening in your browser instead.")
+        app.dialogs = None
+        return _open_editor_in_browser(url)
     server.shutdown()
+
+
+def _open_editor_in_browser(url: str) -> None:
+    import webbrowser
+
+    print(f"MathEngine running at {url}  (Ctrl+C to quit)")
+    webbrowser.open(url)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        return
 
 
 def _warmup() -> None:
@@ -80,6 +94,7 @@ def _render(project: str, quality: str, output: str | None) -> int:
 
     doc = load_project(project)
     check = runtime.run(doc, None, render=False)
+    _print_diagnostics(check.diagnostics)
     if check.error:
         print(f"error: {check.error['message']}", file=sys.stderr)
         return 1
@@ -97,9 +112,24 @@ def _render(project: str, quality: str, output: str | None) -> int:
     return 0
 
 
+def _print_diagnostics(diagnostics: list[dict]) -> None:
+    """Construction problems don't stop a render (broken links are emitted unconstrained); show them."""
+    for d in diagnostics:
+        print(f"{d['level']}: {d['kind']} {d['id']}: {d['message']}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     warnings.filterwarnings("ignore", category=SyntaxWarning)
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "manim":  # manim's command line, for renders from a packaged app
+        from manim.__main__ import main as manim_main
+
+        sys.argv = ["manim", *argv[1:]]
+        try:
+            manim_main()
+        except SystemExit as exc:
+            return int(exc.code or 0) if not isinstance(exc.code, str) else 1
+        return 0
     if argv and argv[0] in ("render", "code"):
         cmd = argv[0]
         p = argparse.ArgumentParser(prog=f"mathengine {cmd}")
@@ -114,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
         from .codegen import generate
         from .project import load_project
 
-        print(generate(load_project(args.project)).source, end="")
+        gen = generate(load_project(args.project))
+        _print_diagnostics(gen.diagnostics)
+        print(gen.source, end="")
         return 0
 
     p = argparse.ArgumentParser(prog="mathengine", description="Visual editor for manim scenes.")

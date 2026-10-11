@@ -1,0 +1,441 @@
+// In-app help: a searchable guide (Help center) and a guided tour of the interface.
+
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { getState, setState, useStore } from '../store';
+import { Modal } from './Modal';
+
+// ---------------------------------------------------------------- guided tour
+
+interface TourStep {
+  target?: string; // CSS selector of the element to spotlight (none: centered card)
+  title: string;
+  body: React.ReactNode;
+  before?: () => void; // prepare the UI (e.g. switch a library tab)
+}
+
+const libraryTab = (label: string) => () =>
+  (Array.from(document.querySelectorAll('.library .tabs button')).find((b) => b.textContent === label) as HTMLButtonElement | undefined)?.click();
+
+export const TOUR: TourStep[] = [
+  {
+    title: 'Welcome to MathEngine',
+    body: <>Build math animations visually. Everything you see is rendered by <b>manim</b>, and every project exports as a plain manim Python file. This tour takes about a minute.</>,
+  },
+  {
+    target: '[data-tour="library"]',
+    title: 'Library',
+    before: libraryTab('Objects'),
+    body: <>Every manim class, searchable. Drag one onto the canvas or a timeline track, or double-click it. <b>Effects</b> holds animations, <b>Build</b> holds reusable constructions, and <b>Scene</b> lists your objects.</>,
+  },
+  {
+    target: '[data-tour="tools"]',
+    title: 'Drawing tools',
+    body: <>Draw points, segments, arrows, circles, rectangles and polygons (keys <kbd>1</kbd>–<kbd>7</kbd>). The pointer snaps to existing geometry; a segment drawn between two points stays connected to them. Type exact values in the box that appears next to the tools.</>,
+  },
+  {
+    target: '[data-tour="canvas"]',
+    title: 'Canvas',
+    body: <>The frame at the playhead. Drag objects to move them; drag their handles to edit endpoints, vertices, radius or size. <kbd>Shift</kbd>-click or drag a box to select several, and right-click for actions such as <i>Midpoint</i>, <i>Mark angle</i> or <i>Attach label</i>.</>,
+  },
+  {
+    target: '[data-tour="inspector"]',
+    title: 'Inspector',
+    body: <>Everything about the selection: its construction (what it is built from), exact geometry, style and every manim argument. <b>Build from this</b> offers actions that fit what you selected. Every field also accepts raw Python with its <code>{'{}'}</code> toggle.</>,
+  },
+  {
+    target: '[data-tour="graph"]',
+    title: 'Graph a function',
+    body: <>Type an expression such as <code>y = a*x^2 + b</code>, check the live preview, and get axes, the graph and a slider for each parameter in one step.</>,
+  },
+  {
+    target: '[data-tour="build"]',
+    title: 'Reusable constructions',
+    before: libraryTab('Build'),
+    body: <>Insert ready-made constructions (labeled triangle, unit circle, number line, secant to tangent), or save your own selection to reuse it in this project or any other.</>,
+  },
+  {
+    target: '[data-tour="timeline"]',
+    title: 'Timeline',
+    before: libraryTab('Objects'),
+    body: <>Clips sit on tracks at any time and may overlap. Drag to move, drag edges to trim, and press <kbd>Space</kbd> to play. Connected objects stay attached while you scrub.</>,
+  },
+  {
+    target: '[data-tour="record"]',
+    title: 'Record',
+    body: <>With Record on, canvas edits become animation clips at the playhead instead of changing the starting picture. Dragging a point that is bound to a parameter records a <code>set_value</code> animation.</>,
+  },
+  {
+    target: '[data-tour="output"]',
+    title: 'Code and export',
+    body: <>See the generated manim code (and add your own imports or classes in the header), render a smooth preview, or export the final video.</>,
+  },
+  {
+    target: '[data-tour="help"]',
+    title: 'Help is always here',
+    body: <>Open the guide any time with this button, <kbd>?</kbd> or <kbd>F1</kbd>. Each topic can take you straight to the right place.</>,
+  },
+];
+
+export function startTour(step = 0) {
+  setState({ panel: null, panelData: null, tour: step });
+}
+
+/** Spotlight + card for the current tour step. */
+export function Tour() {
+  const step = useStore((s) => s.tour);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const s = step === null ? null : TOUR[step];
+  const go = (d: number) => {
+    const n = (getState().tour ?? 0) + d;
+    setState({ tour: n < 0 ? 0 : n >= TOUR.length ? null : n });
+  };
+
+  useLayoutEffect(() => {
+    if (!s) return;
+    s.before?.();
+    const measure = () => {
+      const el = s.target ? document.querySelector(s.target) : null;
+      setRect(el ? el.getBoundingClientRect() : null);
+    };
+    measure();
+    const t = setTimeout(measure, 60); // after a tab switch re-renders
+    window.addEventListener('resize', measure);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener('resize', measure);
+    };
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (step === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setState({ tour: null });
+      else if (e.key === 'ArrowRight' || e.key === 'Enter') go(1);
+      else if (e.key === 'ArrowLeft') go(-1);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (step === null || !s) return null;
+  const pad = 6;
+  const hole = rect && { left: rect.left - pad, top: rect.top - pad, width: rect.width + pad * 2, height: rect.height + pad * 2 };
+  // Card beside the spotlight: right of it, else left, else below/above; centered without a target.
+  const cw = 340, ch = 210;
+  let card: React.CSSProperties = { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' };
+  if (hole) {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const top = Math.min(Math.max(12, hole.top), vh - ch - 12);
+    if (hole.left + hole.width + 16 + cw < vw) card = { left: hole.left + hole.width + 16, top };
+    else if (hole.left - 16 - cw > 0) card = { left: hole.left - 16 - cw, top };
+    else if (hole.top + hole.height + 16 + ch < vh) card = { left: Math.min(Math.max(12, hole.left), vw - cw - 12), top: hole.top + hole.height + 16 };
+    else card = { left: Math.min(Math.max(12, hole.left), vw - cw - 12), top: Math.max(12, hole.top - ch - 16) };
+  }
+  return (
+    <div className="tour" role="dialog" aria-label={`Tour step ${step + 1} of ${TOUR.length}: ${s.title}`}>
+      {hole ? <div className="tour-hole" style={hole} /> : <div className="tour-dim" />}
+      <div className="tour-card" style={{ ...card, width: cw }}>
+        <div className="tour-progress">{TOUR.map((_, i) => <span key={i} className={i === step ? 'on' : i < step ? 'done' : ''} />)}</div>
+        <h3>{s.title}</h3>
+        <p>{s.body}</p>
+        <div className="row">
+          <button className="ghost small" onClick={() => setState({ tour: null })}>Skip tour</button>
+          <span className="spacer" />
+          <span className="muted small">{step + 1} / {TOUR.length}</span>
+          <button disabled={step === 0} onClick={() => go(-1)}>Back</button>
+          <button className="primary" onClick={() => go(1)}>{step === TOUR.length - 1 ? 'Done' : 'Next'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- help center
+
+interface Topic {
+  id: string;
+  title: string;
+  keywords: string;
+  body: React.ReactNode;
+  actions?: { label: string; run: () => void }[];
+}
+
+const tourTo = (target: string) => () => startTour(Math.max(0, TOUR.findIndex((t) => t.target === `[data-tour="${target}"]`)));
+const open = (panel: 'graph' | 'code' | 'export' | 'settings') => () => setState({ panel, panelData: null });
+const tool = (t: 'point' | 'line' | 'circle' | 'polygon') => () => setState({ panel: null, panelData: null, tool: t });
+
+const TOPICS: Topic[] = [
+  {
+    id: 'start',
+    title: 'Getting started',
+    keywords: 'begin first new project basics overview',
+    body: (
+      <>
+        <p>MathEngine builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and timed <b>clips</b> that animate them.</p>
+        <ol>
+          <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
+          <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
+          <li>Select an object to edit it in the <b>Inspector</b>; select two to connect them.</li>
+          <li>Press <kbd>Space</kbd> to play, <kbd>⌘S</kbd> to save, and <b>Export video</b> to render with manim.</li>
+        </ol>
+      </>
+    ),
+    actions: [{ label: 'Take the tour', run: () => startTour(0) }],
+  },
+  {
+    id: 'draw',
+    title: 'Drawing shapes',
+    keywords: 'tools point segment line arrow circle rectangle polygon snap exact entry handles vertex radius',
+    body: (
+      <>
+        <p>Pick a tool above the canvas or press its key: <kbd>1</kbd> select, <kbd>2</kbd> point, <kbd>3</kbd> segment, <kbd>4</kbd> arrow, <kbd>5</kbd> circle, <kbd>6</kbd> rectangle, <kbd>7</kbd> polygon.</p>
+        <ul>
+          <li><b>Segment / arrow</b>: click the two endpoints. <b>Circle</b>: click the center, then a point on it. <b>Rectangle</b>: two opposite corners. <b>Polygon</b>: click the vertices, then click the first one again, double-click or press <kbd>Enter</kbd>.</li>
+          <li>The pointer <b>snaps</b> to points, crossings, endpoints, vertices, centers, midpoints, curves and the grid (toggle the grid with <b>Snap</b> in the toolbar). With the point tool, clicking where two lines, circles, graphs or axes cross places their <b>intersection</b>, which stays on the crossing.</li>
+          <li>For <b>exact values</b>, type into the box next to the tools (<code>x, y</code>, a radius, or <code>width, height</code>) and press <kbd>Enter</kbd>.</li>
+          <li>After drawing, the round handles edit endpoints, vertices, the radius and corners, and <b>Geometry</b> in the inspector takes exact numbers. <kbd>Alt</kbd>-click a vertex to remove it.</li>
+          <li>Press <kbd>Esc</kbd> to cancel a drawing or return to the select tool.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Try the segment tool', run: tool('line') }, { label: 'Show me the tools', run: tourTo('tools') }],
+  },
+  {
+    id: 'connect',
+    title: 'Connecting objects',
+    keywords: 'connect link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
+    body: (
+      <>
+        <p>Connected objects are built from other objects and stay attached to them while you edit, animate and scrub.</p>
+        <ul>
+          <li>Select one or more objects (<kbd>Shift</kbd>-click, or drag a box on empty canvas). The inspector's <b>Build from this</b> section and the right-click menu list what fits: <i>Segment</i>, <i>Midpoint</i>, <i>Circle</i>, <i>Polygon</i>, <i>Mark angle</i>, <i>Attach label</i>, <i>Point on curve</i>…</li>
+          <li>Drawing a segment from one existing point to another connects it to both; clicking a point onto a graph or circle constrains it there.</li>
+          <li><b>Intersections</b>: select two lines, circles, graphs or axes and pick <i>Intersection</i> (one point per crossing), or click the crossing with the point tool. A graph offers <i>Mark roots</i> and <i>y-intercept</i>. Lines count as extended both ways; while the objects don't meet, the point stays where it was.</li>
+          <li><b>Right angles and parallels</b>: select a point and a line for <i>Perpendicular</i>, <i>Parallel</i>, <i>Altitude</i> (dashed, from the point to the line) or <i>Foot of perpendicular</i>; a point and axes for <i>Drop to x-axis</i> / <i>Drop to y-axis</i>. A segment offers <i>Perpendicular bisector</i>. These chain: the altitudes of a triangle meet at an intersection that moves with the vertices.</li>
+          <li>Drag an attached label to change its offset. Drag a constrained point to move it along its curve or circle.</li>
+          <li>The inspector's <b>Construction</b> section shows the sources and values; <b>Detach</b> makes the object independent. Deleting a source asks whether to delete or detach what was built from it.</li>
+          <li>A connection controls either an object's <i>position</i> or its <i>shape</i>; animations still control color, opacity and appearance.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Show me the canvas', run: tourTo('canvas') }],
+  },
+  {
+    id: 'graph',
+    title: 'Graphs and parameters',
+    keywords: 'function graph expression plot axes parameter slider valuetracker discontinuity domain',
+    body: (
+      <>
+        <p>Click <b>ƒ Graph</b> and type an explicit function of <code>x</code>, such as <code>y = a*sin(b*x)</code>. You can use <code>+ − * / ^</code>, implicit multiplication (<code>2x</code>), <code>sin cos tan exp ln log sqrt abs</code> and <code>pi</code>, <code>e</code>.</p>
+        <ul>
+          <li>Every other letter becomes a <b>parameter</b> with a slider (value, bounds and step). Parameters are shared: graphs, points and labels using <code>a</code> all follow it.</li>
+          <li>The <b>preview</b> shows exactly what will be added. Choose new or existing axes, the domain and the color.</li>
+          <li>Discontinuities (like those of <code>tan(x)</code>) are found automatically, and the curve isn't drawn across them.</li>
+          <li>Not supported yet: implicit equations (<code>x^2 + y^2 = 1</code>), inequalities, parametric or polar curves, piecewise functions. The builder explains what it can't read.</li>
+          <li>To animate a parameter, select it and use <b>Animate to… → Add clip</b>; its sliders appear in the inspector when nothing is selected.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Open the graph builder', run: open('graph') }],
+  },
+  {
+    id: 'annotate',
+    title: 'Annotations and measurements',
+    keywords: 'tangent secant shade area riemann length angle slope integral measure label brace highlight',
+    body: (
+      <>
+        <p>Select an object to see the annotations that fit it:</p>
+        <ul>
+          <li>a segment: <i>Show length</i>, <i>Midpoint</i>; two lines: <i>Mark angle</i>;</li>
+          <li>a graph: <i>Point on curve</i>, <i>Tangent</i>, <i>Secant</i>, <i>Shade interval</i>, <i>Riemann rectangles</i>;</li>
+          <li>a shaded area: <i>Show integral (numerical)</i>; a tangent or secant: <i>Show slope</i>; an angle: <i>Show angle value</i>.</li>
+        </ul>
+        <p>Interval bounds and tangent points have handles on the axis you can drag. <b>Shaded regions are visual only</b>; numbers come from measurements, and the inspector says how each one is computed.</p>
+      </>
+    ),
+  },
+  {
+    id: 'equations',
+    title: 'Equations',
+    keywords: 'mathtex latex equation term color brace transform mathlive match',
+    body: (
+      <>
+        <p>Add a <b>MathTex</b> from the library. Edit it with the math input or the LaTeX box.</p>
+        <ul>
+          <li><b>Split into terms</b> makes each symbol a term. Click terms in the inspector or on the canvas to select them, then <i>Color</i>, <i>Brace</i>, <i>Label</i> or <i>Highlight</i> them. Repeated symbols are separate terms (<code>x #1</code>, <code>x #2</code>).</li>
+          <li><b>Check with manim</b> compiles the equation with real LaTeX and flags terms that render nothing.</li>
+          <li><b>Transform terms…</b> animates one equation into another: click a source term, then the term it becomes, or use <i>Pair identical terms</i>. This only controls how terms move; it doesn't check the math.</li>
+          <li>LaTeX must be installed for equations and number labels to render.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: 'constructions',
+    title: 'Reusable constructions',
+    keywords: 'template construction starter save insert library triangle unit circle number line secant tangent instance linked',
+    body: (
+      <>
+        <p>The library's <b>Build</b> tab holds constructions you can insert at the playhead: a labeled triangle, a unit circle, a number line and a secant-to-tangent demo, plus your own.</p>
+        <ul>
+          <li>Select objects and choose <b>Save as construction…</b>. Whatever they are built from is included, and you choose which parameters, labels, colors and visibility switches to offer when inserting.</li>
+          <li>Save to <b>this project</b> or to <b>your library</b> (shared by all your projects).</li>
+          <li>Insert as an <b>independent copy</b>, or <b>linked to its template</b> so <i>Update instances</i> brings in template changes. Each instance gets its own objects.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Show me the Build tab', run: tourTo('build') }],
+  },
+  {
+    id: 'timeline',
+    title: 'Timeline and animation',
+    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order',
+    body: (
+      <>
+        <ul>
+          <li>Clips sit on tracks at any time and may overlap or leave gaps. Drag to move, drag edges to trim, <kbd>Alt</kbd>-drag to duplicate, right-click for more. A clip dropped where its track is taken goes to the nearest free track above; the drag preview shows where.</li>
+          <li>Overlapping clips on the same object <b>add up</b>: move it and change its color, rotate it or fade it out at the same time. Replacing it or turning it into another shape still lets the later clip win.</li>
+          <li>A clip marked <b>!</b> animates an object before its intro (Create, FadeIn, Add): the object would show from that clip on. Effect Controls explains it.</li>
+          <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
+          <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
+          <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>
+          <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Show me the timeline', run: tourTo('timeline') }],
+  },
+  {
+    id: 'python',
+    title: 'Python, code and export',
+    keywords: 'python code export render video raw header manim file',
+    body: (
+      <>
+        <ul>
+          <li>Every field accepts Python: click <code>{'{}'}</code> next to a field to type any expression manim accepts (<code>BLUE</code>, <code>UP * 2</code>, <code>lambda x: x**2</code>).</li>
+          <li><b>Code clips</b> (<i>+ Code</i> on the timeline) run any manim code inside <code>construct()</code>.</li>
+          <li><b>&lt;/&gt; Code</b> shows the generated scene and lets you add imports, helpers and custom classes in the header. <i>Save .py</i> writes a standalone manim file.</li>
+          <li><b>Export video</b> renders with manim at the quality you choose.</li>
+        </ul>
+      </>
+    ),
+    actions: [{ label: 'Open the code view', run: open('code') }, { label: 'Export video', run: open('export') }],
+  },
+  {
+    id: 'keys',
+    title: 'Keyboard shortcuts',
+    keywords: 'keys shortcuts hotkeys keyboard',
+    body: (
+      <table className="keys-table">
+        <tbody>
+          {[
+            ['1 – 7', 'Drawing tools (select, point, segment, arrow, circle, rectangle, polygon)'],
+            ['Enter / Esc', 'Finish a polygon / cancel drawing'],
+            ['Shift-click', 'Add to the selection'],
+            ['Space, J / K / L', 'Play / pause'],
+            ['← / →', 'Previous / next frame (Shift: 5 frames)'],
+            ['↑ / ↓', 'Previous / next edit point'],
+            ['Home / End', 'Start / end of the sequence'],
+            ['Del, ⇧Del', 'Delete, ripple delete'],
+            ['⌘D', 'Duplicate selected objects'],
+            ['⌘C / ⌘V', 'Copy / paste clips'],
+            ['⌘Z / ⇧⌘Z', 'Undo / redo'],
+            ['⌘S', 'Save'],
+            ['M · S · = / -', 'Marker · timeline snap · zoom'],
+            ['? or F1', 'Open this guide'],
+          ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
+        </tbody>
+      </table>
+    ),
+  },
+  {
+    id: 'trouble',
+    title: 'Troubleshooting',
+    keywords: 'error problem latex missing broken construction warning slow',
+    body: (
+      <ul>
+        <li><b>A red error bar under the canvas</b>: click it to jump to the object or clip that failed. The last good frame stays visible, dimmed.</li>
+        <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source or <b>Detach</b>.</li>
+        <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or detach it.</li>
+        <li><b>Equations or numbers don't render</b>: install LaTeX (TeX Live, MacTeX or MiKTeX). <code>Text</code> works without it.</li>
+        <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
+      </ul>
+    ),
+  },
+];
+
+/** The searchable guide. */
+export function HelpPanel() {
+  const initial = useStore((s) => s.panelData as string | null);
+  const [topic, setTopic] = useState<string>(initial && TOPICS.some((t) => t.id === initial) ? initial : 'start');
+  const [query, setQuery] = useState('');
+  const list = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return TOPICS;
+    return TOPICS.filter((t) => `${t.title} ${t.keywords}`.toLowerCase().includes(q));
+  }, [query]);
+  const current = TOPICS.find((t) => t.id === topic) ?? TOPICS[0];
+  return (
+    <Modal title="Help" wide>
+      <div className="help">
+        <nav className="help-nav" aria-label="Help topics">
+          <input className="field" placeholder="Search help…" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus />
+          {list.map((t) => (
+            <button key={t.id} className={`help-topic ${t.id === current.id ? 'on' : ''}`} onClick={() => setTopic(t.id)}>{t.title}</button>
+          ))}
+          {list.length === 0 && <p className="muted small">No topics match.</p>}
+          <div className="help-tour">
+            <button className="primary" onClick={() => startTour(0)}>Take the tour</button>
+          </div>
+        </nav>
+        <article className="help-body">
+          <h2>{current.title}</h2>
+          {current.body}
+          {current.actions && (
+            <div className="row help-actions">
+              {current.actions.map((a) => <button key={a.label} onClick={a.run}>{a.label}</button>)}
+            </div>
+          )}
+        </article>
+      </div>
+    </Modal>
+  );
+}
+
+const WELCOME_KEY = 'mathengine.welcomed';
+
+/** A small first-run card offering the tour. */
+export function WelcomeCard() {
+  const tour = useStore((s) => s.tour);
+  const panel = useStore((s) => s.panel);
+  const [show, setShow] = useState(() => {
+    try {
+      return !localStorage.getItem(WELCOME_KEY);
+    } catch {
+      return false; // storage unavailable: don't nag
+    }
+  });
+  const dismiss = () => {
+    setShow(false);
+    try {
+      localStorage.setItem(WELCOME_KEY, '1');
+    } catch {
+      /* storage unavailable */
+    }
+  };
+  if (!show || tour !== null || panel) return null;
+  return (
+    <div className="welcome-card" role="dialog" aria-label="Welcome">
+      <b>New to MathEngine?</b>
+      <p className="muted small">A one-minute tour shows where everything is. You can reopen it from Help at any time.</p>
+      <div className="row">
+        <button className="ghost small" onClick={dismiss}>Not now</button>
+        <span className="spacer" />
+        <button className="primary" onClick={() => { dismiss(); startTour(0); }}>Take the tour</button>
+      </div>
+    </div>
+  );
+}

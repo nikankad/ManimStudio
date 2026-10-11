@@ -1,4 +1,33 @@
-import type { Catalog, Job, RunResult, SceneDoc, Signature } from './types';
+import type { Catalog, Job, RunResult, SceneDoc, Signature, Template } from './types';
+
+export interface FunctionAnalysis {
+  ok: boolean;
+  error: string | null;
+  hint: string;
+  notes: string[];
+  params: string[];
+  undefined: string[];
+  python: string;
+  normalized: string;
+  discontinuities: number[];
+  gap: number | null;
+  undefined_intervals: [number, number][];
+  y_extent: [number, number] | null;
+}
+
+export interface ValueCheck {
+  ok: boolean;
+  error?: string;
+  hint?: string;
+  params?: string[];
+  literal?: number | null;
+}
+
+export interface EquationCheck {
+  ok: boolean;
+  glyphs: number[];
+  error: string | null;
+}
 
 const token = document.querySelector<HTMLMetaElement>('meta[name="me-token"]')?.content ?? '';
 
@@ -35,6 +64,12 @@ export const api = {
   initialProject: () => get<{ doc: SceneDoc; path: string | null }>('/api/project/initial'),
   openProject: (path: string) => post<{ doc: SceneDoc; path: string }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
+  analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number]) =>
+    post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range }),
+  checkValue: (expr: string, params: string[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params }),
+  checkEquation: (parts: string[], ctor: string) => post<EquationCheck>('/api/check_equation', { parts, ctor }),
+  constructions: () => get<{ starters: Template[]; library: Template[]; path: string }>('/api/constructions'),
+  saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),
   dialog: (kind: 'open' | 'save', filename = '', types: string[] = []) =>
     post<{ path: string | null; unsupported?: boolean }>('/api/dialog', { kind, filename, types }),
 };
