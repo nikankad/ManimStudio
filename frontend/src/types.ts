@@ -151,6 +151,7 @@ export interface Param {
   pos?: number; // positional index (the "*" arg fills pos 0 when the class has no *args)
   kwonly?: boolean;
   accepts?: string[]; // mobject(s): classes the referenced object must be (Angle.line1 -> Line…)
+  doc?: string; // what it is and what changing it does (manim's docstrings, or MathEngine's own words)
 }
 
 export type ParamKind =

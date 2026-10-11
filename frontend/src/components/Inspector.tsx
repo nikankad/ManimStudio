@@ -7,6 +7,7 @@ import {
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
 import type { Args, Clip, Param, SceneDoc, SceneObject } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
+import { Tip, type TipContent } from './Tip';
 import { ActionsSection, Diagnostics, GeometrySection, InstanceSection, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isFollow, isRedraw } from '../construct';
@@ -309,7 +310,7 @@ function useChainClass(name: string | undefined): string {
 }
 
 /** Method chain as editable call cards, each with the method's real signature. */
-function ChainEditor({ chain, cls, onChange, title, placeholder }: { chain: string; cls: string; onChange: (v: string) => void; title: string; placeholder: string }) {
+function ChainEditor({ chain, cls, onChange, title, placeholder, help }: { chain: string; cls: string; onChange: (v: string) => void; title: string; placeholder: string; help?: TipContent }) {
   const sig = useSignature(cls);
   const common = useStore((s) => s.catalog?.methods) ?? [];
   const [raw, setRaw] = useState(false);
@@ -321,7 +322,7 @@ function ChainEditor({ chain, cls, onChange, title, placeholder }: { chain: stri
   return (
     <section>
       <h4>
-        {title}{' '}
+        {help ? <Tip tip={help}>{title}</Tip> : title}{' '}
         <select className="inline" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
           <option value="">+ method</option>
           <optgroup label="Common">{top.map((m) => <option key={m}>{m}</option>)}</optgroup>
@@ -413,6 +414,34 @@ function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: 
   );
 }
 
+/** Hover help for the clip settings that aren't manim arguments. */
+const CLIP_HELP: Record<string, TipContent> = {
+  cls: { title: 'Animation', text: 'The manim animation this clip plays. Type or pick another class to switch to it. Arguments the new class doesn’t take must be removed below, or the clip shows an error.' },
+  target: { title: 'Object', text: 'The object this clip animates. Pick another object’s name to animate that one instead; the timing stays the same.' },
+  start: {
+    title: 'Start',
+    text: 'When the clip begins, in seconds from the start of the scene. Changing it moves the clip on the timeline. The animation starts from wherever the object is at that moment, so moving it before or after other clips can change where the object ends up.',
+    notes: ['Drag the value to change it, or click to type. Timecode: hours:minutes:seconds:frames.'],
+  },
+  duration: {
+    title: 'Duration',
+    text: 'How long the animation takes (manim’s run_time). Longer is slower: the same change is spread over more time. Clips after it don’t move, so a longer clip may start to overlap them.',
+    notes: ['Same as dragging the clip’s right edge on the timeline.'],
+  },
+  holdDuration: { title: 'Duration', text: 'How long the scene keeps running here (self.wait). Nothing moves except objects with updaters. Use it to pause, or to extend the end of the video.' },
+  measured: { title: 'Measured', text: 'A code clip lasts as long as the self.play and self.wait calls inside it take; this is measured by running the scene. Edit the code to change it.' },
+  track: {
+    title: 'Track',
+    text: 'The timeline row the clip sits on. Tracks only organize clips: they don’t change which object is drawn on top. A track’s eye button leaves all its clips out of the preview and the export; its lock stops them being moved.',
+  },
+  enabled: { title: 'Enabled', text: 'Unticked, the clip is skipped in the preview and the exported video but stays in the project, so you can compare with and without it.', notes: ['Shift+E toggles the selected clips.'] },
+  methods: {
+    title: 'Methods to animate',
+    text: 'Each method is applied to the object, and the clip animates it from how it is when the clip starts to how it is after these calls. Changing a method’s arguments changes where the object ends up. Calls run in order, top to bottom.',
+  },
+  label: { title: 'Label', text: 'The name shown on the clip in the timeline. It doesn’t change the scene.' },
+};
+
 function setClip(id: string, fn: (c: Clip) => void, key: string) {
   updateDoc((d) => {
     const c = d.clips.find((x) => x.id === id);
@@ -425,6 +454,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
   const tracks = useStore((s) => s.doc.tracks);
   const timeline = useStore((s) => s.timeline);
   const sig = useSignature(clip.kind === 'anim' && clip.cls !== 'animate' && clip.cls !== 'TransformTerms' ? clip.cls ?? '' : '');
+  const animationSig = useSignature(clip.cls === 'animate' ? 'Animation' : '');
   const dur = clipDuration(clip, timeline);
   const targetCls = useChainClass(clip.target);
   const timed = clip.kind === 'anim' || clip.kind === 'hold';
@@ -433,9 +463,9 @@ function ClipInspector({ clip }: { clip: Clip }) {
     <div className="pad">
       {clip.kind === 'anim' && (
         <div className="insp-head">
-          <Field className="mono" value={clip.cls ?? ''} list="me-animations" onChange={(v) => setClip(clip.id, (c) => void (c.cls = v), 'cls')} />
+          <Tip tip={CLIP_HELP.cls}><Field className="mono" value={clip.cls ?? ''} list="me-animations" onChange={(v) => setClip(clip.id, (c) => void (c.cls = v), 'cls')} /></Tip>
           <span className="muted">(</span>
-          <Field className="mono" value={clip.target ?? ''} list="me-targets" onChange={(v) => setClip(clip.id, (c) => void (c.target = v), 'target')} />
+          <Tip tip={CLIP_HELP.target}><Field className="mono" value={clip.target ?? ''} list="me-targets" onChange={(v) => setClip(clip.id, (c) => void (c.target = v), 'target')} /></Tip>
           <span className="muted">)</span>
         </div>
       )}
@@ -445,22 +475,22 @@ function ClipInspector({ clip }: { clip: Clip }) {
 
       <section className="fx-section">
         <h4>Timing</h4>
-        <div className="fx-row"><span>Start</span><ScrubNumber value={clip.start} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.start = frames(v)), 'start')} /><span className="muted small mono">{timecode(clip.start)}</span></div>
-        {timed && <div className="fx-row"><span>Duration</span><ScrubNumber value={clip.duration} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.duration = frames(v)), 'dur')} /><span className="muted small mono">→ {timecode(clip.start + clip.duration)}</span></div>}
-        {clip.kind === 'code' && <div className="fx-row"><span>Measured</span><span className="mono">{dur.toFixed(2)}s</span></div>}
+        <div className="fx-row"><Tip tip={CLIP_HELP.start}>Start</Tip><ScrubNumber value={clip.start} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.start = frames(v)), 'start')} /><span className="muted small mono">{timecode(clip.start)}</span></div>
+        {timed && <div className="fx-row"><Tip tip={clip.kind === 'hold' ? CLIP_HELP.holdDuration : CLIP_HELP.duration}>Duration</Tip><ScrubNumber value={clip.duration} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setClip(clip.id, (c) => void (c.duration = frames(v)), 'dur')} /><span className="muted small mono">→ {timecode(clip.start + clip.duration)}</span></div>}
+        {clip.kind === 'code' && <div className="fx-row"><Tip tip={CLIP_HELP.measured}>Measured</Tip><span className="mono">{dur.toFixed(2)}s</span></div>}
         <div className="fx-row">
-          <span>Track</span>
+          <Tip tip={CLIP_HELP.track}>Track</Tip>
           <select className="field" value={clip.track} onChange={(e) => setClip(clip.id, (c) => void (c.track = e.target.value), 'track')}>
             {tracks.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </div>
-        <label className="check"><input type="checkbox" checked={!clip.disabled} onChange={(e) => setClip(clip.id, (c) => void (c.disabled = !e.target.checked), 'dis')} /> enabled</label>
+        <label className="check"><input type="checkbox" checked={!clip.disabled} onChange={(e) => setClip(clip.id, (c) => void (c.disabled = !e.target.checked), 'dis')} /> <Tip tip={CLIP_HELP.enabled}>enabled</Tip></label>
       </section>
 
       {clip.kind === 'anim' && clip.cls === 'animate' && (
         <>
-          <ChainEditor title="Methods to animate" cls={targetCls} chain={clip.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => setClip(clip.id, (c) => void (c.chain = v), 'chain')} />
-          <ArgsEditor title="Animation" params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '' }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
+          <ChainEditor title="Methods to animate" help={CLIP_HELP.methods} cls={targetCls} chain={clip.chain ?? ''} placeholder=".shift(RIGHT * 2).rotate(PI / 2)" onChange={(v) => setClip(clip.id, (c) => void (c.chain = v), 'chain')} />
+          <ArgsEditor title="Animation" params={[{ name: 'rate_func', label: 'rate_func', kind: 'rate_func', default: 'smooth', required: false, annotation: '', from: '', doc: animationSig?.params.find((p) => p.name === 'rate_func')?.doc }]} args={clip.args ?? {}} onChange={(k, v) => setClip(clip.id, (c) => setArg((c.args ??= {}), k, v), 'arg:' + k)} />
         </>
       )}
       {clip.kind === 'anim' && clip.cls === 'TransformTerms' && (
@@ -472,7 +502,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
 
       {clip.kind === 'code' && (
         <section>
-          <label className="param"><span className="pname">label</span><Field value={clip.label ?? ''} placeholder="Code" onChange={(v) => setClip(clip.id, (c) => void (c.label = v), 'label')} /></label>
+          <label className="param"><span className="pname"><Tip tip={CLIP_HELP.label}>label</Tip></span><Field value={clip.label ?? ''} placeholder="Code" onChange={(v) => setClip(clip.id, (c) => void (c.label = v), 'label')} /></label>
           <p className="muted small">Runs inside <code>construct(self)</code> at this time. Every object variable is in scope, and <code>self.play</code> calls here take their own time.</p>
           <Field multiline className="mono code-input" value={clip.code ?? ''} onChange={(v) => setClip(clip.id, (c) => void (c.code = v), 'code')} />
         </section>
@@ -480,6 +510,7 @@ function ClipInspector({ clip }: { clip: Clip }) {
 
       {(clip.kind === 'add' || clip.kind === 'remove') && (
         <section>
+          <p className="muted small">{clip.kind === 'add' ? 'Ticked objects appear on screen at this instant, without an animation.' : 'Ticked objects disappear at this instant, without an animation.'}</p>
           {objects.map((o) => (
             <label key={o.id} className="check">
               <input type="checkbox" checked={clip.targets?.includes(o.name) ?? false} onChange={(e) => setClip(clip.id, (c) => {
@@ -493,8 +524,8 @@ function ClipInspector({ clip }: { clip: Clip }) {
       )}
 
       <div className="row actions">
-        <button onClick={() => setState({ time: frameSnap(clip.start + dur), showVideo: false })}>Go to end</button>
-        <button className="danger" onClick={() => deleteSelection()}>Delete clip</button>
+        <button title="Move the playhead to where this clip ends, to see its result" onClick={() => setState({ time: frameSnap(clip.start + dur), showVideo: false })}>Go to end</button>
+        <button className="danger" title="Remove this clip (Delete). The object stays in the scene; Shift+Delete also closes the gap" onClick={() => deleteSelection()}>Delete clip</button>
       </div>
     </div>
   );

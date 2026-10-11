@@ -585,6 +585,17 @@ def timeline_editing(p):
     page.keyboard.press("Space")
     assert timecode() != "00:00:00:00", timecode()
 
+    # Effect Controls explain each setting on hover.
+    page.locator(".timeline .clip", has_text="Indicate").first.click()
+    page.wait_for_timeout(800)
+    for label, words in (("Duration", "run_time"), ("scale_factor", "temporarily scaled"), ("rate_func", "paced")):
+        page.locator(".inspector .has-tip", has_text=label).first.hover()
+        page.wait_for_selector(".tip", timeout=3000)
+        assert words in page.locator(".tip").first.inner_text(), (label, page.locator(".tip").first.inner_text())
+        page.mouse.move(5, 5)
+        page.wait_for_timeout(100)
+    page.keyboard.press("Escape")
+
     # Typing in the timecode replaces it.
     page.locator(".tl-header .timecode").click()
     page.keyboard.type("3")
