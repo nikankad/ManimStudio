@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
 import {
@@ -36,7 +36,28 @@ export function Library() {
   const catalog = useStore((s) => s.catalog);
   const [tab, setTab] = useState<'mobject' | 'animation' | 'outline' | 'constructions'>('mobject');
   const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
   const [open, setOpen] = useState<Record<string, boolean>>({ Common: true, Results: true });
+
+  useEffect(() => {
+    if (focusSearch.current && searchRef.current) {
+      searchRef.current.focus();
+      searchRef.current.select();
+      focusSearch.current = false;
+    }
+    const search = () => {
+      if (!searchRef.current) {
+        focusSearch.current = true;
+        setTab('mobject');
+      } else {
+        searchRef.current.focus();
+        searchRef.current.select();
+      }
+    };
+    window.addEventListener('library-search', search);
+    return () => window.removeEventListener('library-search', search);
+  }, [tab]);
 
   const groups = useMemo(() => {
     if (!catalog || tab === 'outline' || tab === 'constructions') return [];
@@ -71,7 +92,18 @@ export function Library() {
         <Constructions />
       ) : (
         <>
-          <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input ref={searchRef} className="search" aria-label="Search library" title="Search library (/ or Alt+1)" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault(); e.stopPropagation();
+                if (query) setQuery('');
+                else (document.querySelector('.monitor') as HTMLElement | null)?.focus();
+              } else if (e.key === 'Enter' && query.trim() && groups[0]?.[1][0]) {
+                e.preventDefault(); e.stopPropagation();
+                activate(groups[0][1][0]);
+                (document.querySelector('.monitor') as HTMLElement | null)?.focus();
+              }
+            }} />
           {!catalog && <div className="muted pad">Loading manim…</div>}
           <div className="scroll">
             {tab === 'animation' && !query && (

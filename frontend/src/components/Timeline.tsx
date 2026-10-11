@@ -357,7 +357,10 @@ export function Timeline() {
   };
 
   return (
-    <div className="timeline" data-tour="timeline" onWheel={onWheel}>
+    <div className="timeline" data-tour="timeline" tabIndex={0} aria-label="Timeline" onWheel={onWheel}
+      onPointerDownCapture={(e) => {
+        if (!(e.target as Element).closest('button, input, select, textarea')) e.currentTarget.focus({ preventScroll: true });
+      }}>
       <div className="tl-header">
         <div className="seq-tab">{doc.scene.name}</div>
         <TimecodeInput value={time} onChange={(t) => setState({ time: t, showVideo: false })} />

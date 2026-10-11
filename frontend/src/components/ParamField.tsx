@@ -61,7 +61,7 @@ export function ScrubNumber({ value, onChange, step = 0.05, precision = 2, suffi
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          if (e.key === 'Escape') setEditing(null);
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setEditing(null); }
         }}
       />
     );
