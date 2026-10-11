@@ -48,9 +48,14 @@ export type Link =
   | { kind: 'on_graph'; graph: string; x: string; frozen?: boolean }
   | { kind: 'on_circle'; circle: string; angle: string; frozen?: boolean }
   | { kind: 'coords'; axes: string; x: string; y: string; frozen?: boolean }
+  // Lines are extended both ways; an axes source means its x-axis, or its y-axis with axis: 'y'.
+  | { kind: 'intersection'; a: string; b: string; which?: number; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'projection'; point: string; onto: string; axis?: 'x' | 'y'; frozen?: boolean }
   | { kind: 'measure'; what: 'length' | 'angle' | 'slope' | 'integral' | 'value'; of?: string; expr?: string; offset?: [number, number]; degrees?: boolean; frozen?: boolean }
   | { kind: 'segment'; a: string; b: string; mode?: 'center' | 'boundary'; frozen?: boolean }
   | { kind: 'circle2'; a: string; b: string; mode?: 'center' | 'diameter'; frozen?: boolean }
+  | { kind: 'perpendicular'; line: string; through: string; mode?: 'line' | 'foot'; length?: string; axis?: 'x' | 'y'; frozen?: boolean }
+  | { kind: 'parallel'; line: string; through: string; length?: string; axis?: 'x' | 'y'; frozen?: boolean }
   | { kind: 'polygon'; points: string[]; frozen?: boolean }
   | { kind: 'angle'; l1: string; l2: string; radius?: string; other?: boolean; quadrant?: [number, number]; frozen?: boolean }
   | { kind: 'graph'; axes: string; expr: string; x_min?: number; x_max?: number; discontinuities?: number[]; gap?: number; frozen?: boolean }

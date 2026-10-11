@@ -4,7 +4,8 @@
 // result stays attached to its sources while editing, animating and in the exported code.
 
 import { geoType, graphAxes, sortByDependencies, type GeoType } from './construct';
-import { createLinked, getState, selectedObjectIds, setState, updateDoc, type LinkedSpec } from './store';
+import { meetPoints, MEETS, STRAIGHT } from './intersect';
+import { createLinked, getState, selectedObjectIds, selectObjects, setState, toast, updateDoc, type LinkedSpec } from './store';
 import type { Link, ObjInfo, SceneDoc, SceneObject } from './types';
 
 export interface Action {
@@ -59,6 +60,32 @@ function make(spec: LinkedSpec) {
   return () => void createLinked(spec);
 }
 
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * A point at each place a and b meet now (lines extended both ways), each linked to its
+ * intersection, so they follow the objects. Nothing meets now: one point, which appears once they do.
+ */
+function intersect(a: SceneObject, b: SceneObject, axis?: 'x' | 'y', name = 'X') {
+  const s = getState();
+  const pts = meetPoints(s.doc, s.frame?.objects ?? [], a.id, b.id, axis);
+  if (!pts.length) toast('They don’t meet right now; the point will move there once they do (lines count as extended)');
+  const ids: string[] = [];
+  (pts.length ? pts : [null]).forEach((pt, which) => {
+    const link: Link = { kind: 'intersection', a: a.id, b: b.id, ...(which ? { which } : {}), ...(axis ? { axis } : {}) };
+    const id = createLinked({ ctor: 'Dot', name, pos: pt ? [r3(pt[0]), r3(pt[1])] : null, link }, { select: false });
+    if (id) ids.push(id);
+  });
+  if (ids.length) selectObjects(ids);
+}
+
+/** The foot of the perpendicular from a point to an axis, and a dashed segment to it (both follow the point). */
+function dropTo(pt: SceneObject, axes: SceneObject, axis: 'x' | 'y') {
+  const foot = createLinked({ ctor: 'Dot', name: `${shortName(pt)}_${axis}`, args: { radius: '0.05' }, link: { kind: 'projection', point: pt.id, onto: axes.id, ...(axis === 'y' ? { axis } : {}) } }, { select: false });
+  if (!foot) return;
+  createLinked({ ctor: 'DashedLine', name: `drop_${shortName(pt)}_${axis}`, args: { stroke_opacity: '0.7' }, link: { kind: 'segment', a: pt.id, b: foot } });
+}
+
 /** Actions offered for the given objects (and selected equation terms). */
 export function actionsFor(ids: string[], terms: string[] = []): Action[] {
   const doc = getState().doc;
@@ -74,6 +101,10 @@ export function actionsFor(ids: string[], terms: string[] = []): Action[] {
     if (t === 'line') {
       add({ group: 'Measure', label: 'Show length', hint: 'A number that tracks this segment’s length (computed by manim).', run: make({ ctor: 'DecimalNumber', name: `${o.name}_length`, args: MEASURE_ARGS, link: { kind: 'measure', what: 'length', of: o.id, offset: [0, 0.4] } }) });
       add({ group: 'Connect', label: 'Midpoint', hint: 'A point that stays at the middle of this segment.', run: make({ ctor: 'Dot', name: `${o.name}_mid`, link: { kind: 'midpoint', a: o.id } }) });
+      add({ group: 'Connect', label: 'Perpendicular bisector', hint: 'The midpoint and the line through it at a right angle; both follow the segment.', run: () => {
+        const mid = createLinked({ ctor: 'Dot', name: `${o.name}_mid`, link: { kind: 'midpoint', a: o.id } }, { select: false });
+        if (mid) createLinked({ ctor: 'Line', name: `${o.name}_bisector`, link: { kind: 'perpendicular', line: o.id, through: mid, length: '4' } });
+      } });
       if (o.link?.kind === 'tangent' || o.link?.kind === 'secant')
         add({ group: 'Measure', label: 'Show slope', hint: 'The slope in the graph’s units, computed numerically.', run: make({ ctor: 'DecimalNumber', name: `${o.name}_slope`, args: MEASURE_ARGS, link: { kind: 'measure', what: 'slope', of: o.id, offset: [0.8, 0.4] } }) });
     }
@@ -84,6 +115,11 @@ export function actionsFor(ids: string[], terms: string[] = []): Action[] {
       const mid = fmt(visibleX(doc, o) ?? (lo + hi) / 2 + (hi - lo) / 6);
       const a = fmt(lo + (hi - lo) * 0.3), b = fmt(lo + (hi - lo) * 0.7);
       add({ group: 'Connect', label: 'Point on curve', hint: 'A point constrained to the graph; drag it along the curve.', run: make({ ctor: 'Dot', name: 'P', link: { kind: 'on_graph', graph: o.id, x: mid } }) });
+      const ax = graphAxes(o, doc);
+      if (ax) {
+        add({ group: 'Connect', label: 'Mark roots', hint: 'A point where the graph crosses the x-axis, for each crossing now; they follow the graph.', run: () => intersect(o, ax, undefined, 'root') });
+        add({ group: 'Connect', label: 'y-intercept', hint: 'The point where the graph crosses the y-axis.', run: () => intersect(o, ax, 'y', 'y_int') });
+      }
       add({ group: 'Annotate', label: 'Tangent', hint: 'Tangent line at a point of the graph (updates with it).', run: make({ ctor: 'Line', name: 'tangent', args: { color: 'YELLOW' }, link: { kind: 'tangent', graph: o.id, x: mid, length: '3' } }) });
       add({ group: 'Annotate', label: 'Secant', hint: 'Line through two points of the graph, at x and x + dx.', run: make({ ctor: 'Line', name: 'secant', args: { color: 'GREEN' }, link: { kind: 'secant', graph: o.id, x: a, dx: '1', length: '1' } }) });
       add({ group: 'Annotate', label: 'Shade interval', hint: 'Shaded region under the graph between two bounds. Visual only: no value is computed.', run: make({ ctor: `${axesName(doc, o)}.get_area`, name: 'area', args: { opacity: '0.4' }, link: { kind: 'area', graph: o.id, a, b }, intro: 'FadeIn' }) });
@@ -133,6 +169,21 @@ export function actionsFor(ids: string[], terms: string[] = []): Action[] {
     }
     if (!types.includes('param') && !types.includes('axes') && !all('point'))
       add({ group: 'Connect', label: 'Arrow between', hint: 'Arrow from one shape’s boundary to the other’s; it follows both.', run: make({ ctor: 'Arrow', name: 'connector', link: { kind: 'segment', a: a.id, b: b.id, mode: 'boundary' } }) });
+    if (MEETS.has(types[0]) && MEETS.has(types[1]) && !(['axes', 'numberline'].includes(types[0]) && ['axes', 'numberline'].includes(types[1])))
+      add({ group: 'Connect', label: 'Intersection', hint: 'A point where they meet (one per crossing). It follows both; lines count as extended.', run: () => intersect(a, b) });
+    const pi = types.indexOf('point');
+    if (pi >= 0 && STRAIGHT.has(types[1 - pi])) {
+      const p = objs[pi], l = objs[1 - pi];
+      if (types[1 - pi] === 'axes') {
+        add({ group: 'Connect', label: 'Drop to x-axis', hint: `Dashed line from ${p.name} straight down (or up) to the x-axis, with its foot.`, run: () => dropTo(p, l, 'x') });
+        add({ group: 'Connect', label: 'Drop to y-axis', hint: `Dashed line from ${p.name} across to the y-axis, with its foot.`, run: () => dropTo(p, l, 'y') });
+      } else {
+        add({ group: 'Connect', label: 'Perpendicular', hint: `Line through ${p.name} at a right angle to ${l.name} (extended).`, run: make({ ctor: 'Line', name: `perp_${shortName(p)}`, link: { kind: 'perpendicular', line: l.id, through: p.id, length: '4' } }) });
+        add({ group: 'Connect', label: 'Parallel', hint: `Line through ${p.name} parallel to ${l.name}.`, run: make({ ctor: 'Line', name: `par_${shortName(p)}`, link: { kind: 'parallel', line: l.id, through: p.id } }) });
+        add({ group: 'Connect', label: 'Altitude', hint: `Dashed segment from ${p.name} to ${l.name} at a right angle (the distance to the line).`, run: make({ ctor: 'DashedLine', name: `alt_${shortName(p)}`, link: { kind: 'perpendicular', line: l.id, through: p.id, mode: 'foot' } }) });
+        add({ group: 'Connect', label: 'Foot of perpendicular', hint: `The point of ${l.name} (extended) closest to ${p.name}.`, run: make({ ctor: 'Dot', name: `foot_${shortName(p)}`, link: { kind: 'projection', point: p.id, onto: l.id } }) });
+      }
+    }
     const textIdx = types.findIndex((t) => t === 'text' || t === 'equation');
     if (textIdx >= 0 && types[1 - textIdx] !== 'param') {
       const label = objs[textIdx], target = objs[1 - textIdx];

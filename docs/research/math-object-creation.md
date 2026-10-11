@@ -77,9 +77,9 @@ Snapping onto an existing point makes the new object *connect* to it: a segment 
  "link": {"kind": "segment", "a": "oA", "b": "oB"}}
 ```
 
-Kinds: `attach`, `midpoint`, `on_graph`, `on_circle`, `coords`, `measure` (these own **position**), and
-`segment`, `circle2`, `polygon`, `angle`, `graph`, `tangent`, `secant`, `area`, `riemann`, `brace`,
-`highlight` (these own **shape**). The object keeps its constructor and arguments; the link supplies the
+Kinds: `attach`, `midpoint`, `on_graph`, `on_circle`, `coords`, `intersection`, `projection`, `measure`
+(these own **position**), and `segment`, `circle2`, `perpendicular`, `parallel`, `polygon`, `angle`, `graph`,
+`tangent`, `secant`, `area`, `riemann`, `brace`, `highlight` (these own **shape**). The object keeps its constructor and arguments; the link supplies the
 arguments it controls, which the inspector then hides.
 
 **Keeping them correct.** Considered options:
@@ -136,7 +136,7 @@ undoes it.
 
   A broken follow link is emitted without its constraint, and a broken redraw link as an empty placeholder.
 - *Deletion* asks whether to delete dependents too or detach them.
-- *Detach* converts follow links and segments, circles and polygons to plain objects at their current geometry
+- *Detach* converts follow links and segments, perpendicular and parallel lines, circles and polygons to plain objects at their current geometry
   (taken from the rendered frame). Anything else is frozen (built once) or, if its source is being deleted,
   removed.
 - *Duplication* copies a set of objects. Links inside the set are remapped to the copies; links to objects
@@ -144,6 +144,32 @@ undoes it.
 - *Renames* are safe for sources, which are ids. Parameter names inside expressions are renamed along with
   the parameter. Renaming rewrites identifiers only, never string literals, so renaming `theta` leaves the
   label `r"\theta"` alone.
+
+**Intersections, perpendiculars and feet.** These are what make dependency chains clickable: altitudes are
+perpendiculars from the vertices to the opposite sides, and the orthocenter is the intersection of two of them.
+- *Straight sources* are lines, number lines and axes. An axes source means its x-axis (or its y-axis with
+  `axis: "y"`). Lines are always extended both ways, so two segments that don't reach each other still meet,
+  and a foot of a perpendicular can lie beyond a segment's ends. Extension is what geometry needs; checking that
+  a crossing is on the drawn part is the editor's job, when it offers crossings to snap to.
+- *Intersection* (`a`, `b`, `which`) accepts lines, circles, graphs and axes. All crossings are computed in a
+  stable order, so `which` keeps meaning the same point while the objects move: along a line from its start for
+  a line and a circle, left of the line between the centers first for two circles, by x for anything with a
+  graph. Graph crossings are roots of a signed distance (to a line, a circle, or the other graph on the same
+  axes), found by sampling the domain and bisecting. A sign change whose midpoint isn't near zero is a jump at a
+  discontinuity and is dropped, so `1/x` doesn't "cross" the x-axis at 0. Tangential touches without a sign
+  change are missed.
+- *No crossing*: the point keeps its last position (an intersection is the one follow link that also has a
+  starting position, set to where it was created). Hiding it would take its opacity away from the animations
+  that own it.
+- The editor mirrors the ordering (`frontend/src/intersect.ts`) on the rendered geometry to offer crossings as
+  snap targets for the point tool and to count crossings for *Intersection* and *Mark roots*. Graph outlines are
+  sampled, so the editor's count can differ from the scene's in near-tangent cases; the inspector's *which* picker
+  shows both.
+- *Perpendicular* draws a line of a given length centered on the point, or (`mode: "foot"`) the segment from the
+  point to its foot; *parallel* is centered on the point and as long as the source line unless a length is set.
+  Both use the object's own line class, so a `DashedLine` altitude stays dashed. *Projection* is the foot itself;
+  onto axes it drops along the other axis's direction (`axes.c2p(axes.p2c(p)[0], 0)`), which is also right for
+  skewed axes.
 
 **Dragging.**
 - Moving an attached label or measurement edits its `offset`.
@@ -295,7 +321,7 @@ Each starter compiles without diagnostics and renders in the test suite.
   two points, label-offset drags, undo, delete and detach, Record-mode parameter drags, the graph builder and
   its error messages, equation terms with MathLive, `TransformTerms` pairing, and saving and inserting
   constructions, including two instances of the same starter.
-- **Tests:** `tests/` holds 42 pytest cases rendering with the real manim:
+- **Tests:** `tests/` holds 46 pytest cases rendering with the real manim:
   - the expression language;
   - every link kind, followed during animation;
   - style animations surviving redraws;

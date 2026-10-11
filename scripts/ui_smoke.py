@@ -372,10 +372,168 @@ def connections_records_constructions(p):
     browser.close()
 
 
+def intersections_and_perpendiculars(p):
+    """Altitudes of a triangle meet at a linked intersection; the point tool snaps to crossings."""
+    browser, page, requests = open_page(p)
+    page.goto(URL)
+    page.wait_for_selector(".lib-item", timeout=60000)
+    page.locator(".toolbar button", has_text="New").click()
+    page.wait_for_timeout(500)
+    page.locator("body").click(position={"x": 5, "y": 5})
+
+    # Triangle A(-3, -2), B(3, -2), C(1, 2) with sides connected to the points.
+    A, B, C = (-3, -2), (3, -2), (1, 2)
+    page.keyboard.press("2")
+    for pt in (A, B, C):
+        click_scene(page, *pt)
+        wait_frame(page, 800)
+    page.keyboard.press("3")
+    for a, b in ((A, B), (B, C), (C, A)):
+        click_scene(page, *a)
+        click_scene(page, *b)
+        wait_frame(page, 800)
+    page.keyboard.press("1")
+    wait_frame(page)
+
+    # Altitude from C to AB, and from A to BC.
+    click_scene(page, *C)
+    click_scene(page, 0, -2, shift=True)
+    page.wait_for_timeout(400)
+    actions = page.locator(".inspector .chip").all_inner_texts()
+    print("point + line actions:", actions)
+    for a in ("Perpendicular", "Parallel", "Altitude", "Foot of perpendicular"):
+        assert a in actions, (a, actions)
+    page.locator(".inspector .chip", has_text="Altitude").click()
+    wait_frame(page)
+    click_scene(page, *A)
+    click_scene(page, 2, 0, shift=True)
+    page.wait_for_timeout(400)
+    page.locator(".inspector .chip", has_text="Altitude").click()
+    wait_frame(page)
+
+    # Their intersection (the orthocenter, at (1, 0)).
+    click_scene(page, 1, 1.2)
+    click_scene(page, -0.6, -0.8, shift=True)
+    page.wait_for_timeout(400)
+    actions = page.locator(".inspector .chip").all_inner_texts()
+    print("two lines actions:", actions)
+    page.locator(".inspector .chip", has_text="Intersection").click()
+    wait_frame(page)
+    doc = saved(page)
+    alts = [o for o in doc["objects"] if o.get("link", {}).get("kind") == "perpendicular"]
+    assert len(alts) == 2 and all(o["link"].get("mode") == "foot" and o["ctor"] == "DashedLine" for o in alts), alts
+    h = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "intersection")
+    assert {h["link"]["a"], h["link"]["b"]} == {o["id"] for o in alts}, h
+    shot(page, "1_orthocenter")
+
+    # Point tool on a crossing: a free circle at (-2, -2), r = 1.5 meets AB (extended) at x = -3.5 and -0.5;
+    # only -0.5 is on the drawn segment, and it is the second along AB from A.
+    page.keyboard.press("5")
+    click_scene(page, -2, -2)
+    page.locator(".entry input").fill("1.5")
+    page.locator(".entry input").press("Enter")
+    wait_frame(page)
+    doc = saved(page)
+    circle = next(o for o in doc["objects"] if o["ctor"] == "Circle")
+    (cx, cy), r = circle["pos"], float(circle["args"]["radius"])
+    assert (cx, cy) == (-2, -2) and r == 1.5, circle
+    x_hit = cx + math.sqrt(r * r - (-2 - cy) ** 2)  # the right crossing with y = -2
+    page.keyboard.press("2")
+    page.mouse.move(*stage_point(page, x_hit + 0.03, -2.03))
+    page.wait_for_timeout(200)
+    click_scene(page, x_hit + 0.03, -2.03)
+    wait_frame(page)
+    page.keyboard.press("1")
+    doc = saved(page)
+    hits = [o for o in doc["objects"] if o.get("link", {}).get("kind") == "intersection"]
+    print("intersections:", [o["link"] for o in hits])
+    assert len(hits) == 2, hits
+    x = next(o for o in hits if o["id"] != h["id"])
+    ab = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "segment" and o["id"] in (x["link"]["a"], x["link"]["b"]))
+    assert circle["id"] in (x["link"]["a"], x["link"]["b"]) and x["link"].get("which") == 1, x
+    # The scene puts the linked point on the same crossing the editor snapped to.
+    from mathengine import runtime
+
+    res = runtime.run(doc, 60, render=False)  # after every intro animation
+    assert res.error is None, res.error
+    center = next(o for o in res.objects if o["id"] == x["id"])["center"]
+    print("snapped intersection:", x["link"], "scene:", center, "expected:", [x_hit, -2], "on", ab["name"])
+    assert abs(center[0] - x_hit) < 1e-3 and abs(center[1] + 2) < 1e-3, center
+    # The orthocenter of the triangle as drawn (clicks land within a pixel or two of A, B, C).
+    free_dots = [d["name"] for d in doc["objects"] if d["ctor"] == "Dot" and not d.get("link")]  # A, B, C in drawing order
+    (ax, ay), (bx, by), (qx, qy) = [next(o for o in res.objects if o["name"] == n)["center"] for n in free_dots]
+    # Altitudes from C (perpendicular to AB) and from A (perpendicular to BC): solve (P - C).(B - A) = 0, (P - A).(C - B) = 0.
+    m = [[bx - ax, by - ay], [qx - bx, qy - by]]
+    rhs = [qx * (bx - ax) + qy * (by - ay), ax * (qx - bx) + ay * (qy - by)]
+    det = m[0][0] * m[1][1] - m[0][1] * m[1][0]
+    expected = [(rhs[0] * m[1][1] - m[0][1] * rhs[1]) / det, (m[0][0] * rhs[1] - rhs[0] * m[1][0]) / det]
+    ortho = next(o for o in res.objects if o["id"] == h["id"])["center"]
+    print("orthocenter:", ortho, "expected:", expected, "stored start:", h["pos"])
+    assert abs(ortho[0] - expected[0]) < 1e-3 and abs(ortho[1] - expected[1]) < 1e-3, ortho
+    assert abs(h["pos"][0] - expected[0]) < 0.02 and abs(h["pos"][1] - expected[1]) < 0.02, h
+    shot(page, "2_snapped")
+
+    # A graph's roots and y-intercept, and dropping a point on the curve to the x-axis.
+    page.locator(".toolbar button", has_text="New").click()
+    page.wait_for_timeout(500)
+    page.locator("button", has_text="ƒ Graph").first.click()
+    page.locator(".graph-builder input.big").fill("y = x^2 - 2")
+    page.wait_for_timeout(800)
+    page.locator("button", has_text="Create graph").click()
+    wait_frame(page, 2500)
+    actions = page.locator(".inspector .chip").all_inner_texts()
+    print("graph actions:", actions)
+    page.locator(".inspector .chip", has_text="Mark roots").click()
+    wait_frame(page)
+    doc = saved(page)
+    graph = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "graph")
+    page.locator(".library .tabs button", has_text="Scene").click()
+    page.locator(".outline-row").filter(has=page.locator("span.mono", has_text=re.compile("^" + graph["name"] + "$"))).click()
+    page.wait_for_timeout(400)
+    page.locator(".inspector .chip", has_text="y-intercept").click()
+    wait_frame(page)
+    page.locator(".outline-row").filter(has=page.locator("span.mono", has_text=re.compile("^" + graph["name"] + "$"))).click()
+    page.wait_for_timeout(400)
+    page.locator(".inspector .chip", has_text="Point on curve").click()
+    wait_frame(page)
+    doc = saved(page)
+    P = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "on_graph")
+    axes = next(o for o in doc["objects"] if o["id"] == graph["link"]["axes"])
+    page.locator(".outline-row").filter(has=page.locator("span.mono", has_text=re.compile("^" + P["name"] + "$"))).click()
+    page.locator(".outline-row").filter(has=page.locator("span.mono", has_text=re.compile("^" + axes["name"] + "$"))).click(modifiers=["Shift"])
+    page.wait_for_timeout(400)
+    actions = page.locator(".inspector .chip").all_inner_texts()
+    print("point + axes actions:", actions)
+    page.locator(".inspector .chip", has_text="Drop to x-axis").click()
+    wait_frame(page)
+    doc = saved(page)
+    shot(page, "3_roots")
+    res = runtime.run(doc, 60, render=False)
+    assert res.error is None, res.error
+    info = {o["id"]: o for o in res.objects}
+    ax = info[axes["id"]]["axes"]
+
+    def coords(c):
+        dx, dy = c[0] - ax["origin"][0], c[1] - ax["origin"][1]
+        return [dx / ax["ux"][0], dy / ax["uy"][1]]
+
+    meets = sorted((o for o in doc["objects"] if o.get("link", {}).get("kind") == "intersection"), key=lambda o: o["name"])
+    found = sorted(tuple(round(v, 3) for v in coords(info[o["id"]]["center"])) for o in meets)
+    print("roots and y-intercept:", found)
+    assert found == [(-1.414, 0), (0, -2), (1.414, 0)], found
+    foot = next(o for o in doc["objects"] if o.get("link", {}).get("kind") == "projection")
+    fx = coords(info[foot["id"]]["center"])
+    px = coords(info[P["id"]]["center"])
+    assert abs(fx[0] - px[0]) < 1e-3 and abs(fx[1]) < 1e-3, (fx, px)
+    assert any(o.get("link", {}).get("kind") == "segment" and o["ctor"] == "DashedLine" for o in doc["objects"])
+    browser.close()
+
+
 SAVE = os.path.join(OUT, "smoke.mathengine")
 with sync_playwright() as p:
     drawing_graphs_equations(p)
     connections_records_constructions(p)
+    intersections_and_perpendiculars(p)
 print("screenshots in", OUT)
 print("ERRORS:", errors)
 sys.exit(1 if errors else 0)

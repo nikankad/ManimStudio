@@ -10,11 +10,12 @@ the area under a graph between two bounds.
 Two families, which decide which properties the construction owns:
 
 * **follow** links own only the *position* of an otherwise ordinary object
-  (attached labels, constrained points, midpoints, measurements). Its
+  (attached labels, constrained points, midpoints, intersections, feet of
+  perpendiculars, measurements). Its
   constructor, style, scale and rotation stay editable and animatable.
 * **redraw** links own the *geometry* (points) of the object, which is rebuilt
-  from its sources (segments, circles through points, angle markers, graphs,
-  tangents, shaded areas, braces). Style stays with the object.
+  from its sources (segments, circles through points, perpendicular and
+  parallel lines, angle markers, graphs, tangents, shaded areas, braces). Style stays with the object.
 
 Generated code keeps constructions correct during animation, timeline
 scrubbing and in exported files with a small ``Constraints`` helper (plain
@@ -48,17 +49,24 @@ AXES_CTORS = {"Axes", "NumberPlane", "ComplexPlane"}
 EQUATION_CTORS = {"MathTex", "Tex", "SingleStringMathTex"}
 TEXT_CTORS = {"Text", "MarkupText", "DecimalNumber", "Integer", "Paragraph"}
 
-FOLLOW_KINDS = {"attach", "midpoint", "on_graph", "on_circle", "coords", "measure"}
-REDRAW_KINDS = {"segment", "circle2", "polygon", "angle", "graph", "tangent", "secant", "area", "riemann", "brace", "highlight"}
+FOLLOW_KINDS = {"attach", "midpoint", "on_graph", "on_circle", "coords", "measure", "intersection", "projection"}
+REDRAW_KINDS = {"segment", "circle2", "polygon", "angle", "graph", "tangent", "secant", "area", "riemann", "brace", "highlight",
+                "perpendicular", "parallel"}
 KINDS = FOLLOW_KINDS | REDRAW_KINDS
 
 # What each link kind makes, for compatibility checks and context menus.
 KIND_TYPE = {
-    "midpoint": "point", "on_graph": "point", "on_circle": "point", "coords": "point",
-    "segment": "line", "tangent": "line", "secant": "line", "circle2": "circle", "polygon": "polygon",
+    "midpoint": "point", "on_graph": "point", "on_circle": "point", "coords": "point", "intersection": "point",
+    "projection": "point", "segment": "line", "tangent": "line", "secant": "line", "perpendicular": "line",
+    "parallel": "line", "circle2": "circle", "polygon": "polygon",
     "angle": "angle", "graph": "graph", "area": "area", "riemann": "riemann", "brace": "annotation",
     "highlight": "annotation",
 }
+
+# Objects that can be intersected, and objects that act as a straight line (an axes object means its
+# x- or y-axis, picked by the link's ``axis``). Lines are extended both ways.
+MEETS = {"line", "circle", "graph", "axes", "numberline"}
+STRAIGHT = {"line", "axes", "numberline"}
 
 # Source fields of each kind: (field, accepted types or None for any, required)
 SOURCES: dict[str, list[tuple[str, set[str] | None, bool]]] = {
@@ -67,9 +75,13 @@ SOURCES: dict[str, list[tuple[str, set[str] | None, bool]]] = {
     "on_graph": [("graph", {"graph"}, True)],
     "on_circle": [("circle", {"circle"}, True)],
     "coords": [("axes", {"axes", "numberline"}, True)],
+    "intersection": [("a", MEETS, True), ("b", MEETS, True)],
+    "projection": [("point", None, True), ("onto", STRAIGHT, True)],
     "measure": [("of", None, False)],
     "segment": [("a", None, True), ("b", None, True)],
     "circle2": [("a", None, True), ("b", None, True)],
+    "perpendicular": [("line", STRAIGHT, True), ("through", None, True)],
+    "parallel": [("line", STRAIGHT, True), ("through", None, True)],
     "polygon": [],  # "points": list, checked separately
     "angle": [("l1", {"line"}, True), ("l2", {"line"}, True)],
     "graph": [("axes", {"axes"}, True)],
@@ -84,7 +96,7 @@ SOURCES: dict[str, list[tuple[str, set[str] | None, bool]]] = {
 EXPRS: dict[str, list[str]] = {
     "on_graph": ["x"], "on_circle": ["angle"], "coords": ["x", "y"], "measure": ["expr"],
     "tangent": ["x", "length"], "secant": ["x", "dx", "length"], "area": ["a", "b"], "riemann": ["a", "b", "dx"],
-    "angle": ["radius"],
+    "angle": ["radius"], "perpendicular": ["length"], "parallel": ["length"],
 }
 MEASURES = {"length": {"line"}, "angle": {"angle"}, "slope": {"line"}, "integral": {"area", "riemann"}, "value": None}
 
@@ -234,7 +246,7 @@ class Constraints:
 
 GEOMETRY_SOURCE = '''
 class Geometry:
-    """Graph constructions used by MathEngine scenes (tangents, secants, slopes, integrals)."""
+    """Constructions used by MathEngine scenes (tangents, secants, slopes, integrals, intersections, perpendiculars)."""
 
     @staticmethod
     def function(graph):
@@ -277,6 +289,189 @@ class Geometry:
         xs = np.linspace(a, b, n + 1)
         ys = np.array([f(x) for x in xs], dtype=float)
         return float(np.sum((ys[1:] + ys[:-1]) / 2 * np.diff(xs)))
+
+    # Lines, circles and graphs as plain data for intersections: lines are extended both ways.
+    @staticmethod
+    def as_line(m):
+        return ("line", np.array(m.get_start()[:2], dtype=float), np.array(m.get_end()[:2], dtype=float))
+
+    @staticmethod
+    def as_circle(m):
+        return ("circle", np.array(m.get_center()[:2], dtype=float), m.width / 2)
+
+    @staticmethod
+    def as_graph(axes, graph):
+        return ("graph", axes, graph)
+
+    @staticmethod
+    def intersections(a, b):
+        """Every point where ``a`` and ``b`` meet, in a stable order.
+
+        Line and circle: along the line, from its start. Two circles: the point left of the line
+        from the first center to the second, then the right one. Anything with a graph: by x.
+        """
+        if a[0] == "graph" or b[0] == "graph":
+            g, other = (a, b) if a[0] == "graph" else (b, a)
+            return Geometry._graph_hits(g, other)
+        if a[0] == "line" and b[0] == "line":
+            return Geometry._line_line(a, b)
+        if a[0] == "circle" and b[0] == "circle":
+            return Geometry._circle_circle(a, b)
+        line, circle = (a, b) if a[0] == "line" else (b, a)
+        return Geometry._line_circle(line, circle)
+
+    @staticmethod
+    def intersection(a, b, which=0):
+        """The ``which``-th point where ``a`` and ``b`` meet, or None while they don't."""
+        hits = Geometry.intersections(a, b)
+        return hits[which] if 0 <= which < len(hits) else None
+
+    @staticmethod
+    def place(m, p):
+        """Move ``m`` to ``p``; keep it where it is when ``p`` is None (e.g. the objects don't meet)."""
+        if p is not None:
+            m.move_to(np.array([p[0], p[1], 0.0]))
+        return m
+
+    @staticmethod
+    def _cross(u, v):
+        return u[0] * v[1] - u[1] * v[0]
+
+    @staticmethod
+    def _line_line(a, b):
+        p, d = a[1], a[2] - a[1]
+        q, e = b[1], b[2] - b[1]
+        den = Geometry._cross(d, e)
+        if abs(den) < 1e-12 * (np.dot(d, d) * np.dot(e, e)) ** 0.5 or not den:
+            return []  # parallel
+        return [p + d * Geometry._cross(q - p, e) / den]
+
+    @staticmethod
+    def _line_circle(line, circle):
+        p, d = line[1], line[2] - line[1]
+        c, r = circle[1], circle[2]
+        aa = np.dot(d, d)
+        if aa < 1e-18:
+            return []
+        f = p - c
+        bb, cc = 2 * np.dot(f, d), np.dot(f, f) - r * r
+        disc = bb * bb - 4 * aa * cc
+        if disc < -1e-12 * max(1.0, bb * bb):
+            return []
+        if disc <= 1e-12 * max(1.0, bb * bb):
+            return [p + d * (-bb / (2 * aa))]  # tangent
+        s = disc ** 0.5
+        return [p + d * ((-bb - s) / (2 * aa)), p + d * ((-bb + s) / (2 * aa))]
+
+    @staticmethod
+    def _circle_circle(a, b):
+        c1, r1, c2, r2 = a[1], a[2], b[1], b[2]
+        v = c2 - c1
+        dist = float(np.linalg.norm(v))
+        if dist < 1e-12 or dist > r1 + r2 + 1e-9 or dist < abs(r1 - r2) - 1e-9:
+            return []
+        u = v / dist
+        x = (dist * dist + r1 * r1 - r2 * r2) / (2 * dist)
+        h = max(r1 * r1 - x * x, 0.0) ** 0.5
+        mid, n = c1 + u * x, np.array([-u[1], u[0]])
+        if h < 1e-9:
+            return [mid]
+        return [mid + n * h, mid - n * h]
+
+    @staticmethod
+    def _graph_hits(g, other, samples=600, iterations=60):
+        """Roots of a signed distance between the graph and ``other``, found by sampling and bisection."""
+        axes, graph = g[1], g[2]
+        f = Geometry.function(graph)
+
+        def at(x):
+            return np.array(axes.c2p(x, f(x))[:2], dtype=float)
+
+        if other[0] == "line":
+            p, d = other[1], other[2] - other[1]
+            d = d / (np.linalg.norm(d) or 1)
+            h = lambda x: Geometry._cross(d, at(x) - p)
+        elif other[0] == "circle":
+            c, r = other[1], other[2]
+            h = lambda x: float(np.linalg.norm(at(x) - c)) - r
+        else:
+            f2 = Geometry.function(other[2])
+            h = lambda x: float(axes.c2p(x, f(x))[1] - other[1].c2p(x, f2(x))[1])
+
+        def safe(x):
+            try:
+                v = float(h(x))
+            except (ArithmeticError, ValueError):
+                return float("nan")
+            return v if np.isfinite(v) else float("nan")
+
+        lo, hi = float(graph.t_min), float(graph.t_max)
+        xs = np.linspace(lo, hi, samples + 1)
+        vs = [safe(x) for x in xs]
+        tol = 1e-6 * max(1.0, hi - lo)
+        roots = []
+        for i in range(samples):
+            x0, x1, v0, v1 = xs[i], xs[i + 1], vs[i], vs[i + 1]
+            if np.isnan(v0) or np.isnan(v1):
+                continue
+            if v0 == 0:
+                roots.append(x0)
+                continue
+            if v0 * v1 > 0:
+                continue
+            for _ in range(iterations):
+                xm = (x0 + x1) / 2
+                vm = safe(xm)
+                if np.isnan(vm):
+                    break
+                if v0 * vm <= 0:
+                    x1, v1 = xm, vm
+                else:
+                    x0, v0 = xm, vm
+            x = (x0 + x1) / 2
+            if abs(safe(x)) < 1e-4:  # a sign change across a jump (an asymptote) is not a crossing
+                roots.append(x)
+        if vs[-1] == 0:
+            roots.append(xs[-1])
+        out = []
+        for x in roots:
+            if not out or x - out[-1] > tol:
+                out.append(x)
+        return [at(x) for x in out]
+
+    @staticmethod
+    def project(p, line):
+        """Foot of the perpendicular from ``p`` to ``line`` (extended)."""
+        a, b = np.array(line.get_start(), dtype=float), np.array(line.get_end(), dtype=float)
+        d = b - a
+        n = float(np.dot(d, d))
+        if n < 1e-18:
+            return a
+        return a + d * float(np.dot(np.array(p, dtype=float) - a, d)) / n
+
+    @staticmethod
+    def perpendicular_line(cls, line, p, length=4, foot=False, **kwargs):
+        """Line through ``p`` perpendicular to ``line``: centered on ``p``, or from ``p`` to the foot."""
+        p = np.array(p, dtype=float)
+        d = np.array(line.get_end(), dtype=float) - np.array(line.get_start(), dtype=float)
+        d = d / (np.linalg.norm(d) or 1)
+        n = np.array([-d[1], d[0], 0.0])
+        if foot:
+            q = Geometry.project(p, line)
+            if np.linalg.norm(q - p) < 1e-6:  # p is on the line: keep a valid (tiny) line
+                q = p + n * 1e-6
+            return cls(p, q, **kwargs)
+        return cls(p - n * length / 2, p + n * length / 2, **kwargs)
+
+    @staticmethod
+    def parallel_line(cls, line, p, length=None, **kwargs):
+        """Line through ``p`` parallel to ``line``, centered on ``p`` (as long as ``line`` by default)."""
+        p = np.array(p, dtype=float)
+        d = np.array(line.get_end(), dtype=float) - np.array(line.get_start(), dtype=float)
+        if length is None:
+            length = float(np.linalg.norm(d)) or 1.0
+        d = d / (np.linalg.norm(d) or 1)
+        return cls(p - d * length / 2, p + d * length / 2, **kwargs)
 '''
 
 TERMS_SOURCE = '''
@@ -455,6 +650,29 @@ def _check_link(obj: dict, ctx: _Ctx, cyclic: set[str]) -> str | None:
         axes = graph_axes_id(ctx.by_id[link["graph"]], ctx.by_name)
         if not axes or axes not in ctx.by_id:
             return "The graph isn't plotted on an Axes object in this scene."
+    if kind == "intersection":
+        a, b = link["a"], link["b"]
+        if a == b:
+            return "Pick two different objects to intersect."
+        types = [ctx.type_of(a), ctx.type_of(b)]
+        if sum(t in ("axes", "numberline") for t in types) == 2:
+            return "Intersect a line, circle or graph with the axes, not two axes."
+        graph_axes = []
+        for sid in (a, b):
+            if ctx.type_of(sid) == "graph":
+                axes = graph_axes_id(ctx.by_id[sid], ctx.by_name)
+                if not axes or axes not in ctx.by_id:
+                    return f"{ctx.name(sid)} isn't plotted on an Axes object in this scene."
+                graph_axes.append(axes)
+        if len(graph_axes) == 2 and graph_axes[0] != graph_axes[1]:
+            return "Both graphs must be plotted on the same axes."
+        which = link.get("which", 0)
+        if not isinstance(which, int) or isinstance(which, bool) or which < 0:
+            return "Pick which intersection to use (0 for the first)."
+    if kind in ("perpendicular", "parallel", "projection"):
+        line = link["onto"] if kind == "projection" else link["line"]
+        if line == (link.get("point") if kind == "projection" else link.get("through")):
+            return "The point and the line must be different objects."
     if kind == "measure":
         what = link.get("what")
         if what not in MEASURES:
@@ -646,9 +864,10 @@ def _link_lines(obj: dict, ctx: _Ctx) -> list[str]:
         ctor_call = _generic_ctor(obj, ctx)
         place, extra = _placement(obj, ctx, uses)
         pre = [f"{name} = {ctor_call}"] + p.eq_colors.get(obj["id"], [])
-        # A value label without an anchor keeps its own position; every other follow link owns it.
+        # A value label without an anchor keeps its own position; every other follow link owns it. An
+        # intersection starts at its own position, where it stays while its sources don't meet.
         free = kind == "measure" and link.get("what") == "value" and not link.get("of")
-        pre += _transforms(obj, name, with_pos=free)
+        pre += _transforms(obj, name, with_pos=free or kind == "intersection")
         if frozen:
             return pre + [f"({place})({name})"]
         p.uses_constraints = True
@@ -702,6 +921,17 @@ def _placement(obj: dict, ctx: _Ctx, uses: list[str]) -> tuple[str, bool]:
             return f"lambda m: m.move_to({ax}.n2p({x}))", False
         y = _expr(ctx, obj, link.get("y"), "0", uses)
         return f"lambda m: m.move_to({ax}.c2p({x}, {y}))", False
+    if kind == "intersection":
+        a, b = _shape(ctx, link, "a", uses), _shape(ctx, link, "b", uses)
+        return f"lambda m: Geometry.place(m, Geometry.intersection({a}, {b}, {int(link.get('which', 0))}))", True
+    if kind == "projection":
+        pt = f"{n(link['point'])}.get_center()"
+        onto = link["onto"]
+        if ctx.type_of(onto) == "axes":
+            ax = n(onto)
+            foot = f"{ax}.c2p(0, {ax}.p2c({pt})[1])" if link.get("axis") == "y" else f"{ax}.c2p({ax}.p2c({pt})[0], 0)"
+            return f"lambda m: m.move_to({foot})", False
+        return f"lambda m: m.move_to(Geometry.project({pt}, {n(onto)}))", True
     if kind == "measure":
         what = link["what"]
         of = link.get("of")
@@ -747,6 +977,27 @@ def _placement(obj: dict, ctx: _Ctx, uses: list[str]) -> tuple[str, bool]:
     raise mathexpr.ExprError(f"Unknown construction kind {kind!r}.")
 
 
+def _straight(ctx: _Ctx, link: dict, key: str) -> str:
+    """A source used as a straight line: the object, or an axes object's x- or y-axis."""
+    sid = link[key]
+    if ctx.type_of(sid) == "axes":
+        return f"{ctx.name(sid)}.get_{'y' if link.get('axis') == 'y' else 'x'}_axis()"
+    return ctx.name(sid)
+
+
+def _shape(ctx: _Ctx, link: dict, key: str, uses: list[str]) -> str:
+    """A source as intersection data (``Geometry.as_line`` / ``as_circle`` / ``as_graph``)."""
+    sid = link[key]
+    t = ctx.type_of(sid)
+    if t == "circle":
+        return f"Geometry.as_circle({ctx.name(sid)})"
+    if t == "graph":
+        axes_id = graph_axes_id(ctx.by_id[sid], ctx.by_name)
+        _add_dep(uses, ctx, axes_id)
+        return f"Geometry.as_graph({ctx.name(axes_id)}, {ctx.name(sid)})"
+    return f"Geometry.as_line({_straight(ctx, link, key)})"
+
+
 def _add_dep(uses: list[str], ctx: _Ctx, oid: str | None) -> None:
     if oid and oid in ctx.by_id and ctx.name(oid) not in uses:
         uses.append(ctx.name(oid))
@@ -775,6 +1026,17 @@ def _builder(obj: dict, ctx: _Ctx, uses: list[str]) -> str:
         if link.get("mode") == "diameter":
             return f"Circle({_with(f'radius=np.linalg.norm({b} - {a}) / 2', rest)}).move_to(({a} + {b}) / 2)"
         return f"Circle({_with(f'radius=np.linalg.norm({b} - {a})', rest)}).move_to({a})"
+    if kind in ("perpendicular", "parallel"):
+        cls = ctor if ctor in LINE_CTORS and ctor not in ("Vector", "TangentLine") else "Line"
+        line, through = _straight(ctx, link, "line"), f"{n(link['through'])}.get_center()"
+        p.uses_geometry = True
+        if kind == "perpendicular" and link.get("mode") == "foot":
+            return f"Geometry.perpendicular_line({_with(f'{cls}, {line}, {through}, foot=True', kw('start', 'end'))})"
+        if kind == "perpendicular":
+            length = _expr(ctx, obj, link.get("length"), "4", uses)
+            return f"Geometry.perpendicular_line({_with(f'{cls}, {line}, {through}, length={length}', kw('start', 'end'))})"
+        length = (f", length={_expr(ctx, obj, link['length'], '', uses)}" if str(link.get("length", "")).strip() else "")
+        return f"Geometry.parallel_line({_with(f'{cls}, {line}, {through}{length}', kw('start', 'end'))})"
     if kind == "polygon":
         pts = ", ".join(f"{n(s)}.get_center()" for s in link["points"])
         return f"Polygon({_with(pts, kw())})"

@@ -370,7 +370,7 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .draft path, .draft line, .draft circle, .draft rect { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .draft circle[r="3.5"] { fill: var(--accent); stroke: none; }
 .snap-mark circle { fill: none; stroke: var(--accent); stroke-width: 1.5; pointer-events: none; }
-.snap-mark.point circle, .snap-mark.curve circle { stroke: var(--warn); stroke-width: 2; }
+.snap-mark.point circle, .snap-mark.curve circle, .snap-mark.intersection circle { stroke: var(--warn); stroke-width: 2; }
 .snap-mark.endpoint circle, .snap-mark.vertex circle, .snap-mark.center circle, .snap-mark.midpoint circle { stroke: #b48ae8; stroke-width: 2; }
 .canvas-marquee { fill: rgba(61, 155, 255, 0.08); stroke: var(--blue); stroke-width: 1; stroke-dasharray: 3 2; }
 .canvas-menu { position: absolute; }

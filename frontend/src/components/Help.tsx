@@ -194,7 +194,7 @@ const TOPICS: Topic[] = [
         <p>Pick a tool above the canvas or press its key: <kbd>1</kbd> select, <kbd>2</kbd> point, <kbd>3</kbd> segment, <kbd>4</kbd> arrow, <kbd>5</kbd> circle, <kbd>6</kbd> rectangle, <kbd>7</kbd> polygon.</p>
         <ul>
           <li><b>Segment / arrow</b>: click the two endpoints. <b>Circle</b>: click the center, then a point on it. <b>Rectangle</b>: two opposite corners. <b>Polygon</b>: click the vertices, then click the first one again, double-click or press <kbd>Enter</kbd>.</li>
-          <li>The pointer <b>snaps</b> to points, endpoints, vertices, centers, midpoints, curves and the grid (toggle the grid with <b>Snap</b> in the toolbar).</li>
+          <li>The pointer <b>snaps</b> to points, crossings, endpoints, vertices, centers, midpoints, curves and the grid (toggle the grid with <b>Snap</b> in the toolbar). With the point tool, clicking where two lines, circles, graphs or axes cross places their <b>intersection</b>, which stays on the crossing.</li>
           <li>For <b>exact values</b>, type into the box next to the tools (<code>x, y</code>, a radius, or <code>width, height</code>) and press <kbd>Enter</kbd>.</li>
           <li>After drawing, the round handles edit endpoints, vertices, the radius and corners, and <b>Geometry</b> in the inspector takes exact numbers. <kbd>Alt</kbd>-click a vertex to remove it.</li>
           <li>Press <kbd>Esc</kbd> to cancel a drawing or return to the select tool.</li>
@@ -206,13 +206,15 @@ const TOPICS: Topic[] = [
   {
     id: 'connect',
     title: 'Connecting objects',
-    keywords: 'connect link segment midpoint label attach angle constraint follow detach delete dependency',
+    keywords: 'connect link segment midpoint label attach angle constraint follow detach delete dependency intersection intersect perpendicular parallel altitude foot projection bisector root intercept drop axis',
     body: (
       <>
         <p>Connected objects are built from other objects and stay attached to them while you edit, animate and scrub.</p>
         <ul>
           <li>Select one or more objects (<kbd>Shift</kbd>-click, or drag a box on empty canvas). The inspector's <b>Build from this</b> section and the right-click menu list what fits: <i>Segment</i>, <i>Midpoint</i>, <i>Circle</i>, <i>Polygon</i>, <i>Mark angle</i>, <i>Attach label</i>, <i>Point on curve</i>…</li>
           <li>Drawing a segment from one existing point to another connects it to both; clicking a point onto a graph or circle constrains it there.</li>
+          <li><b>Intersections</b>: select two lines, circles, graphs or axes and pick <i>Intersection</i> (one point per crossing), or click the crossing with the point tool. A graph offers <i>Mark roots</i> and <i>y-intercept</i>. Lines count as extended both ways; while the objects don't meet, the point stays where it was.</li>
+          <li><b>Right angles and parallels</b>: select a point and a line for <i>Perpendicular</i>, <i>Parallel</i>, <i>Altitude</i> (dashed, from the point to the line) or <i>Foot of perpendicular</i>; a point and axes for <i>Drop to x-axis</i> / <i>Drop to y-axis</i>. A segment offers <i>Perpendicular bisector</i>. These chain: the altitudes of a triangle meet at an intersection that moves with the vertices.</li>
           <li>Drag an attached label to change its offset. Drag a constrained point to move it along its curve or circle.</li>
           <li>The inspector's <b>Construction</b> section shows the sources and values; <b>Detach</b> makes the object independent. Deleting a source asks whether to delete or detach what was built from it.</li>
           <li>A connection controls either an object's <i>position</i> or its <i>shape</i>; animations still control color, opacity and appearance.</li>

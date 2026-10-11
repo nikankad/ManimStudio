@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { api } from './api';
 import { renameIdentifiers } from './pyparse';
-import { dependentsOf, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
+import { dependentsOf, FOLLOW_KINDS, isFollow, isRedraw, linkSources, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import type { Args, Catalog, CatalogEntry, Clip, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Template, Tool, Track } from './types';
 
@@ -598,7 +598,8 @@ export function deleteObjects(ids: string[], mode: 'cascade' | 'detach') {
 
 /**
  * Turn a constructed object into an independent one. Follow links keep the object at its current
- * position; segments, circles and polygons become plain shapes with their current geometry. Others
+ * position; segments, perpendicular and parallel lines, circles and polygons become plain shapes
+ * with their current geometry. Others
  * are frozen (built once from their sources, no longer updated) unless `convertOnly`, which reports
  * false so the caller can delete them.
  */
@@ -606,12 +607,12 @@ export function detachInPlace(o: SceneObject, info: ObjInfo | undefined, convert
   const l = o.link;
   if (!l) return true;
   const g = info?.geom;
-  if (isFollow(o) || (l.frozen && l.kind in { attach: 1, midpoint: 1, on_graph: 1, on_circle: 1, coords: 1, measure: 1 })) {
+  if (isFollow(o) || (l.frozen && FOLLOW_KINDS.has(l.kind))) {
     delete o.link;
     if (info?.center) o.pos = [Math.round(info.center[0] * 1000) / 1000, Math.round(info.center[1] * 1000) / 1000];
     return true;
   }
-  if (l.kind === 'segment' && g?.kind === 'line') {
+  if ((l.kind === 'segment' || l.kind === 'perpendicular' || l.kind === 'parallel') && g?.kind === 'line') {
     delete o.link;
     writeShape(o, { kind: 'line', start: g.start, end: g.end });
     return true;

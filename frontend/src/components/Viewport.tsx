@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { currentActions, type Action } from '../actions';
-import { geoType, graphAxes, isFollow, isRedraw, literal, ownsPosition, soleParam } from '../construct';
+import { FOLLOW_KINDS, geoType, graphAxes, isFollow, isRedraw, literal, ownsPosition, soleParam } from '../construct';
 import { dist, dragHandle, freeShape, handlesOf, nearestOnPath, nearestOnSegment, shapeCenter, writeShape, type Shape } from '../geometry';
+import { meetSnaps, type MeetSnap } from '../intersect';
 import {
   addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, editPoints, fmt, fps,
   frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
   timecode, toast, toggleObjectSelection, type TransformDelta, useStore,
 } from '../store';
-import type { Link, ObjInfo, Pt, SceneDoc, SceneObject, Tool } from '../types';
+import type { ObjInfo, Pt, SceneDoc, SceneObject, Tool } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 
 type Box = [number, number, number, number]; // x0, y0, x1, y1 in scene units (y up)
@@ -32,12 +33,16 @@ interface GeoDrag {
   last: Pt;
 }
 
-/** Something the pointer snaps to. `obj` is set when it is a point object (lines drawn between points connect to them). */
+/**
+ * Something the pointer snaps to. `obj` is set when it is a point object (lines drawn between points connect to them),
+ * `meet` when it is where two objects cross (the point tool places their intersection there).
+ */
 interface Snap {
   pt: Pt;
-  kind: 'point' | 'endpoint' | 'vertex' | 'center' | 'midpoint' | 'curve' | 'grid' | 'free';
+  kind: 'point' | 'endpoint' | 'vertex' | 'center' | 'midpoint' | 'intersection' | 'curve' | 'grid' | 'free';
   obj?: string;
   curve?: { id: string; type: 'graph' | 'circle' };
+  meet?: MeetSnap;
 }
 
 interface Draft {
@@ -47,7 +52,7 @@ interface Draft {
 
 export const TOOLS: { tool: Tool; key: string; label: string; icon: string; hint: string }[] = [
   { tool: 'select', key: '1', label: 'Select', icon: '⬚', hint: 'Select, move and edit (1). Shift-click adds to the selection; drag on empty space to select several.' },
-  { tool: 'point', key: '2', label: 'Point', icon: '•', hint: 'Point (2). Click on a graph or circle to constrain the point to it.' },
+  { tool: 'point', key: '2', label: 'Point', icon: '•', hint: 'Point (2). Click on a graph or circle to constrain the point to it, or where two lines, circles, graphs or axes cross to place their intersection.' },
   { tool: 'line', key: '3', label: 'Segment', icon: '╱', hint: 'Segment (3): click two endpoints. Endpoints on existing points connect to them.' },
   { tool: 'arrow', key: '4', label: 'Arrow', icon: '↗', hint: 'Arrow (4): click start and end.' },
   { tool: 'circle', key: '5', label: 'Circle', icon: '◯', hint: 'Circle (5): click the center, then a point on the circle.' },
@@ -194,7 +199,7 @@ export function Viewport() {
     return hits[0]?.o;
   };
 
-  /** Snap to points, endpoints, vertices, centers, midpoints, curves, then the grid. */
+  /** Snap to points, intersections, endpoints, vertices, centers, midpoints, curves, then the grid. */
   const snapTo = (p: Pt, exclude: Set<string> = new Set()): Snap => {
     const tol = 10 * unit;
     let best: Snap | null = null, bestD = tol;
@@ -228,6 +233,10 @@ export function Viewport() {
         if (n) consider({ pt: n.pt, kind: 'curve', curve: { id: o.id, type: 'graph' } }, n.d);
       }
     }
+    for (const m of meetSnaps(doc, objects)) {
+      if (exclude.has(m.a) || exclude.has(m.b)) continue;
+      consider({ pt: m.pt, kind: 'intersection', meet: m }, dist(p, m.pt), tol * 0.75);
+    }
     if (best) return best;
     return snap ? { pt: snapPt(p), kind: 'grid' } : { pt: [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100], kind: 'free' };
   };
@@ -241,6 +250,10 @@ export function Viewport() {
   // ------------------------------------------------------------ creating shapes
 
   const placePoint = (s: Snap) => {
+    if (s.meet) {
+      const { a, b, which, axis } = s.meet;
+      return void createLinked({ ctor: 'Dot', name: 'X', pos: [fmtN(s.pt[0]), fmtN(s.pt[1])], link: { kind: 'intersection', a, b, ...(which ? { which } : {}), ...(axis ? { axis } : {}) } });
+    }
     if (s.curve?.type === 'graph') {
       const g = objOf(s.curve.id)!;
       const ax = graphAxes(g, doc);
@@ -415,8 +428,8 @@ export function Viewport() {
 
   function redrawHint(o: SceneObject): string {
     const l = o.link!;
-    if (l.kind === 'midpoint') return 'A midpoint is placed by its sources: move them instead';
-    if (FOLLOW.has(l.kind)) return 'This position is an expression: edit it in the inspector';
+    if (l.kind === 'midpoint' || l.kind === 'intersection' || l.kind === 'projection') return `${l.kind === 'midpoint' ? 'A midpoint' : l.kind === 'intersection' ? 'An intersection' : 'A foot of a perpendicular'} is placed by its sources: move them instead`;
+    if (FOLLOW_KINDS.has(l.kind)) return 'This position is an expression: edit it in the inspector';
     return 'This shape is defined by its construction: drag its handles or its sources';
   }
 
@@ -545,6 +558,7 @@ export function Viewport() {
       srcPoint(l.b, `Move ${objOf(l.b)?.name}`);
     }
     if (l.kind === 'polygon') l.points.forEach((p) => srcPoint(p, `Move ${objOf(p)?.name}`));
+    if (l.kind === 'perpendicular' || l.kind === 'parallel') srcPoint(l.through, `Move ${objOf(l.through)?.name}`);
     if (l.kind === 'area' || l.kind === 'riemann' || l.kind === 'tangent' || l.kind === 'secant') {
       const gr = objOf(l.graph);
       const ax = gr && graphAxes(gr, doc);
@@ -805,7 +819,7 @@ export function Viewport() {
             {tool !== 'select' && <DraftPreview tool={tool} pts={draftPts} live={live} toPx={toPx} />}
             {tool !== 'select' && cursor && (
               <g className={`snap-mark ${cursor.kind}`}>
-                <circle cx={toPx(...cursor.pt)[0]} cy={toPx(...cursor.pt)[1]} r={cursor.obj || cursor.curve ? 7 : 4} />
+                <circle cx={toPx(...cursor.pt)[0]} cy={toPx(...cursor.pt)[1]} r={cursor.obj || cursor.curve || cursor.meet ? 7 : 4} />
               </g>
             )}
             {dropPoint && (
@@ -837,7 +851,7 @@ export function Viewport() {
 }
 
 type Rec = ((param: string, value: number) => void) | null;
-const FOLLOW = new Set<Link['kind']>(['attach', 'midpoint', 'on_graph', 'on_circle', 'coords', 'measure']);
+const fmtN = (v: number) => Math.round(v * 1000) / 1000;
 const fmtV = (p: Pt) => `np.array([${fmt(p[0])}, ${fmt(p[1])}, 0])`;
 
 /** Offset between where a free shape's arguments say it is and where it is drawn now (animations may have moved it). */

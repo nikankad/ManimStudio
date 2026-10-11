@@ -73,7 +73,7 @@ mathengine code scene.mathengine > scene.py # plain manim code
 - **Drawing tools** (above the canvas, keys `1`–`7`): select, point, segment, arrow, circle, rectangle and
   polygon. A segment takes two clicks (its endpoints), a circle a center and a point on it, a rectangle two
   corners, and a polygon its vertices: click the first vertex again, double-click or press Enter to finish.
-  The pointer snaps to points, endpoints, vertices, centers, midpoints, curves and the grid. For exact values,
+  The pointer snaps to points, crossings, endpoints, vertices, centers, midpoints, curves and the grid. For exact values,
   type them into the entry box next to the tools (`x, y`, a radius, or `width, height`) and press Enter.
 - **Shapes stay editable through their defining parameters.** A drawn segment is `Line(start, end)`, a circle
   `Circle(radius)` at a position, a rectangle `Rectangle(width, height)`, and a polygon `Polygon(*vertices)`.
@@ -82,14 +82,23 @@ mathengine code scene.mathengine > scene.py # plain manim code
   they are written back into the defining parameters, so the handles keep working afterwards.
 - **Connected objects**: select objects and pick an action from the inspector or the right-click menu:
   - segments, arrows, midpoints and circles between points (center + point, or a diameter);
+  - intersections of two lines, circles, graphs or axes (*Intersection*; a graph's *Mark roots* and *y-intercept*);
+  - perpendicular and parallel lines through a point, altitudes (from a point to a line), feet of perpendiculars,
+    drops from a point to the x- or y-axis, and perpendicular bisectors;
   - polygons through points;
   - arrows connecting two shapes' boundaries;
   - labels attached to any object or equation term;
   - points on a graph, circle or axes;
   - angle marks between two lines.
 
-  A segment drawn from one existing point to another connects to both points, and a point clicked onto a
-  graph or circle is constrained to it.
+  A segment drawn from one existing point to another connects to both points, a point clicked onto a
+  graph or circle is constrained to it, and a point clicked where two objects cross is their intersection.
+  These chain: the altitudes of a triangle meet at an intersection (the orthocenter) that moves with the vertices.
+
+  Lines count as extended both ways for intersections, perpendiculars and feet. When objects meet more than once,
+  the inspector picks which crossing (ordered along a line from its start, left then right for two circles, by x on
+  a graph); while they don't meet, the point stays where it was. Graph crossings are found numerically, and a jump
+  at a discontinuity isn't counted as one.
   Connections refer to objects by stable id, so renaming is safe. They stay correct while you edit, during
   animations, when you scrub the timeline, and in the exported file.
 
@@ -97,7 +106,8 @@ mathengine code scene.mathengine > scene.py # plain manim code
   on the graph or its angle on the circle. If that value is a parameter, the drag sets the parameter's starting
   value; in **Record** mode it adds a `.set_value` clip instead.
 - **Who owns what**: a connection owns either an object's *position* (labels, constrained points, midpoints,
-  measurements) or its *shape* (segments, circles, angle marks, graphs, tangents, areas, braces). Animations
+  intersections, feet, measurements) or its *shape* (segments, perpendicular and parallel lines, circles, angle
+  marks, graphs, tangents, areas, braces). Animations
   keep everything else: color, opacity, scale, rotation, and Create/FadeIn/Write. An animation that would move
   or reshape a connected object is flagged in its clip's Effect Controls.
 - **Editing relationships**: the inspector's *Construction* section shows the sources (pickers limited to
@@ -105,7 +115,7 @@ mathengine code scene.mathengine > scene.py # plain manim code
   independent one at its current place or shape. Unticking *keep updated* freezes it: it is built once and
   then no longer updated.
 - **Deleting** an object that others are built from asks whether to delete those too, or to detach them.
-  Detached points, labels, segments, circles and polygons stay where they are; angle marks, areas, braces and
+  Detached points, labels, segments, perpendicular and parallel lines, circles and polygons stay where they are; angle marks, areas, braces and
   tangents are always deleted, because they can't exist without their source.
 - **Duplicating** several objects keeps the links among the copies; links to objects outside the selection
   keep pointing at the originals.

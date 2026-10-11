@@ -241,3 +241,136 @@ def test_transform_terms_inside_timed_animations():
         run(d, t)
     r, o = run(d, 10)
     assert o["eq2"]["visible"] and not o["eq1"]["visible"]
+
+
+def test_intersections_of_lines_and_circles_follow_animation():
+    r3 = math.sqrt(3)
+    d = doc([
+        obj("oA", "A", "Dot", pos=[-2, -1]), obj("oB", "B", "Dot", pos=[2, 1]),
+        obj("oC", "C", "Dot", pos=[-2, 1]), obj("oD", "D", "Dot", pos=[2, -1]),
+        obj("l1", "l1", "Line", link={"kind": "segment", "a": "oA", "b": "oB"}),
+        obj("l2", "l2", "Line", link={"kind": "segment", "a": "oC", "b": "oD"}),
+        obj("oX", "X", "Dot", link={"kind": "intersection", "a": "l1", "b": "l2"}),
+        # Lines are extended: these short segments don't reach each other.
+        obj("s1", "s1", "Line", args={"start": "[-3, 2, 0]", "end": "[-2, 2, 0]"}),
+        obj("s2", "s2", "Line", args={"start": "[1, -3, 0]", "end": "[1, -2, 0]"}),
+        obj("oY", "Y", "Dot", link={"kind": "intersection", "a": "s1", "b": "s2"}),
+        obj("oO", "O", "Dot", pos=[0, 0]), obj("oU", "U", "Dot", pos=[2, 0]),
+        obj("c1", "c1", "Circle", link={"kind": "circle2", "a": "oO", "b": "oU"}),
+        obj("c2", "c2", "Circle", link={"kind": "circle2", "a": "oU", "b": "oO"}),
+        obj("h", "h", "Line", args={"start": "[-3, 1, 0]", "end": "[3, 1, 0]"}),
+        obj("k0", "K0", "Dot", link={"kind": "intersection", "a": "h", "b": "c1", "which": 0}),
+        obj("k1", "K1", "Dot", link={"kind": "intersection", "a": "c1", "b": "h", "which": 1}),
+        obj("k2", "K2", "Dot", pos=[3, 3], link={"kind": "intersection", "a": "h", "b": "c1", "which": 2}),
+        obj("cc0", "CC0", "Dot", link={"kind": "intersection", "a": "c1", "b": "c2", "which": 0}),
+        obj("cc1", "CC1", "Dot", link={"kind": "intersection", "a": "c1", "b": "c2", "which": 1}),
+    ])
+    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate",
+                               "target": "B", "args": {"rate_func": "linear"}, "chain": ".shift(UP * 2)"}]
+    r, o = run(d, 0)
+    assert r.diagnostics == []
+    assert o["X"]["center"] == pytest.approx([0, 0], abs=1e-6)
+    assert o["Y"]["center"] == pytest.approx([1, 2], abs=1e-6)
+    assert o["K0"]["center"] == pytest.approx([-r3, 1], abs=1e-4)  # first along h, from its start
+    assert o["K1"]["center"] == pytest.approx([r3, 1], abs=1e-4)
+    assert o["K2"]["center"] == pytest.approx([3, 3], abs=1e-6)  # no third intersection: keeps its place
+    assert o["CC0"]["center"] == pytest.approx([1, r3], abs=1e-4)  # left of c1 -> c2 first
+    assert o["CC1"]["center"] == pytest.approx([1, -r3], abs=1e-4)
+    # While B moves up (B = (2, 2) at t = 0.5), l1 is y = 0.75 x + 0.5 and l2 is y = -x / 2.
+    r, o = run(d, 0.5)
+    assert o["X"]["center"] == pytest.approx([-0.4, 0.2], abs=1e-4)
+    r, o = run(d, 5)
+    assert o["X"]["center"] == pytest.approx([-2 / 3, 1 / 3], abs=1e-4)
+    gen = codegen.generate(d)
+    assert "Geometry.intersection(Geometry.as_line(h), Geometry.as_circle(c1), 0)" in gen.source
+
+
+def test_graph_intersections_roots_and_asymptotes():
+    d = doc([
+        obj("ox", "axes", "Axes", args={"x_range": "[-4, 4, 1]", "y_range": "[-3, 3, 1]", "x_length": "8", "y_length": "6"}),
+        obj("og", "f", "axes.plot", link={"kind": "graph", "axes": "ox", "expr": "y = x^2 - 1", "x_min": -3, "x_max": 3}),
+        obj("og2", "g", "axes.plot", link={"kind": "graph", "axes": "ox", "expr": "y = 1 - x^2", "x_min": -2, "x_max": 2}),
+        obj("ogi", "inv", "axes.plot", link={"kind": "graph", "axes": "ox", "expr": "y = 1/x", "x_min": -3, "x_max": 2.9,
+                                            "discontinuities": [0], "gap": 0.05}),
+        obj("diag", "diag", "Line", args={"start": "[-3, -3, 0]", "end": "[3, 3, 0]"}),
+        obj("r0", "R0", "Dot", link={"kind": "intersection", "a": "og", "b": "ox", "which": 0}),
+        obj("r1", "R1", "Dot", link={"kind": "intersection", "a": "ox", "b": "og", "which": 1}),
+        obj("q1", "Q1", "Dot", link={"kind": "intersection", "a": "og", "b": "diag", "which": 1}),
+        obj("gg", "GG", "Dot", link={"kind": "intersection", "a": "og", "b": "og2", "which": 0}),
+        obj("ai", "AI", "Dot", pos=[2, 2], link={"kind": "intersection", "a": "ogi", "b": "ox"}),
+        obj("yi", "YI", "Dot", link={"kind": "intersection", "a": "og", "b": "ox", "axis": "y"}),
+    ])
+    d["clips"] = [add_all(d)]
+    r, o = run(d, 0)
+    assert r.diagnostics == []
+    assert o["R0"]["center"] == pytest.approx([-1, 0], abs=1e-4)
+    assert o["R1"]["center"] == pytest.approx([1, 0], abs=1e-4)
+    phi = (1 + math.sqrt(5)) / 2
+    assert o["Q1"]["center"] == pytest.approx([phi, phi], abs=1e-4)
+    assert o["GG"]["center"] == pytest.approx([-1, 0], abs=1e-4)
+    assert o["AI"]["center"] == pytest.approx([2, 2], abs=1e-6)  # 1/x never crosses the x-axis (the jump at 0 isn't a root)
+    assert o["YI"]["center"] == pytest.approx([0, -1], abs=1e-4)  # with the y-axis
+
+
+def test_perpendicular_parallel_and_feet():
+    d = doc([
+        obj("oA", "A", "Dot", pos=[-2, 0]), obj("oB", "B", "Dot", pos=[2, 0]), obj("oC", "C", "Dot", pos=[1, 2]),
+        obj("ab", "ab", "Line", link={"kind": "segment", "a": "oA", "b": "oB"}),
+        obj("alt", "alt", "DashedLine", link={"kind": "perpendicular", "line": "ab", "through": "oC", "mode": "foot"}),
+        obj("perp", "perp", "Line", link={"kind": "perpendicular", "line": "ab", "through": "oC", "length": "2"}),
+        obj("par", "par", "Line", link={"kind": "parallel", "line": "ab", "through": "oC"}),
+        obj("par2", "par2", "Line", link={"kind": "parallel", "line": "ab", "through": "oC", "length": "1"}),
+        obj("ft", "H", "Dot", link={"kind": "projection", "point": "oC", "onto": "ab"}),
+        obj("ox", "axes", "Axes", args={"x_range": "[-4, 4, 1]", "y_range": "[-3, 3, 1]", "x_length": "8", "y_length": "6"}),
+        obj("fx", "FX", "Dot", link={"kind": "projection", "point": "oC", "onto": "ox"}),
+        obj("fy", "FY", "Dot", link={"kind": "projection", "point": "oC", "onto": "ox", "axis": "y"}),
+        obj("pa", "pa", "Line", link={"kind": "perpendicular", "line": "ox", "through": "oC", "axis": "y", "mode": "foot"}),
+    ])
+    d["clips"] = [add_all(d), {"id": "c2", "kind": "anim", "track": "t2", "start": 0, "duration": 1, "cls": "animate",
+                               "target": "B", "args": {"rate_func": "linear"}, "chain": ".shift(UP * 4)"}]
+    r, o = run(d, 0)
+    assert r.diagnostics == []
+    assert o["alt"]["geom"]["start"] == pytest.approx([1, 2], abs=1e-4) and o["alt"]["geom"]["end"] == pytest.approx([1, 0], abs=1e-4)
+    assert o["perp"]["geom"]["start"] == pytest.approx([1, 1], abs=1e-4) and o["perp"]["geom"]["end"] == pytest.approx([1, 3], abs=1e-4)
+    assert o["par"]["geom"]["start"] == pytest.approx([-1, 2], abs=1e-4) and o["par"]["geom"]["end"] == pytest.approx([3, 2], abs=1e-4)
+    assert o["par2"]["geom"]["start"] == pytest.approx([0.5, 2], abs=1e-4)
+    assert o["H"]["center"] == pytest.approx([1, 0], abs=1e-4)
+    assert o["FX"]["center"] == pytest.approx([1, 0], abs=1e-4)
+    assert o["FY"]["center"] == pytest.approx([0, 2], abs=1e-4)
+    assert o["pa"]["geom"]["end"] == pytest.approx([0, 2], abs=1e-4)
+    # B ends at (2, 4): ab is y = x + 2, so the foot from C(1, 2) is (0.5, 2.5).
+    r, o = run(d, 5)
+    assert o["H"]["center"] == pytest.approx([0.5, 2.5], abs=1e-4)
+    assert o["alt"]["geom"]["end"] == pytest.approx([0.5, 2.5], abs=1e-4)
+    gen = codegen.generate(d)
+    assert "Geometry.perpendicular_line(DashedLine, ab, C.get_center(), foot=True)" in gen.source
+    assert "axes.c2p(axes.p2c(C.get_center())[0], 0)" in gen.source
+
+
+def test_new_construction_diagnostics():
+    d = doc([
+        obj("oA", "A", "Dot", pos=[-2, 0]), obj("oB", "B", "Dot", pos=[2, 0]),
+        obj("ab", "ab", "Line", link={"kind": "segment", "a": "oA", "b": "oB"}),
+        obj("ax1", "ax1", "Axes"), obj("ax2", "ax2", "Axes"),
+        obj("g1", "g1", "ax1.plot", args={"function": "lambda x: x"}),
+        obj("g2", "g2", "ax2.plot", args={"function": "lambda x: -x"}),
+        obj("x1", "same", "Dot", link={"kind": "intersection", "a": "ab", "b": "ab"}),
+        obj("x2", "axes2", "Dot", link={"kind": "intersection", "a": "ax1", "b": "ax2"}),
+        obj("x3", "graphs", "Dot", link={"kind": "intersection", "a": "g1", "b": "g2"}),
+        obj("x4", "pt", "Dot", link={"kind": "intersection", "a": "oA", "b": "ab"}),
+        obj("x5", "neg", "Dot", link={"kind": "intersection", "a": "ab", "b": "g1", "which": -1}),
+        obj("x6", "onto_pt", "Dot", link={"kind": "projection", "point": "oB", "onto": "oA"}),
+        obj("x7", "perp_self", "Line", link={"kind": "perpendicular", "line": "ab", "through": "ab"}),
+    ])
+    d["clips"] = [add_all(d)]
+    gen = codegen.generate(d)
+    by = {x["id"]: x["message"] for x in gen.diagnostics}
+    assert "two different" in by["x1"]
+    assert "not two axes" in by["x2"]
+    assert "same axes" in by["x3"]
+    assert "needs a" in by["x4"]
+    assert "which intersection" in by["x5"]
+    assert "needs a" in by["x6"]
+    assert "different objects" in by["x7"]
+    r = runtime.run(d, 0, render=False)
+    assert r.error is None

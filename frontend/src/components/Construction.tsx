@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { actionsFor, type Action } from '../actions';
 import { api } from '../api';
-import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, geoType, isFollow, literal, SOURCE_FIELDS } from '../construct';
+import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geoType, isFollow, literal, SOURCE_FIELDS } from '../construct';
+import { countMeets } from '../intersect';
 import { fmtPt, freeShape, writeShape, type Shape } from '../geometry';
 import {
   animateParam, createParam, detachObjects, getState, params, selectObjects, setLink, setParamValue, setState, toast, updateDoc, useStore,
@@ -97,7 +98,10 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
   const l = link as Record<string, unknown>;
   const set = (fn: (l: Record<string, unknown>) => void, key: string) => setLink(obj.id, (x) => fn(x as Record<string, unknown>), `${obj.id}:link:${key}`);
   const sources = SOURCE_FIELDS[link.kind];
-  const exprs = (EXPR_FIELDS[link.kind] ?? []).filter((f) => !(link.kind === 'graph' && f === 'expr'));
+  const exprs = (EXPR_FIELDS[link.kind] ?? []).filter((f) => !(link.kind === 'graph' && f === 'expr') && !(link.kind === 'perpendicular' && link.mode === 'foot'));
+  const infos = useStore((s) => s.frame?.objects);
+  // An axes source is used as its x- or y-axis.
+  const onAxes = sources.some(([f]) => geoType(doc.objects.find((o) => o.id === l[f]), doc) === 'axes');
   const users = dependentsOf(doc, [obj.id]);
   const isTermLink = (link.kind === 'attach' || link.kind === 'brace' || link.kind === 'highlight');
   const targetId = (l.to ?? l.target) as string | undefined;
@@ -105,7 +109,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
   return (
     <section className="fx-section construction">
       <h4>
-        Construction <span className="tag">{isFollow(obj) || link.frozen && ['attach', 'midpoint', 'on_graph', 'on_circle', 'coords', 'measure'].includes(link.kind) ? 'owns position' : 'owns shape'}</span>
+        Construction <span className="tag">{isFollow(obj) || link.frozen && FOLLOW_KINDS.has(link.kind) ? 'owns position' : 'owns shape'}</span>
         <span className="spacer" />
         <button className="ghost small" title="Make it an independent object (keeps its current place or shape)" onClick={() => detachObjects([obj.id])}>Detach</button>
       </h4>
@@ -157,6 +161,36 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
           {(['center', 'diameter'] as const).map((m) => <button key={m} className={(link.mode ?? 'center') === m ? 'on' : ''} onClick={() => set((x) => void (x.mode = m), 'mode')}>{m === 'center' ? 'center + point' : 'diameter'}</button>)}
         </div>
       )}
+      {onAxes && (
+        <div className="seg">
+          {(['x', 'y'] as const).map((a) => <button key={a} className={(l.axis ?? 'x') === a ? 'on' : ''} onClick={() => set((x) => { if (a === 'y') x.axis = 'y'; else delete x.axis; }, 'axis')}>{a}-axis</button>)}
+        </div>
+      )}
+      {link.kind === 'intersection' && (() => {
+        const now = infos ? countMeets(doc, infos, link.a, link.b, link.axis) : 0;
+        const which = link.which ?? 0;
+        return (
+          <>
+            <div className="fx-row wide-row">
+              <span>which</span>
+              <div className="chips">
+                {Array.from({ length: Math.max(now, which + 1) }, (_, i) => (
+                  <button key={i} className={`chip ${which === i ? 'on' : ''}`} title={i < now ? undefined : 'They don’t meet this many times right now'} onClick={() => set((x) => { if (i) x.which = i; else delete x.which; }, 'which')}>{i + 1}{i < now ? '' : ' ?'}</button>
+                ))}
+              </div>
+            </div>
+            <p className="muted small">
+              {now === 0 ? 'They don’t meet right now: the point stays where it was until they do. ' : `They meet ${now === 1 ? 'once' : `${now} times`} right now. `}
+              Lines count as extended both ways. Order: along a line from its start, left then right for two circles, by x on a graph.
+            </p>
+          </>
+        );
+      })()}
+      {link.kind === 'perpendicular' && (
+        <div className="seg">
+          {(['line', 'foot'] as const).map((m) => <button key={m} className={(link.mode ?? 'line') === m ? 'on' : ''} onClick={() => set((x) => { if (m === 'foot') x.mode = 'foot'; else delete x.mode; }, 'mode')}>{m === 'line' ? 'line through the point' : 'from the point to the line'}</button>)}
+        </div>
+      )}
       {link.kind === 'riemann' && (
         <div className="fx-row">
           <span>sample</span>
@@ -183,7 +217,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {exprs.map((f) => (
         <div key={f} className="fx-row wide-row">
           <span>{EXPR_LABELS[f] ?? f}</span>
-          <ExprField value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
+          <ExprField value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : link.kind === 'parallel' && f === 'length' ? 'same as the line' : link.kind === 'perpendicular' && f === 'length' ? '4' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
         </div>
       ))}
       {link.kind === 'graph' && <GraphFields obj={obj} link={link} />}

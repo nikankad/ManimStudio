@@ -15,9 +15,10 @@ const AXES = new Set(['Axes', 'NumberPlane', 'ComplexPlane']);
 const EQUATION = new Set(['MathTex', 'Tex', 'SingleStringMathTex']);
 const TEXT = new Set(['Text', 'MarkupText', 'DecimalNumber', 'Integer', 'Paragraph']);
 
-export const FOLLOW_KINDS = new Set(['attach', 'midpoint', 'on_graph', 'on_circle', 'coords', 'measure']);
+export const FOLLOW_KINDS = new Set<Link['kind']>(['attach', 'midpoint', 'on_graph', 'on_circle', 'coords', 'measure', 'intersection', 'projection']);
 const KIND_TYPE: Partial<Record<Link['kind'], GeoType>> = {
-  midpoint: 'point', on_graph: 'point', on_circle: 'point', coords: 'point', segment: 'line', tangent: 'line', secant: 'line',
+  midpoint: 'point', on_graph: 'point', on_circle: 'point', coords: 'point', intersection: 'point', projection: 'point',
+  segment: 'line', tangent: 'line', secant: 'line', perpendicular: 'line', parallel: 'line',
   circle2: 'circle', polygon: 'polygon', angle: 'angle', graph: 'graph', area: 'area', riemann: 'riemann', brace: 'annotation',
   highlight: 'annotation',
 };
@@ -57,12 +58,15 @@ export function graphAxes(g: SceneObject, doc: SceneDoc): SceneObject | undefine
   return f ? doc.objects.find((o) => o.name === f[1]) : undefined;
 }
 
+/** Link fields that hold object ids. */
+const SOURCE_KEYS = ['to', 'a', 'b', 'graph', 'circle', 'axes', 'of', 'l1', 'l2', 'target', 'bounded', 'line', 'through', 'point', 'onto'];
+
 /** Object ids a link refers to. */
 export function linkSources(link: Link | undefined): string[] {
   if (!link) return [];
   const l = link as Record<string, unknown>;
   const out: string[] = [];
-  for (const k of ['to', 'a', 'b', 'graph', 'circle', 'axes', 'of', 'l1', 'l2', 'target', 'bounded']) if (typeof l[k] === 'string' && l[k]) out.push(l[k] as string);
+  for (const k of SOURCE_KEYS) if (typeof l[k] === 'string' && l[k]) out.push(l[k] as string);
   if (link.kind === 'polygon') out.push(...link.points);
   return out;
 }
@@ -70,7 +74,7 @@ export function linkSources(link: Link | undefined): string[] {
 /** Math-expression fields of a link (they may name parameters). */
 export const EXPR_FIELDS: Partial<Record<Link['kind'], string[]>> = {
   on_graph: ['x'], on_circle: ['angle'], coords: ['x', 'y'], measure: ['expr'], tangent: ['x', 'length'], secant: ['x', 'dx', 'length'],
-  area: ['a', 'b'], riemann: ['a', 'b', 'dx'], angle: ['radius'], graph: ['expr'],
+  area: ['a', 'b'], riemann: ['a', 'b', 'dx'], angle: ['radius'], graph: ['expr'], perpendicular: ['length'], parallel: ['length'],
 };
 
 const words = (s: string) => s.match(/[A-Za-z_]\w*/g) ?? [];
@@ -165,7 +169,7 @@ export function renameRefs(o: SceneObject, names: Map<string, string>): void {
 export function remapLink(o: SceneObject, ids: Map<string, string>): void {
   if (!o.link) return;
   const l = o.link as Record<string, unknown>;
-  for (const k of ['to', 'a', 'b', 'graph', 'circle', 'axes', 'of', 'l1', 'l2', 'target', 'bounded'])
+  for (const k of SOURCE_KEYS)
     if (typeof l[k] === 'string' && ids.has(l[k] as string)) l[k] = ids.get(l[k] as string);
   if (o.link.kind === 'polygon') o.link.points = o.link.points.map((p) => ids.get(p) ?? p);
 }
@@ -186,9 +190,13 @@ export function describeLink(o: SceneObject, doc: SceneDoc): string {
     case 'on_graph': return `on ${n(l.graph)} at x = ${l.x}`;
     case 'on_circle': return `on ${n(l.circle)} at angle ${l.angle}`;
     case 'coords': return `at (${l.x}, ${l.y}) on ${n(l.axes)}`;
+    case 'intersection': return `${ordinal(l.which ?? 0)}where ${axisName(doc, l.a, l.axis)} meets ${axisName(doc, l.b, l.axis)}`;
+    case 'projection': return `foot of the perpendicular from ${n(l.point)} to ${axisName(doc, l.onto, l.axis)}`;
     case 'measure': return l.what === 'value' ? `shows ${l.expr}` : `${l.what} of ${n(l.of)}`;
     case 'segment': return `${l.mode === 'boundary' ? 'connects' : 'from'} ${n(l.a)} ${l.mode === 'boundary' ? 'and' : 'to'} ${n(l.b)}`;
     case 'circle2': return l.mode === 'diameter' ? `circle with diameter ${n(l.a)}–${n(l.b)}` : `circle centered at ${n(l.a)} through ${n(l.b)}`;
+    case 'perpendicular': return l.mode === 'foot' ? `from ${n(l.through)} perpendicular to ${axisName(doc, l.line, l.axis)}` : `perpendicular to ${axisName(doc, l.line, l.axis)} through ${n(l.through)}`;
+    case 'parallel': return `parallel to ${axisName(doc, l.line, l.axis)} through ${n(l.through)}`;
     case 'polygon': return `polygon through ${l.points.map(n).join(', ')}`;
     case 'angle': return `angle between ${n(l.l1)} and ${n(l.l2)}`;
     case 'graph': return `${l.expr} on ${n(l.axes)}`;
@@ -199,6 +207,15 @@ export function describeLink(o: SceneObject, doc: SceneDoc): string {
     case 'brace': return `brace on ${n(l.target)}`;
     case 'highlight': return `highlight on ${n(l.target)}`;
   }
+}
+
+const ordinal = (i: number) => (i ? `intersection ${i + 1}: ` : '');
+
+/** An axes source reads as its x- or y-axis. */
+function axisName(doc: SceneDoc, id: string, axis: 'x' | 'y' | undefined): string {
+  const n = doc.objects.find((x) => x.id === id)?.name ?? '(missing)';
+  const o = doc.objects.find((x) => x.id === id);
+  return o && geoType(o, doc) === 'axes' ? `the ${axis ?? 'x'}-axis of ${n}` : n;
 }
 
 /** Plain number or null (drags only edit literals or a single parameter). */
@@ -214,6 +231,9 @@ export function soleParam(src: string | undefined, doc: SceneDoc): SceneObject |
   return /^[A-Za-z_]\w*$/.test(s) ? doc.objects.find((o) => o.name === s && o.ctor === 'ValueTracker') : undefined;
 }
 
+const MEET_TYPES: GeoType[] = ['line', 'circle', 'graph', 'axes', 'numberline'];
+const STRAIGHT_TYPES: GeoType[] = ['line', 'axes', 'numberline'];
+
 /** Source fields of each link kind: [field, label, accepted types (null = any), required]. Mirrors construct.SOURCES. */
 export const SOURCE_FIELDS: Record<Link['kind'], [string, string, GeoType[] | null, boolean][]> = {
   attach: [['to', 'attached to', null, true]],
@@ -221,9 +241,13 @@ export const SOURCE_FIELDS: Record<Link['kind'], [string, string, GeoType[] | nu
   on_graph: [['graph', 'graph', ['graph'], true]],
   on_circle: [['circle', 'circle', ['circle'], true]],
   coords: [['axes', 'axes', ['axes', 'numberline'], true]],
+  intersection: [['a', 'of', MEET_TYPES, true], ['b', 'and', MEET_TYPES, true]],
+  projection: [['point', 'from', null, true], ['onto', 'onto', STRAIGHT_TYPES, true]],
   measure: [['of', 'of', null, false]],
   segment: [['a', 'from', null, true], ['b', 'to', null, true]],
   circle2: [['a', 'center / end', null, true], ['b', 'through / end', null, true]],
+  perpendicular: [['line', 'to', STRAIGHT_TYPES, true], ['through', 'through', null, true]],
+  parallel: [['line', 'to', STRAIGHT_TYPES, true], ['through', 'through', null, true]],
   polygon: [],
   angle: [['l1', 'line 1', ['line'], true], ['l2', 'line 2', ['line'], true]],
   graph: [['axes', 'axes', ['axes'], true]],
@@ -244,5 +268,5 @@ export const CONTROLLED_ARGS: Partial<Record<Link['kind'], string[]>> = {
   segment: ['start', 'end', '*'], circle2: ['radius', 'arc_center'], polygon: ['*'], angle: ['line1', 'line2', 'radius', 'other_angle', 'quadrant'],
   graph: ['function', 'x_range', 'discontinuities', 'dt'], tangent: ['start', 'end', '*'], secant: ['start', 'end', '*'],
   area: ['graph', 'x_range', 'bounded_graph'], riemann: ['graph', 'x_range', 'dx', 'input_sample_type', 'bounded_graph'],
-  brace: ['mobject', 'direction'], highlight: ['mobject', '*'],
+  brace: ['mobject', 'direction'], highlight: ['mobject', '*'], perpendicular: ['start', 'end', '*'], parallel: ['start', 'end', '*'],
 };
