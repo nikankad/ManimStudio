@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
 import {
-  addAnimation, addObject, addStep, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
+  addAnimation, addObject, addStep, newObjectPos, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
   uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { syncInstances } from '../templates';
@@ -48,7 +48,7 @@ export function Library() {
     const selId = s.selection?.kind === 'object' ? s.selection.id : null;
     const sel = s.doc.objects.find((o) => o.id === selId);
     if (e.kind === 'mobject') {
-      addObject(e.name, [0, 0], sel?.name);
+      addObject(e.name, newObjectPos(e.name), sel?.name);
     } else {
       const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name ?? '';
       if (!target) return toast('Add an object first, then add animations');

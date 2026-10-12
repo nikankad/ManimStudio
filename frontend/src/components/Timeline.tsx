@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  addAnimation, addMarker, addObject, addStep, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
+  addAnimation, addMarker, addObject, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
   previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
@@ -275,7 +275,7 @@ export function Timeline() {
     const at = { start: snapTo(timeAt(e.clientX), new Set()).v, row: Math.max(0, rowAt(e.clientY)) };
     const s = getState();
     const sel = s.selection?.kind === 'object' ? s.doc.objects.find((o) => o.id === (s.selection as { id: string }).id) : undefined;
-    if (p.kind === 'mobject') return void addObject(p.name, [0, 0], sel?.name, at);
+    if (p.kind === 'mobject') return void addObject(p.name, newObjectPos(p.name), sel?.name, at);
     const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name;
     if (!target) return setState({ toast: 'Add an object first, then drop animations' });
     addAnimation(p.name, target, at);

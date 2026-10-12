@@ -514,6 +514,19 @@ export function placeStepAt(d: SceneDoc, step: Step | Step[], at?: At): number {
   return land.time;
 }
 
+const SLOTS: [number, number][] = [[0, 0], [-3, 0], [3, 0], [0, 2], [0, -2], [-3, 2], [3, 2], [-3, -2], [3, -2]];
+
+/**
+ * Where an object added from the library goes: the centre, or the first spot nobody sits on, so adding several
+ * doesn't pile them up. Objects built on another one (a brace, a label…) stay at the centre; they follow their target.
+ */
+export function newObjectPos(ctor: string): [number, number] {
+  const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
+  if (Object.values(entry?.starter ?? {}).includes('@target')) return [0, 0];
+  const placed = state.doc.objects.filter((o) => o.pos);
+  return SLOTS.find((s) => !placed.some((o) => Math.hypot(o.pos![0] - s[0], o.pos![1] - s[1]) < 1)) ?? [0, 0];
+}
+
 export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: At, initial?: Args): string {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
   const args: Record<string, string> = {};
