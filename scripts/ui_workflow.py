@@ -870,7 +870,86 @@ def drawing_order(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def retiming(b):
+    """Drags say what they will do (where a clip lands, how later beats move) and Esc cancels them. With Keep later
+    timing on, making a clip longer takes the time from the pause after it (never more than there is), in one undo
+    step, from the timeline or from Effect Controls; later beats keep their measured time."""
+    code = ("from manim import *\n\nclass K(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+            "        self.play(Create(a))\n        self.wait(2)\n        self.play(Create(b))\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "retime.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        measured = lambda: pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        measured()
+        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="Create {n},"]')
+        label = lambda n: clip(n).get_attribute("aria-label")
+        note = lambda: " ".join(pg.locator(".drag-note").all_inner_texts())
+        a0, b0 = label("a"), label("b")
+        assert a0.endswith("00:00:00:00 to 00:00:01:00") and b0.endswith("00:00:03:00 to 00:00:04:00"), (a0, b0)
+        sec = clip("a").bounding_box()["width"]  # pixels per second (a lasts 1 s)
+
+        def drag_edge(n, seconds, release=True):
+            bb = clip(n).bounding_box()
+            y = bb["y"] + bb["height"] / 2
+            pg.mouse.move(bb["x"] + bb["width"] - 2, y)
+            pg.mouse.down()
+            pg.mouse.move(bb["x"] + bb["width"] - 2 + seconds * sec, y, steps=8)
+            text = note()
+            if release:
+                pg.mouse.up()
+                pg.wait_for_timeout(400)
+            return text
+
+        # off: later beats move along, and the note says by how much; Esc cancels and leaves no undo step
+        text = drag_edge("a", 0.5, release=False)
+        assert "Lasts 1.5 s (+0.5 s)" in text and "later beats move by +0.5 s" in text, text
+        pg.keyboard.press("Escape")
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
+        assert (label("a"), label("b")) == (a0, b0) and not pg.locator(".drag-note").count()
+        pg.keyboard.press("Control+z")  # nothing to undo: the cancelled drag left no step
+        pg.wait_for_timeout(300)
+        assert (label("a"), label("b")) == (a0, b0)
+
+        # on: the pause after it gives the time; later beats keep their measured time
+        pg.get_by_role("button", name="Keep later timing").click()
+        text = drag_edge("a", 0.5)
+        assert "later beats keep their time: the pause after it gets shorter" in text, text
+        measured()
+        assert label("a").endswith("to 00:00:01:30") and label("b") == b0, (label("a"), label("b"))
+
+        # not more than the pause holds: it stops there and says why
+        text = drag_edge("a", 2.5)
+        assert "Only 1.5 s of pause after it" in text, text
+        measured()
+        assert label("a").endswith("to 00:00:03:00") and label("b") == b0, (label("a"), label("b"))
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(400)
+        assert label("a").endswith("to 00:00:01:30") and label("b").startswith("Create b, intro, 00:00:03:00"), "one undo step"
+
+        # Effect Controls do the same
+        clip("a").click()
+        row = pg.locator(".fx-row", has_text="Duration").first
+        row.locator(".scrub").first.click()
+        row.locator("input.scrub-edit").fill("2")
+        row.locator("input.scrub-edit").press("Enter")
+        measured()
+        assert label("a").endswith("to 00:00:02:00") and label("b") == b0, (label("a"), label("b"))
+
+        # a clip dropped onto another group starts with it, at its start, not where the pointer let go
+        bb, ab = clip("b").bounding_box(), clip("a").bounding_box()
+        pg.mouse.move(bb["x"] + 10, bb["y"] + bb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(ab["x"] + ab["width"] * 0.6, ab["y"] + ab["height"] * 1.5, steps=10)
+        text = note()
+        assert "Starts with Create a at 00:00:00:00" in text, text
+        pg.keyboard.press("Escape")
+        pg.mouse.up()
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

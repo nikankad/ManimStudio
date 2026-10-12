@@ -105,9 +105,14 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     move the whole group; drag the shading's right edge to retime it; right-click the shading for disable / delete.
   - Drag a clip into another group's column to play it with that group, or into a pause to start it there. The
     pause shrinks, and later steps move only when it doesn't fit, like an overwrite into a gap. Drag up or down to
-    change its track, and Alt-drag to copy. While you drag, the timeline shows the result.
+    change its track, and Alt-drag to copy. While you drag, the timeline shows the result and a note says it in
+    words: where the clip lands ("Starts with Create a at 00:00:01:00", the group's start, not where the pointer
+    is) and how later beats move. Esc cancels the drag.
   - Drag a clip's right edge to change its `run_time` (a pause's edge changes its length); everything after it
-    moves along. Values are rounded so the code stays readable.
+    moves along. Values are rounded so the code stays readable. With **Keep later timing** on (the button next to
+    the snap magnet, remembered between launches), the pause right after it gives or takes the time instead, so
+    later beats keep their time; it never takes more than the pause holds, and the note says when it stops there.
+    The Duration fields in Effect Controls follow the same setting.
   - Delete leaves the time as a pause (`self.wait`), like Premiere; Shift+Delete (ripple delete) closes the gap.
   - It snaps to the playhead, markers and clip edges (toggle with **S**). Shift-click or drag a box to select
     several clips, and right-click for more (enable/disable, ripple delete, show in code…). Ctrl/⌘ + wheel

@@ -480,6 +480,74 @@ export function setStepDuration(d: SceneDoc, id: string, seconds: number) {
   else if (s.kind === 'couple') s.duration = Math.max(0, round(seconds));
 }
 
+/** What a duration edit does to the steps after it. */
+export type Retime = {
+  delta: number; // how much later the steps after it now start
+  hold?: 'shrunk' | 'removed' | 'grown' | 'added'; // keep: what happened to the pause after it
+  limit?: string; // keep: why the length was held back (there wasn't enough pause after it)
+};
+
+/**
+ * Set the length of an animation (`anim`) or a step. Normally the steps after it move by the difference. With
+ * `keep`, they keep their time: the plain self.wait right after it gives or takes the difference (a pause is added
+ * when it gets shorter and there is none). It never lengthens past that pause: the length stops where the pause is
+ * used up, and `limit` says why.
+ */
+export function retime(d: SceneDoc, measured: RunResult | null, target: { anim: string } | { step: string }, seconds: number, keep: boolean): Retime {
+  const lay = layout(d, measured);
+  const ref = 'anim' in target ? findAnim(d, target.anim) : undefined;
+  const step = ref ? ref.step : 'step' in target ? findStep(d, target.step) : undefined;
+  if (!step) return { delta: 0 };
+  const sp = lay.steps.get(step.id)!;
+  const oldLen = sp.end - sp.start;
+  const apply = (v: number) => (ref ? setAnimDuration(d, ref.anim.id, v) : setStepDuration(d, step.id, v));
+  // the step's new length: an animation of several only lengthens its group past the longest of the others
+  const lengthWith = (v: number): number => {
+    if (!ref) return v;
+    if (ref.parent) {
+      const c = structuredClone(d);
+      setAnimDuration(c, ref.anim.id, v);
+      const s2 = layout(c, measured).steps.get(step.id)!;
+      return s2.end - s2.start;
+    }
+    let others = 0;
+    for (const a of step.anims ?? []) if (a !== ref.anim && !a.disabled) others = Math.max(others, (lay.anims.get(a.id)?.end ?? sp.start) - sp.start);
+    return Math.max(v, others);
+  };
+  let delta = lengthWith(seconds) - oldLen;
+  const i = d.timeline.indexOf(step);
+  const later = d.timeline.slice(i + 1).filter((x) => !x.disabled);
+  if (!keep || Math.abs(delta) < EPS || !later.length) {
+    apply(seconds);
+    return { delta: later.length ? delta : 0 };
+  }
+  const next = later[0];
+  const hold = isPlainWait(next) ? literal(next.args!.duration)! : 0;
+  const half = 0.5 / (d.config?.frame_rate || 60);
+  let limit: string | undefined;
+  if (delta > hold + half) {
+    limit = hold > EPS
+      ? `Only ${numSrc(hold)} s of pause after it to take the time from; turn off Keep later timing to move later beats instead`
+      : 'No pause right after it to take the time from; turn off Keep later timing to move later beats instead';
+    seconds = ref && !ref.parent ? oldLen + hold : seconds - (delta - hold);
+    delta = hold;
+    if (Math.abs(delta) < EPS) return { delta: 0, limit };
+  }
+  apply(seconds);
+  const rest = hold - delta;
+  if (isPlainWait(next)) {
+    if (rest < half) {
+      d.timeline.splice(d.timeline.indexOf(next), 1);
+      reanchor(d, next.id, step.id);
+      return { delta: 0, hold: 'removed', limit };
+    }
+    next.args = { duration: numSrc(rest) };
+    return { delta: 0, hold: delta > 0 ? 'shrunk' : 'grown', limit };
+  }
+  d.timeline.splice(i + 1, 0, waitStep(-delta));
+  return { delta: 0, hold: 'added', limit };
+}
+
 export const canTrimStep = (s: Step) => s.kind === 'wait' || s.kind === 'play' || s.kind === 'couple';
 
 // ---------------------------------------------------------------------------- compositions

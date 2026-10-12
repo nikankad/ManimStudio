@@ -4,7 +4,7 @@ import {
   addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
   timecode, toast, toggleDisabled, updateDoc, useSignature, useStore,
 } from '../store';
-import { addChild, EPS, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, setAnimDuration, setStepDuration, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { addChild, EPS, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
 import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
 import { animLabel, stepLabel } from './Timeline';
@@ -458,7 +458,7 @@ const CLIP_HELP: Record<string, TipContent> = {
   },
   duration: {
     title: 'Duration',
-    text: 'How long the animation takes (manim’s run_time). Longer is slower: the same change is spread over more time. The self.play lasts as long as its longest animation, and everything after it moves along.',
+    text: 'How long the animation takes (manim’s run_time). Longer is slower: the same change is spread over more time. The self.play lasts as long as its longest animation, and everything after it moves along; with Keep later timing on (a button by the timeline’s snap magnet), the pause right after it gives or takes the time instead.',
     notes: ['Same as dragging the clip’s right edge on the timeline.', 'A run_time on the self.play applies to all its animations; changing one of several gives the others that run_time as their own.'],
   },
   holdDuration: { title: 'Duration', text: 'How long the scene keeps running here (self.wait). Nothing moves except objects with updaters. Use it to pause, or to extend the end of the video.' },
@@ -499,6 +499,14 @@ function setAnim(id: string, fn: (a: Anim) => void, key: string) {
 }
 
 const frames = (v: number) => Math.round(v * fps()) / fps();
+
+/** Set a length from Effect Controls the way trimming its clip does (Keep later timing included). */
+function setLength(target: { anim: string } | { step: string }, v: number, key: string) {
+  const { timeline, keepTiming } = getState();
+  let limit: string | undefined;
+  updateDoc((d) => void (limit = retime(d, timeline, target, frames(v), keepTiming).limit), key);
+  if (limit) toast(limit);
+}
 
 function TimingRow({ id, step }: { id: string; step: boolean }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
@@ -555,7 +563,7 @@ function StepInspector({ step }: { step: Step }) {
         <h4>Timing</h4>
         <TimingRow id={step.id} step />
         {waitLen !== undefined && (
-          <div className="fx-row"><Tip tip={CLIP_HELP.holdDuration}>Duration</Tip><ScrubNumber value={waitLen} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => updateDoc((d) => setStepDuration(d, step.id, frames(v)), `${step.id}:dur`)} /></div>
+          <div className="fx-row"><Tip tip={CLIP_HELP.holdDuration}>Duration</Tip><ScrubNumber value={waitLen} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setLength({ step: step.id }, v, `${step.id}:dur`)} /></div>
         )}
         {step.kind === 'couple' && <div className="fx-row"><Tip tip={CLIP_HELP.glide}>Glide</Tip><ScrubNumber value={step.duration ?? 0} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setStep(step.id, (s) => { const g = Math.max(0, frames(v)); if (g) s.duration = g; else delete s.duration; }, 'dur')} /><span className="muted small">{step.duration ? '' : 'snaps at once'}</span></div>}
         {(step.kind === 'code' || step.kind === 'call') && <p className="muted small"><Tip tip={CLIP_HELP.measured}>How long it runs</Tip> is measured by running the scene.</p>}
@@ -726,8 +734,8 @@ function AnimInspector({ r }: { r: AnimRef }) {
         <h4>Timing</h4>
         <TimingRow id={anim.id} step={false} />
         <div className="fx-row"><Tip tip={CLIP_HELP.duration}>Duration</Tip>
-          <ScrubNumber value={rt ?? (sp ? sp.end - sp.start : 1)} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => updateDoc((d) => setAnimDuration(d, anim.id, frames(v)), `${anim.id}:dur`)} />
-          {anim.args.run_time === undefined && <span className="muted small">{!parent && step.args?.run_time !== undefined ? 'from self.play' : 'manim’s default'}</span>}
+          <ScrubNumber value={rt ?? (sp ? sp.end - sp.start : 1)} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setLength({ anim: anim.id }, v, `${anim.id}:dur`)} />
+          {anim.args.run_time === undefined && <span className="muted small">{!parent && step.args?.run_time !== undefined ? `self.play’s run_time=${step.args.run_time}${(step.anims ?? []).length > 1 ? `, shared by all ${(step.anims ?? []).length}` : ''}` : 'manim’s default'}</span>}
         </div>
         <div className="fx-row"><span>In</span>
           <button className="ghost small mono" onClick={() => selectClips([parent?.id ?? step.id])} title="Select it">{parent ? parent.cls : 'self.play'}</button>

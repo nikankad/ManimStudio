@@ -298,7 +298,7 @@ const TOPICS: Topic[] = [
   {
     id: 'timeline',
     title: 'Timeline and animation',
-    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple',
+    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple keep later timing hold cancel escape',
     body: (
       <>
         <ul>
@@ -307,8 +307,8 @@ const TOPICS: Topic[] = [
           <li>Drag the line under a track’s name (V1, V2…) to make that track taller or shorter; double-click it for the usual height. <b>+ Add track</b> adds empty tracks; × removes the last one while it’s empty.</li>
           <li>Clips show what they do to their object, like transitions and keyframes in a video editor: <b>IN</b> ramps up as it brings the object on screen, <b>OUT</b> ramps down as it takes it off, <b>⇄</b> swaps one object for another (<code>ReplacementTransform</code>), and <b>fx</b> changes an object already there, from the keyframe ◆ at its start to the one at its end. In Effect Controls, <b>Easing</b> sets how the change is spread over time, and <b>Keyframes</b> ◀ ▶ step the playhead through the object’s animations.</li>
           <li>Click a group’s shading to select it: Effect Controls then show its animations and the settings it gives them all (<code>run_time</code>, <code>rate_func</code>…, shown in the corner of the shading when set). With the group selected, drag any of its clips to move the whole group; drag the shading’s right edge to retime it; right-click the shading to disable or delete it. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
-          <li>Drag a clip into another group’s column to play it with that group, or into a pause to start it there (the pause shrinks, and later steps move only if it doesn’t fit). Drag it up or down to change its track. The drag shows the result before you let go. <kbd>Alt</kbd>-drag copies.</li>
-          <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along.</li>
+          <li>Drag a clip into another group’s column to play it with that group, or into a pause to start it there (the pause shrinks, and later steps move only if it doesn’t fit). Drag it up or down to change its track. The drag shows the result before you let go, and a note says where it lands (a group’s start) and how later beats move. <kbd>Alt</kbd>-drag copies; <kbd>Esc</kbd> cancels.</li>
+          <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along, unless <b>Keep later timing</b> is on (the button next to the snap magnet): then the pause right after it gives or takes the time, so later beats keep their time. It never takes more than that pause holds. Duration in Effect Controls works the same way.</li>
           <li>Effect Controls show every argument manim takes for the selected clip: the animation’s class, object(s), duration and arguments; a <code>self.play</code>’s animations (reorder, add, group into <code>LaggedStart</code>…) and the arguments it gives them all; a <code>self.wait</code>’s options. <i>+ self.…</i> on the timeline adds any other scene method: sections, sounds, subcaptions, the 3D camera…</li>
           <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>{keys('⇧Del')}</kbd> (ripple delete) closes the gap.</li>
           <li>A clip marked <b>!</b> animates an object that isn’t on screen yet (no Create, FadeIn or Add before it): manim would show it from that clip on. Effect Controls explains it.</li>

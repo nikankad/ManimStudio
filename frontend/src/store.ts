@@ -37,6 +37,7 @@ export interface AppState {
   library: Template[]; // the user's saved constructions (~/.mathengine/constructions.json)
   snap: boolean; // canvas snapping
   timelineSnap: boolean;
+  keepTiming: boolean; // duration edits take the time from the pause after them, so later steps keep their time
   autoIntro: boolean;
   record: boolean;
   centerTab: 'program' | 'code'; // the center panel shows the canvas or the code
@@ -85,6 +86,7 @@ let state: AppState = {
   library: [],
   snap: true,
   timelineSnap: true,
+  keepTiming: false,
   autoIntro: true,
   record: false,
   centerTab: 'program',
@@ -109,7 +111,7 @@ const subscribe = (l: () => void) => {
 export const getState = () => state;
 
 // The editor's switches are remembered between launches (prefs.json, through the backend).
-const SWITCHES = ['snap', 'timelineSnap', 'autoIntro', 'autoRender'] as const;
+const SWITCHES = ['snap', 'timelineSnap', 'keepTiming', 'autoIntro', 'autoRender'] as const;
 let applyingPrefs = false;
 
 /** Start from the switches as they were left; call once the preferences are loaded. */

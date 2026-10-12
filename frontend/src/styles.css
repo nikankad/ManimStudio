@@ -702,3 +702,5 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .order-note { margin: 0; padding-bottom: 4px; line-height: 1.4; }
 .outline-row .order-n { margin-left: 0; min-width: 1.5em; text-align: right; font-variant-numeric: tabular-nums; }
 .lanes-label { cursor: help; }
+.drag-note { position: absolute; z-index: 6; max-width: 360px; padding: 4px 8px; border-radius: 4px; background: #101820; color: #e8eef5; border: 1px solid #3d9bff; font-size: 11px; line-height: 1.35; pointer-events: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
+.drag-note.warn { border-color: #f0ac5f; background: #2e1e0c; color: #ffe4c4; }

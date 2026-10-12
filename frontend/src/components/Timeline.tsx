@@ -4,8 +4,8 @@ import {
   previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
-  canTrimStep, EPS, findAnim, findStep, landing, layout, moveAnims, moveSteps, setAnimDuration, setStepDuration,
-  type Layout,
+  canTrimStep, EPS, findAnim, findStep, landing, layout, moveAnims, moveSteps, retime,
+  type Layout, type Retime,
 } from '../timeline';
 import type { Anim, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
@@ -68,12 +68,57 @@ type Drag =
 const inStrip = (s: Step) => !!s.disabled || (s.kind !== 'play' && s.kind !== 'wait');
 
 /** What a timeline drag does to the document (shown live while dragging, committed on release). */
-function applyDrag(d: SceneDoc, drag: Drag, measured: RunResult | null): string[] {
-  if (drag.mode === 'anims') return moveAnims(d, measured, drag.ids, drag.t, drag.row, drag.copy);
-  if (drag.mode === 'steps') return moveSteps(d, measured, drag.ids, drag.t, drag.copy);
-  if (drag.mode === 'trim-anim') setAnimDuration(d, drag.id, drag.dur);
-  if (drag.mode === 'trim-step') setStepDuration(d, drag.id, drag.dur);
-  return [];
+function applyDrag(d: SceneDoc, drag: Drag, measured: RunResult | null, keep: boolean): { moved: string[]; rt?: Retime } {
+  if (drag.mode === 'anims') return { moved: moveAnims(d, measured, drag.ids, drag.t, drag.row, drag.copy) };
+  if (drag.mode === 'steps') return { moved: moveSteps(d, measured, drag.ids, drag.t, drag.copy) };
+  if (drag.mode === 'trim-anim') return { moved: [], rt: retime(d, measured, { anim: drag.id }, drag.dur, keep) };
+  if (drag.mode === 'trim-step') return { moved: [], rt: retime(d, measured, { step: drag.id }, drag.dur, keep) };
+  return { moved: [] };
+}
+
+const secs = (v: number, sign = false) => `${sign && v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v * 100) / 100)} s`;
+
+/**
+ * What a drag is about to do, in words: where the moved clips land and what happens to the beats around them, or a
+ * clip's new length and whether later beats move or keep their time.
+ */
+function dragNote(drag: Drag, doc: SceneDoc, lay: Layout, sdoc: SceneDoc, slay: Layout, moved: string[], rt: Retime | undefined, keep: boolean): { text: string; at: number; warn?: boolean } | null {
+  const later = (d: number) => (Math.abs(d) < 0.005 ? 'later beats keep their time' : `later beats move by ${secs(d, true)}`);
+  if (drag.mode === 'trim-anim' || drag.mode === 'trim-step') {
+    const sp = drag.mode === 'trim-anim' ? slay.anims.get(drag.id) : slay.steps.get(drag.id);
+    if (!sp || !rt) return null;
+    const len = sp.end - sp.start;
+    const parts = [`Lasts ${secs(len)} (${secs(len - drag.dur0, true)})`];
+    const r = drag.mode === 'trim-anim' ? findAnim(doc, drag.id) : undefined;
+    const shared = r && !r.parent && r.step.args?.run_time !== undefined && (r.step.anims ?? []).filter((a) => !a.disabled).length > 1;
+    if (shared) parts.push(`the others keep self.play’s run_time=${r!.step.args!.run_time}`);
+    const hold = { shrunk: 'the pause after it gets shorter', removed: 'the pause after it is used up', grown: 'the pause after it gets longer', added: 'a pause fills the gap' }[rt.hold ?? 'shrunk'];
+    parts.push(rt.hold ? `later beats keep their time: ${hold}` : later(rt.delta));
+    if (rt.limit) parts.push(rt.limit);
+    else if (!keep && Math.abs(rt.delta) > 0.005 && sdoc.timeline.length > 1) parts.push('(Keep later timing takes it from a pause instead)');
+    return { text: parts.join(' · '), at: sp.end, warn: !!rt.limit };
+  }
+  if ((drag.mode !== 'anims' && drag.mode !== 'steps') || !moved.length) return null;
+  // the step the moved clips are now in, and when it starts
+  const ref = drag.mode === 'anims' ? findAnim(sdoc, moved[0]) : undefined;
+  const step = ref ? ref.step : findStep(sdoc, moved[0]);
+  if (!step) return null;
+  const start = slay.steps.get(step.id)?.start ?? 0;
+  const others = ref ? (step.anims ?? []).filter((a) => !moved.includes(a.id) && !a.disabled) : [];
+  const what = drag.copy ? 'Copy ' : '';
+  const head = others.length ? `${what}${what ? 'starts' : 'Starts'} with ${[animLabel(others[0]).name, animLabel(others[0]).sub].filter(Boolean).join(' ')} at ${timecode(start)}` : `${what}${what ? 'plays' : 'Plays'} on its own at ${timecode(start)}`;
+  // how the steps that didn't move shift: the first one after the landing, and one before it
+  const skip = new Set([step.id, ...moved]);
+  let after: number | undefined, before: number | undefined;
+  for (const s of sdoc.timeline) {
+    const a = slay.steps.get(s.id), b = lay.steps.get(s.id);
+    if (!a || !b || skip.has(s.id) || s.disabled || Math.abs(a.start - b.start) < 0.005) continue;
+    if (a.start >= start - EPS) after ??= a.start - b.start;
+    else before ??= a.start - b.start;
+  }
+  const parts = [head, later(after ?? 0)];
+  if (before !== undefined) parts.push(`beats after where it was move by ${secs(before, true)}`);
+  return { text: parts.join(' · '), at: start };
 }
 
 const changes = (d: Drag | null) =>
@@ -86,6 +131,7 @@ export function Timeline() {
   const selection = useStore((s) => s.selection);
   const view = useStore((s) => s.view);
   const snapOn = useStore((s) => s.timelineSnap);
+  const keep = useStore((s) => s.keepTiming);
   const catalog = useStore((s) => s.catalog);
   const error = useStore((s) => s.frame?.error ?? s.timeline?.error);
   const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
@@ -104,11 +150,11 @@ export function Timeline() {
   const lay = docLayout(doc, timeline);
   // While dragging, the timeline shows the result of the edit: later steps move along, like a magnetic timeline.
   const shown = useMemo(() => {
-    if (!changes(drag)) return { doc, lay, moved: [] as string[] };
+    if (!changes(drag)) return { doc, lay, moved: [] as string[], rt: undefined };
     const d = structuredClone(doc);
-    const moved = applyDrag(d, drag!, timeline);
-    return { doc: d, lay: layout(d, timeline), moved };
-  }, [doc, lay, drag, timeline]);
+    const { moved, rt } = applyDrag(d, drag!, timeline, keep);
+    return { doc: d, lay: layout(d, timeline), moved, rt };
+  }, [doc, lay, drag, timeline, keep]);
   const sdoc = shown.doc;
   const slay = shown.lay;
   const roles = useMemo(() => clipRoles(sdoc, timeline), [sdoc, timeline]);
@@ -226,7 +272,8 @@ export function Timeline() {
   useEffect(() => {
     if (!drag) return;
     const move = (e: PointerEvent) => {
-      const d = dragRef.current!;
+      const d = dragRef.current;
+      if (!d) return;
       if (d.mode === 'scrub') return setState({ time: frameSnap(timeAt(e.clientX)), showVideo: false });
       if (d.mode === 'marquee') {
         const nx = e.clientX - laneRef.current!.getBoundingClientRect().left, ny = laneY(e.clientY);
@@ -257,8 +304,20 @@ export function Timeline() {
       const dur = g !== null ? v - sp.start : Math.round((d.dur0 + dx) / grid) * grid;
       setDrag({ ...d, dur: Math.max(1 / fps(), dur) });
     };
+    // Esc cancels the drag: nothing changes (a marquee puts the selection back)
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const d = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      setGuide(null);
+      if (d?.mode === 'marquee') selectClips(d.base);
+    };
     const up = () => {
-      const d = dragRef.current!;
+      const d = dragRef.current;
+      if (!d) return;
       setDrag(null);
       setGuide(null);
       // a click (no drag) on the shading of an animation group selects the group; on a clip of a selected group, the clip
@@ -266,15 +325,17 @@ export function Timeline() {
       if (d.mode === 'steps' && d.pick && !d.moved) return selectClips([d.pick]);
       if (!changes(d)) return;
       let ids: string[] = [];
-      const measured = getState().timeline;
-      updateDoc((nd) => void (ids = applyDrag(nd, d, measured)));
+      const { timeline: measured, keepTiming } = getState();
+      updateDoc((nd) => void (ids = applyDrag(nd, d, measured, keepTiming).moved));
       if (ids.length) selectClips(ids);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up, { once: true });
+    window.addEventListener('keydown', esc, true);
     return () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('keydown', esc, true);
     };
   }, [drag?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -373,6 +434,7 @@ export function Timeline() {
     if (!sel) toast(`${p.name} animates ${target}, the newest object. Select an object first to target it, or change it in Effect Controls`);
   };
   const dropLanding = dropAt && landing(doc, lay, dropAt.t, dropAt.row >= 0);
+  const note = drag && changes(drag) ? dragNote(drag, doc, lay, sdoc, slay, shown.moved, shown.rt, keep) : null;
 
   // ------------------------------------------------------------ ruler
   const visible = laneW / pps;
@@ -508,6 +570,11 @@ export function Timeline() {
           <button className={`tool ${snapOn ? 'on' : ''}`} title="Snap in timeline (S)" onClick={() => setState({ timelineSnap: !snapOn })}>
             <MagnetIcon />
           </button>
+          <button className={`tool keep-timing ${keep ? 'on' : ''}`} aria-pressed={keep} aria-label="Keep later timing"
+            title={keep ? 'Keep later timing is on: making a clip longer or shorter takes the time from (or gives it to) the pause right after it, so later beats keep their time' : 'Keep later timing is off: making a clip longer or shorter moves later beats along. Turn on to take the time from the pause after it instead'}
+            onClick={() => setState({ keepTiming: !keep })}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M1 3v8M13 3v8M4 7h6M8 5l2 2-2 2" /></svg>
+          </button>
           <button className="tool" title="Add marker (M)" onClick={() => addMarker()}>
             <svg width="12" height="14" viewBox="0 0 12 14"><path d="M1 1h10v8l-5 4-5-4z" fill="currentColor" /></svg>
           </button>
@@ -598,6 +665,10 @@ export function Timeline() {
             {dropAt && dropLanding && (
               <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? stripH : rowH(Math.min(dropAt.row, rows - 1)) }}
                 title={dropLanding.kind === 'join' ? 'Plays with the animations of this self.play' : 'A new self.play here'} />
+            )}
+            {note && (
+              <div className={`drag-note ${note.warn ? 'warn' : ''}`} role="status" aria-live="polite"
+                style={{ left: Math.max(4, Math.min(x(note.at) + 8, laneW - 360)), top: RULER + 4 }}>{note.text}</div>
             )}
             {guide !== null && <div className="snap-guide" style={{ left: x(guide), height: totalH }} />}
             <div className="playhead" style={{ left: x(time), height: totalH }}>
