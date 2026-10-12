@@ -9,10 +9,17 @@ def test_commands_per_platform():
     p = Path("/videos/scene.mp4")
     assert opener.command(p, True, "darwin") == ["open", "-R", str(p)]
     assert opener.command(p, False, "darwin") == ["open", str(p)]
-    assert opener.command(p, True, "win32") == ["explorer", f"/select,{p}"]
+    assert opener.command(p, True, "win32") == ["explorer", "/select,", str(p)]
     assert opener.command(p, False, "win32") is None  # os.startfile
     assert opener.command(p, True, "linux") == ["xdg-open", str(p.parent)]
     assert opener.command(p, False, "linux") == ["xdg-open", str(p)]
+
+
+def test_packaged_apps_do_not_pass_their_libraries_on():
+    env = {"PATH": "/usr/bin", "LD_LIBRARY_PATH": "/app/_internal", "LD_LIBRARY_PATH_ORIG": "/usr/local/lib"}
+    assert opener.clean_env(env, frozen=False) == env
+    assert opener.clean_env(env, frozen=True) == {"PATH": "/usr/bin", "LD_LIBRARY_PATH": "/usr/local/lib"}
+    assert opener.clean_env({"LD_LIBRARY_PATH": "/app/_internal"}, frozen=True) == {}
 
 
 def test_open_path_launches_the_command_and_refuses_missing_files(tmp_path, monkeypatch):

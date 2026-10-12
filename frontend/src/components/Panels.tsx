@@ -376,8 +376,8 @@ export function useShortcuts() {
         else if (e.key === 'Escape') {
           // Close the open dialog; with none open, go back to the project behind Home.
           const s = getState();
-          if (s.panel) setState({ panel: null, panelData: null });
-          else if (!typing && s.hasProject) setState({ home: false });
+          if (s.panel && (!typing || s.panel === 'help')) setState({ panel: null, panelData: null });
+          else if (!s.panel && !typing && s.hasProject) setState({ home: false });
         }
         return;
       }

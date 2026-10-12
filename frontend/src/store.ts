@@ -514,6 +514,12 @@ export function placeStepAt(d: SceneDoc, step: Step | Step[], at?: At): number {
   return land.time;
 }
 
+/** Axes, planes and number lines span the frame: they belong at the centre, and other objects sit on them. */
+const fillsFrame = (ctor: string) => {
+  const bases = state.catalog?.mobjects.find((m) => m.name === ctor)?.bases ?? [];
+  return ['Axes', 'NumberLine'].includes(ctor) || bases.some((b) => ['CoordinateSystem', 'Axes', 'NumberLine'].includes(b));
+};
+
 const SLOTS: [number, number][] = [[0, 0], [-3, 0], [3, 0], [0, 2], [0, -2], [-3, 2], [3, 2], [-3, -2], [3, -2]];
 
 /**
@@ -522,8 +528,8 @@ const SLOTS: [number, number][] = [[0, 0], [-3, 0], [3, 0], [0, 2], [0, -2], [-3
  */
 export function newObjectPos(ctor: string): [number, number] {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
-  if (Object.values(entry?.starter ?? {}).includes('@target')) return [0, 0];
-  const placed = state.doc.objects.filter((o) => o.pos);
+  if (Object.values(entry?.starter ?? {}).includes('@target') || fillsFrame(ctor)) return [0, 0];
+  const placed = state.doc.objects.filter((o) => o.pos && !fillsFrame(o.ctor));
   return SLOTS.find((s) => !placed.some((o) => Math.hypot(o.pos![0] - s[0], o.pos![1] - s[1]) < 1)) ?? [0, 0];
 }
 
