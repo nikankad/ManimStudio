@@ -94,6 +94,10 @@ class RenderJob:
                 w, h, fps = cfg.get("pixel_width", 1920), cfg.get("pixel_height", 1080), cfg.get("frame_rate", 60)
             out_name = "preview" if self.quality == "preview" else "render"
             media = self.workdir / "media"
+            # A video left by an earlier render of this project must not pass for this one's (a scene without
+            # self.play makes no video at all).
+            for old in media.glob(f"videos/**/{out_name}.mp4"):
+                old.unlink(missing_ok=True)
             cmd = [
                 *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,
@@ -116,7 +120,8 @@ class RenderJob:
             found = sorted(media.glob(f"videos/**/{out_name}.mp4"), key=lambda p: p.stat().st_mtime)
             if not found:
                 self.state = "error"
-                self.message = "manim finished but no video was produced"
+                self.message = ("Nothing to play: the scene has no self.play or self.wait" if "no play calls" in self.log
+                                else "manim finished but no video was produced")
                 return
             self.result = found[-1]
             if self.output:

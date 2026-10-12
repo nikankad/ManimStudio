@@ -351,7 +351,7 @@ export function Timeline() {
       <div
         key={s.id}
         className={`clip step ${s.kind} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
-        style={{ left: instant ? left - 7 : left, width: instant ? 14 : w, top: RULER + 3, height: STEPS - 6, ['--clip' as string]: STEP_COLORS[s.kind] }}
+        style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : w, top: RULER + 3, height: STEPS - 6, ['--clip' as string]: STEP_COLORS[s.kind] }}
         title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${s.disabled ? '\nDisabled: left out of the code' : ''}`}
         onPointerDown={(e) => onStepDown(e, s)}
         onContextMenu={(e) => openMenu(e, s.id)}

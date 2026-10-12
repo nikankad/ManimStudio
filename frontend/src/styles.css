@@ -568,6 +568,7 @@ button.brand:hover { background: var(--panel-2); }
 .clip.step.wait { background: repeating-linear-gradient(-45deg, #26272d 0 5px, #2c2d34 5px 10px); border-color: #3c3d45; }
 .clip.step.fixed::after { display: none; }
 .clip.step::before { display: none; }
+.clip.step.instant::before { display: block; } /* self.add / self.remove / … take no time: a diamond marks them */
 .clip.estimated { border-style: dashed; }
 .kids { position: relative; flex: 1; margin: 2px 0 3px; }
 .kid {

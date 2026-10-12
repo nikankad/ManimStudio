@@ -328,6 +328,7 @@ let playRaf = 0;
 export function setPlaying(playing: boolean) {
   cancelAnimationFrame(playRaf);
   const duration = sequenceEnd(state.doc, state.timeline);
+  if (playing && duration <= 0) return setState({ playing: false, time: 0, showVideo: false }); // nothing to play
   if (playing && state.time >= duration - 1e-3) setState({ time: 0 });
   setState({ playing, showVideo: playing ? previewFresh() : state.showVideo });
   if (!playing) return requestFrame();
@@ -364,7 +365,7 @@ export async function renderPreview() {
   const key = docKey(doc);
   const v = state.video;
   if (v && v.key === key && v.state !== 'cancelled') return; // already rendered, rendering, or failed for this exact doc
-  if (!doc.timeline.length) return;
+  if (!doc.timeline.length || sequenceEnd(doc, state.timeline) <= 0) return; // nothing plays: no video to make
   try {
     const job = await api.render(doc, 'preview');
     if (job.state === 'error' || !job.id) {
