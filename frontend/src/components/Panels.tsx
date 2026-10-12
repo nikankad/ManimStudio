@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
   addMarker, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
@@ -104,21 +104,35 @@ export async function importManimFile() {
   if (path) await openPath(path);
 }
 
-/** Whether the window is at most `px` wide (the toolbar folds its toggles into a menu when it can't fit them). */
-function useNarrow(px: number): boolean {
-  const query = `(max-width: ${px}px)`;
-  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const on = () => setNarrow(mq.matches);
-    on();
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, [query]);
-  return narrow;
+/**
+ * Whether the toolbar has run out of room, so its toggles go into a menu. It folds when its content overflows and
+ * unfolds once the window is as wide as the full toolbar was: that depends on the project's name and the update
+ * notice as much as on the window, so it is measured rather than assumed.
+ */
+function useToolbarFold(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [folded, setFolded] = useState(false);
+  const needed = useRef(0); // the width the unfolded toolbar wanted when it last overflowed
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      if (!folded && el.scrollWidth > el.clientWidth + 1) {
+        needed.current = el.scrollWidth;
+        setFolded(true);
+      } else if (folded && el.clientWidth >= needed.current) setFolded(false);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    const mo = new MutationObserver(check); // the name or the update notice changed
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [folded, ref]);
+  return folded;
 }
-
-const TOOLBAR_FOLDS = 1480; // px: below this the toggles don't fit beside everything else
 
 function SnapToggle() {
   const snap = useStore((s) => s.snap);
@@ -192,13 +206,14 @@ export function Toolbar() {
   const dirty = useStore((s) => s.dirty);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
-  const narrow = useNarrow(TOOLBAR_FOLDS);
+  const bar = useRef<HTMLElement>(null);
+  const narrow = useToolbarFold(bar);
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
-    <header className="toolbar">
+    <header className={`toolbar ${narrow ? "folded" : ""}`} ref={bar}>
       <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />{!narrow && 'Manim Studio'}</button>
       <button className="ghost home-btn" title="Home: new, recent and sample projects" onClick={() => setState({ home: true })}>⌂ Home</button>
-      <span className="muted">{name}{dirty ? ' •' : ''}</span>
+      <span className="muted proj-name" title={path ?? 'Not saved yet'}>{name}{dirty ? ' •' : ''}</span>
       <button className="ghost" title={`New project: choose its format (${keys('⌘N')})`} onClick={() => setState({ panel: 'new-project' })}>New</button>
       <button className="ghost" title={`Open a project or manim file (${keys('⌘O')})`} onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
       <button className="ghost" title={`Save (${keys('⌘S')}); ${keys('⇧⌘S')} saves a copy`} onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
@@ -444,7 +459,8 @@ export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+      // A checkbox that still has focus after a click isn't a text field: Space plays, letters are shortcuts.
+      const typing = (el.tagName === 'INPUT' && !['checkbox', 'radio'].includes((el as HTMLInputElement).type)) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
       if (getState().home) {

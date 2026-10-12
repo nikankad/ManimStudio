@@ -86,8 +86,11 @@ select.inline { background: transparent; color: var(--blue); border: none; font:
 .toolbar { grid-area: bar; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .toolbar::-webkit-scrollbar { display: none; }
 .toolbar > * { flex: none; }
+.toolbar .proj-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.toolbar.folded .proj-name { max-width: 130px; }
 @media (max-width: 1100px) {
   .toolbar { gap: 3px; padding: 0 6px; }
+  .toolbar.folded .proj-name { max-width: 70px; }
   .toolbar .sep, .toolbar .brand { display: none; } /* ⌂ Home does what the logo does */
   .toolbar-group { gap: 4px; }
 }

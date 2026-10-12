@@ -144,7 +144,7 @@ function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate
       role="button"
       title={entry.doc || entry.name}
       onKeyDown={(ev) => {
-        if (ev.key !== 'Enter' && ev.key !== ' ') return; // add it, as a double-click does (Space isn't "play" here)
+        if (ev.key !== 'Enter' && ev.key !== ' ') return; // add it, as a double-click does
         ev.preventDefault();
         ev.stopPropagation();
         leaveSearch();
@@ -155,6 +155,7 @@ function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate
         ev.dataTransfer.setData(DND_TYPE, JSON.stringify({ kind: entry.kind, name: entry.name } satisfies DragPayload));
         ev.dataTransfer.effectAllowed = 'copy';
       }}
+      onClick={(ev) => ev.currentTarget.blur()} // keyboard focus only: after a mouse click Space plays again
       onDoubleClick={() => {
         leaveSearch();
         onActivate(entry);
@@ -193,9 +194,13 @@ function Outline() {
             tabIndex={0}
             role="button"
             aria-pressed={selectedObjectIds(selection).includes(o.id)}
-            onClick={(e) => (e.shiftKey ? toggleObjectSelection(o.id) : selectObjects([o.id]))}
+            onClick={(e) => {
+              if (e.shiftKey) toggleObjectSelection(o.id);
+              else selectObjects([o.id]);
+              e.currentTarget.blur(); // keyboard focus only: after a mouse click Space plays again
+            }}
             onKeyDown={(e) => {
-              if (e.key !== 'Enter' && e.key !== ' ') return; // select it (Space isn't "play" here)
+              if (e.key !== 'Enter' && e.key !== ' ') return; // select it
               e.preventDefault();
               e.stopPropagation();
               if (e.shiftKey) toggleObjectSelection(o.id);

@@ -30,6 +30,18 @@ def test_bad_names_and_values_are_refused():
     assert prefs.load() == {}
 
 
+def test_changes_from_several_threads_are_all_kept():
+    import threading
+
+    names = [f"ui.switch{i}" for i in range(40)]
+    threads = [threading.Thread(target=prefs.set_pref, args=(n, "1")) for n in names]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(prefs.load()) == sorted(names)
+
+
 def test_a_damaged_file_means_defaults(tmp_path):
     (tmp_path / "home").mkdir()
     (tmp_path / "home" / "prefs.json").write_text("{not json", encoding="utf-8")
