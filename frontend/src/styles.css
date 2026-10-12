@@ -85,10 +85,20 @@ select.inline { background: transparent; color: var(--blue); border: none; font:
 .toolbar { grid-area: bar; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
 .toolbar::-webkit-scrollbar { display: none; }
 .toolbar > * { flex: none; }
+@media (max-width: 1100px) {
+  .toolbar { gap: 3px; padding: 0 6px; }
+  .toolbar .sep, .toolbar .brand { display: none; } /* ⌂ Home does what the logo does */
+  .toolbar-group { gap: 4px; }
+}
 .brand { font-weight: 700; color: var(--accent); margin-right: 6px; }
 .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; display: inline-block; }
 .toggle { display: flex; gap: 4px; align-items: center; color: var(--muted); padding: 0 4px; cursor: pointer; white-space: nowrap; }
 .toggle.rec { color: var(--err); }
+.toolbar button.rec { color: var(--err); }
+.options-menu { position: fixed; z-index: 30; display: flex; flex-direction: column; gap: 2px; padding: 6px; min-width: 150px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); }
+.options-menu .toggle { padding: 6px 8px; border-radius: 5px; color: var(--text); }
+.options-menu .toggle:hover { background: var(--panel-3); }
+.options-menu .toggle.rec { color: var(--err); }
 
 .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .panel-title { padding: 7px 12px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line); background: var(--panel-2); }

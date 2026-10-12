@@ -265,6 +265,9 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   renders at full quality; when it finishes, *Show in folder* and *Play* open the file manager at the video and
   play it with your default app.
 
+In a window narrower than about 1480 px the toolbar's *Snap*, *Auto-intro*, *Record* and *Auto-render* switches
+move into an **Options** menu, so Settings, Export video and Help stay in reach down to the 1000 px minimum.
+
 **Help**: the toolbar's **? Help** button (or `?` / `F1`) opens a searchable guide to every feature, with
 buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
 users are offered the tour once.

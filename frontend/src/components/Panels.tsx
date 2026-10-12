@@ -103,18 +103,99 @@ export async function importManimFile() {
   if (path) await openPath(path);
 }
 
+/** Whether the window is at most `px` wide (the toolbar folds its toggles into a menu when it can't fit them). */
+function useNarrow(px: number): boolean {
+  const query = `(max-width: ${px}px)`;
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return narrow;
+}
+
+const TOOLBAR_FOLDS = 1480; // px: below this the toggles don't fit beside everything else
+
+function SnapToggle() {
+  const snap = useStore((s) => s.snap);
+  return <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>;
+}
+
+function IntroToggle() {
+  const autoIntro = useStore((s) => s.autoIntro);
+  return <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>;
+}
+
+function RecordToggle() {
+  const record = useStore((s) => s.record);
+  return (
+    <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state">
+      <input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record
+    </label>
+  );
+}
+
+function AutoRenderToggle() {
+  const autoRender = useStore((s) => s.autoRender);
+  return (
+    <label className="toggle" title="Render a smooth preview with manim in the background after each edit; Space plays it">
+      <input type="checkbox" checked={autoRender} onChange={(e) => { setState({ autoRender: e.target.checked }); if (e.target.checked) void renderPreview(); }} /> Auto-render
+    </label>
+  );
+}
+
+/** The four toggles in one menu, for a window too narrow to show them in the toolbar. */
+function OptionsMenu() {
+  const record = useStore((s) => s.record);
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && (e.stopPropagation(), close());
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [at]);
+  return (
+    <>
+      <button
+        data-tour="record" className={`ghost ${at ? 'on' : ''} ${record ? 'rec' : ''}`} aria-haspopup="menu" aria-expanded={!!at}
+        title="Snap, Auto-intro, Record and Auto-render"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: r.left, y: r.bottom + 4 }); }}
+      >
+        {record ? '● ' : ''}Options ▾
+      </button>
+      {at && (
+        <div className="options-menu" role="menu" style={{ left: at.x, top: at.y }} onPointerDown={(e) => e.stopPropagation()}>
+          <SnapToggle />
+          <IntroToggle />
+          <RecordToggle />
+          <AutoRenderToggle />
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Toolbar() {
   const path = useStore((s) => s.path);
   const dirty = useStore((s) => s.dirty);
-  const snap = useStore((s) => s.snap);
-  const record = useStore((s) => s.record);
-  const autoIntro = useStore((s) => s.autoIntro);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
+  const narrow = useNarrow(TOOLBAR_FOLDS);
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
     <header className="toolbar">
-      <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</button>
+      <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />{!narrow && 'Manim Studio'}</button>
       <button className="ghost home-btn" title="Home: new, recent and sample projects" onClick={() => setState({ home: true })}>⌂ Home</button>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
       <button className="ghost" title="New project (choose its format)" onClick={() => setState({ panel: 'new-project' })}>New</button>
@@ -124,13 +205,18 @@ export function Toolbar() {
       <button className="ghost" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)">↶</button>
       <button className="ghost" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)">↷</button>
       <span className="sep" />
-      <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
-      <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
-      <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
+      {narrow ? <OptionsMenu /> : (
+        <>
+          <SnapToggle />
+          <IntroToggle />
+          <RecordToggle />
+        </>
+      )}
       <div className="spacer" />
       <UpdateNotice />
       <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
+        {!narrow && <AutoRenderToggle />}
         <PreviewButton />
         <CodeToggle />
         <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
@@ -155,22 +241,16 @@ function CodeToggle() {
 function PreviewButton() {
   const video = useStore((s) => s.video);
   const fresh = useStore((s) => previewFresh(s));
-  const autoRender = useStore((s) => s.autoRender);
   const running = video && (video.state === 'running' || video.state === 'queued') && !fresh;
   const stale = !fresh && !running;
   return (
-    <>
-      <label className="toggle" title="Render a smooth preview with manim in the background after each edit; Space plays it">
-        <input type="checkbox" checked={autoRender} onChange={(e) => { setState({ autoRender: e.target.checked }); if (e.target.checked) void renderPreview(); }} /> Auto-render
-      </label>
-      <button
-        className={`render-status ${fresh ? 'ok' : running ? 'busy' : 'stale'}`}
-        title={fresh ? 'Smooth preview is up to date: Space plays it' : running ? video?.message : video?.state === 'error' ? video.message : 'Render a smooth preview now'}
-        onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview())}
-      >
-        {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : video?.state === 'error' && video.key === docKey(getState().doc) ? '● Render failed' : '● Render preview'}
-      </button>
-    </>
+    <button
+      className={`render-status ${fresh ? 'ok' : running ? 'busy' : 'stale'}`}
+      title={fresh ? 'Smooth preview is up to date: Space plays it' : running ? video?.message : video?.state === 'error' ? video.message : 'Render a smooth preview now'}
+      onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview())}
+    >
+      {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : video?.state === 'error' && video.key === docKey(getState().doc) ? '● Render failed' : '● Render preview'}
+    </button>
   );
 }
 
