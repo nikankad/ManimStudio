@@ -109,6 +109,14 @@ class _Source:
         """Lines ``first``..``last`` (1-based, inclusive), dedented."""
         return textwrap.dedent("\n".join(self.lines[first - 1:last])).strip("\n")
 
+    def comment_after(self, node: ast.AST) -> str:
+        """The comment at the end of the last line of ``node`` (``self.play(...)  # draw it``), or ""."""
+        end, col = getattr(node, "end_lineno", None), getattr(node, "end_col_offset", None)
+        if not end or col is None:
+            return ""
+        rest = self.lines[end - 1].encode("utf-8")[col:].decode("utf-8", "ignore").strip()  # (offsets count bytes)
+        return rest if rest.startswith("#") else ""
+
     def comments_above(self, line: int, floor: int) -> tuple[int, str]:
         """The full-line comments directly above ``line`` (below line ``floor``): (first line, text)."""
         i = line - 1
@@ -503,6 +511,7 @@ class _Importer:
             hit = self.match_base(texts, i)
             if hit is not None:
                 kind, elem, n = hit
+                comment = _join_comments(comment, self.s.comment_after(body[i + n - 1]))
                 self.flush()
                 if kind == "object":
                     self.add_object(elem, comment)
@@ -525,7 +534,7 @@ class _Importer:
                 rest = self.transform_fields(obj, runs)
                 obj["chain"] += "".join(f".{c.func.attr}({self.call_args(c)})" for calls in rest for c in calls)  # type: ignore[union-attr]
                 self.flush()
-                self.add_object(obj, comment)
+                self.add_object(obj, _join_comments(comment, self.s.comment_after(body[j - 1])))
                 self.known[obj["name"]] = cls
                 prev_end = body[j - 1].end_lineno or body[j - 1].lineno
                 i = j
@@ -533,7 +542,7 @@ class _Importer:
             step = self.statement_step(stmt)
             if step is not None:
                 self.flush()
-                self.add_step(step, comment)
+                self.add_step(step, _join_comments(comment, self.s.comment_after(stmt)))
             else:
                 if _self_call(stmt, "play") is not None:
                     self.notes.append(f"Line {stmt.lineno}: this self.play is kept as code (its animations are built by "
@@ -557,6 +566,10 @@ def _expr(src: str) -> ast.AST:
         return ast.parse(src, mode="eval").body
     except SyntaxError:
         return ast.Constant(None)
+
+
+def _join_comments(above: str, trailing: str) -> str:
+    return "\n".join(c for c in (above, trailing) if c)
 
 
 def _set_comment(elem: dict, comment: str) -> None:
@@ -755,7 +768,8 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
     # Helpers codegen writes only for constructions: when the document no longer has those, the code still needs them.
     plan = construct.plan(doc)
     emitted = {construct.CONSTRAINTS_SOURCE: plan.uses_constraints, construct.GEOMETRY_SOURCE: plan.uses_geometry,
-               construct.TERMS_SOURCE: plan.uses_terms}
+               construct.TERMS_SOURCE: plan.uses_terms,
+               tex.NUMBERS_SOURCE: not tex.latex_available()}  # written again by codegen when LaTeX is missing
     missing = [h for h in found if not emitted.get(h)]
     if missing:
         extra = ([construct.TERMS_IMPORT] if construct.TERMS_SOURCE in missing else []) + [h.strip("\n") for h in missing]

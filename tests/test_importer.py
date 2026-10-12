@@ -178,6 +178,54 @@ def test_unchanged_code_keeps_the_document():
         assert json.dumps(import_code(src, base=d).doc, sort_keys=True) == json.dumps(d, sort_keys=True), sid
 
 
+TRAILING = '''
+from manim import *
+
+
+class Demo(Scene):
+    def construct(self):
+        circle = Circle(radius=1.5)  # the main shape
+        label = Text("a # b")  # not a comment inside the string
+        self.play(Create(circle))  # draw it
+        self.play(Write(label), FadeIn(circle))  # both together
+        self.wait(2)  # let it sink in
+        self.play(FadeOut(label))
+'''
+
+
+def test_comments_at_the_end_of_a_line_stay_with_their_statement():
+    res = import_code(TRAILING)
+    by_name = {o["name"]: o for o in res.doc["objects"]}
+    assert by_name["circle"]["comment"] == "# the main shape"
+    assert by_name["label"]["comment"] == "# not a comment inside the string"  # the "#" inside the string is text
+    comments = [s.get("comment") for s in res.doc["timeline"]]
+    assert comments == ["# draw it", "# both together", "# let it sink in", None], comments
+    src = codegen.generate(res.doc).source
+    for text in ["# the main shape", "# draw it", "# both together", "# let it sink in"]:
+        assert src.count(text) == 1, text
+    assert 'Text("a # b")' in src
+
+
+def test_a_comment_that_moved_above_its_statement_stays_put():
+    first = codegen.generate(import_code(TRAILING).doc).source
+    second = codegen.generate(import_code(first).doc).source
+    assert first == second
+
+
+def test_the_no_latex_helper_is_not_copied_into_the_header_on_import(monkeypatch):
+    from mathengine import tex
+
+    monkeypatch.setattr(tex, "latex_available", lambda: False)
+    first = codegen.generate(import_code(TRAILING).doc).source
+    assert first.count("_me_number_parts = {}") == 1
+    doc = import_code(first).doc
+    assert doc["header"] == "", "the helper is codegen's to write, not part of the user's header"
+    assert codegen.generate(doc).source == first
+    # on a machine with LaTeX codegen no longer writes it, but code that came with it keeps working
+    monkeypatch.setattr(tex, "latex_available", lambda: True)
+    assert "_me_number_parts = {}" in import_code(first).doc["header"]
+
+
 def test_edited_code_keeps_the_rest():
     d = samples.sample("derivative")
     src = codegen.generate(d, latex=True).source
