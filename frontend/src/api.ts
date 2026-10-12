@@ -112,7 +112,7 @@ export const api = {
   reveal: (id: string, how: 'show' | 'open') => post<{ ok: boolean }>('/api/reveal', { id, how }),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
-  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; imported?: string; recovery?: Recovery[] }>('/api/project/initial'),
+  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; error?: string | null; imported?: string; recovery?: Recovery[] }>('/api/project/initial'),
   openProject: (path: string) => post<{ doc: SceneDoc; path: string | null; imported?: string; notes?: string[]; recovery?: Recovery[] }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
   home: () => get<{ recent: RecentProject[]; samples: Sample[]; recovery: Recovery[] }>('/api/home'),

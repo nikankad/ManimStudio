@@ -21,7 +21,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from . import catalog, codegen, importer, mathexpr, opener, prefs, recent, recovery, render, runtime, samples, starters, tex, version
-from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
+from .project import ProjectError, load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
 
@@ -151,7 +151,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._file(job.result)
             self._json({"error": "not found"}, 404)
         except Exception as exc:  # report backend bugs to the UI instead of dropping the connection
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            # A message meant for the person (a bad project file, a refused value) goes as it is; anything else names its type.
+            plain = type(exc) is ValueError or isinstance(exc, ProjectError)
+            self._json({"error": str(exc) if plain else f"{type(exc).__name__}: {exc}"}, 500)
 
     # ---- static & media -------------------------------------------------
     def _static(self, path: str) -> None:
@@ -294,14 +296,22 @@ class Handler(BaseHTTPRequestHandler):
     def api_project_initial(self, _q: dict, _b: dict) -> dict:
         """The project to start with. Launched without one, the editor starts at the Home screen."""
         path = self.app.project_path
+        error = None
         if path and Path(path).exists():
-            recent.add(path)
-            if path.endswith(".py"):
-                return {**self._import_file(path), "home": False}
-            return {"doc": load_project(path), "path": path, "home": False, "recovery": recovery.for_path(path)}
-        # No project given, or the file given doesn't exist (moved, renamed): start at Home.
+            try:
+                if path.endswith(".py"):
+                    out = {**self._import_file(path), "home": False}
+                else:
+                    out = {"doc": load_project(path), "path": path, "home": False, "recovery": recovery.for_path(path)}
+                recent.add(path)
+                return out
+            except ProjectError as exc:
+                error = str(exc)
+            except importer.CodeError as exc:
+                error = f"{Path(path).name}: {exc.message}"
+        # No project given, the file given doesn't exist (moved, renamed) or can't be opened: start at Home.
         self.app.project_path = None
-        return {"doc": new_project(), "path": None, "home": True, "missing": path}
+        return {"doc": new_project(), "path": None, "home": True, "missing": None if error else path, "error": error}
 
     def _import_file(self, path: str) -> dict:
         """A manim .py file opens as a new, unsaved project made from its code."""

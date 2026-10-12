@@ -47,6 +47,7 @@ export function App() {
   useEffect(() => {
     api.initialProject()
       .then((r) => {
+        if (r.error) toast(`Couldn’t open it: ${r.error}`);
         if (r.missing) toast(`Couldn't find ${r.missing}: it may have been moved or renamed. Open it from here.`);
         if (r.home) return setState({ home: true });
         loadDoc(r.doc, r.path);

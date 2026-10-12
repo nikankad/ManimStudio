@@ -93,7 +93,7 @@ export async function openPath(path: string) {
       toast(`Opened ${res.imported.split(/[\\/]/).pop()} as a new project${res.notes?.length ? `. ${res.notes.length} statement${res.notes.length === 1 ? ' is' : 's are'} kept as code` : ''}`);
     }
   } catch (e) {
-    toast(`Couldn't open ${path}: ${e instanceof Error ? e.message : e}`);
+    toast(`Couldn’t open it: ${e instanceof Error ? e.message : e}`);
   }
 }
 

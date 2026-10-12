@@ -26,14 +26,14 @@ CHROMIUM = os.environ.get("CHROMIUM") or None
 
 
 @contextmanager
-def editor():
-    """A fresh editor server: (url, app folder). Stops it afterwards."""
+def editor(project=None):
+    """A fresh editor server (opened on ``project`` when given): (url, app folder). Stops it afterwards."""
     home = tempfile.mkdtemp(prefix="manim-studio-ui-")
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
     env = {**os.environ, "MANIM_STUDIO_HOME": home, "MATHENGINE_NO_UPDATE_CHECK": "1"}
-    proc = subprocess.Popen([sys.executable, "-m", "mathengine", "--serve", "--port", str(port)], env=env,
+    proc = subprocess.Popen([sys.executable, "-m", "mathengine", "--serve", "--port", str(port), *([project] if project else [])], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     url = f"http://127.0.0.1:{port}/"
     try:
@@ -256,6 +256,25 @@ def timeline_keys(b):
         assert not pg.errors, pg.errors
 
 
+def broken_files(b):
+    """A file that isn't a project: launching with it lands on Home with the reason, and so does opening it."""
+    bad_dir = tempfile.mkdtemp(prefix="manim-studio-bad-")
+    bad = os.path.join(bad_dir, "damaged.manimstudio")
+    open(bad, "w").write("{ this is not a project")
+    with editor(bad) as (url, home):
+        ctx, pg = page_in(b, url)
+        assert pg.locator(".home").count() == 1, "starts at Home, not in a blank editor"
+        toast = pg.locator(".toast").inner_text()
+        assert "damaged.manimstudio" in toast and "isn't a Manim Studio project" in toast, toast
+        pg.on("dialog", lambda d: d.accept(bad if d.type == "prompt" else None))
+        pg.wait_for_timeout(4500)  # let the first message go
+        pg.get_by_role("button", name="Open project…").click()
+        pg.wait_for_selector(".toast")
+        assert "isn't a Manim Studio project" in pg.locator(".toast").inner_text()
+        assert pg.locator(".home").count() == 1
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -379,7 +398,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
