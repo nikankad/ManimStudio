@@ -88,6 +88,14 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.
   - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, and anything
     disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
+  - Clips show what they do to their object, like transitions and keyframes in Premiere: an **IN** clip (`Create`,
+    `FadeIn`, …) ramps up as it brings its object on screen, an **OUT** clip ramps down, a **⇄** swap
+    (`ReplacementTransform`) does both, and an **fx** clip changes an object already there, from the keyframe ◆ at
+    its start to the one at its end. The ramp or line follows the easing. Which is which comes from what manim
+    reports is on screen before and after each `self.play`.
+  - In Effect Controls, **Easing** sets a clip's `rate_func` from presets (Linear, Ease in, Ease out, Ease in-out,
+    There and back), and **Keyframes** lists where the object's animations start and end across the scene: ◀ ▶
+    move the playhead from one to the next, and a diamond selects its animation.
   - Click a group's shading to select it (Effect Controls show its animations and the settings it gives them all,
     such as `run_time`, which also appear in the corner of the shading). With it selected, drag any of its clips to
     move the whole group; drag the shading's right edge to retime it; right-click the shading for disable / delete.

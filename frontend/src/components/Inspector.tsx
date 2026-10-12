@@ -4,7 +4,8 @@ import {
   addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
   timecode, toast, toggleDisabled, updateDoc, useSignature, useStore,
 } from '../store';
-import { addChild, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, setAnimDuration, setStepDuration, ungroup, type AnimRef } from '../timeline';
+import { addChild, EPS, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, setAnimDuration, setStepDuration, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
 import { animLabel, stepLabel } from './Timeline';
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
@@ -468,6 +469,15 @@ const CLIP_HELP: Record<string, TipContent> = {
     title: 'Methods to animate',
     text: 'Each method is applied to the object, and the clip animates it from how it is when the clip starts to how it is after these calls. Changing a method’s arguments changes where the object ends up. Calls run in order, top to bottom.',
   },
+  easing: {
+    title: 'Easing',
+    text: 'How the change is spread over the clip’s time: at a constant speed, starting or ending slowly, or going there and back. The clip’s curve (or its intro and outro ramp) on the timeline shows it.',
+    notes: ['Sets manim’s rate_func. Every rate function manim has is in the arguments below.'],
+  },
+  keyframes: {
+    title: 'Keyframes',
+    text: 'Where this object’s animations start and end, across the whole scene; this clip’s are highlighted. ◀ ▶ move the playhead to the previous or next one; click a diamond to go there and select its animation.',
+  },
   label: { title: 'Label', text: 'The name shown on the clip in the timeline. It doesn’t change the scene.' },
   comment: { title: 'Comment', text: 'Comment lines written above this statement in the code (# …). They don’t change the scene.' },
 };
@@ -725,6 +735,8 @@ function AnimInspector({ r }: { r: AnimRef }) {
           <button className="x-btn" disabled={at <= 0} title="Earlier" onClick={() => updateDoc((d) => reorder(d, anim.id, -1))}>↑</button>
           <button className="x-btn" disabled={at >= list.length - 1} title="Later" onClick={() => updateDoc((d) => reorder(d, anim.id, 1))}>↓</button>
         </div>
+        <EaseRow anim={anim} step={step} nested={!!parent} def={sig?.params.find((p) => p.name === 'rate_func')?.default} />
+        <KeyframesRow anim={anim} />
         <EnabledRow id={anim.id} disabled={anim.disabled} />
       </section>
 
@@ -745,6 +757,87 @@ function AnimInspector({ r }: { r: AnimRef }) {
         <ArgsEditor params={(sig?.params ?? []).filter((p) => p.name !== 'run_time')} args={anim.args} onChange={(k, v) => setAnim(anim.id, (a) => setArg(a.args, k, v), 'arg:' + k)} />
       )}
       <ClipActions id={anim.id} />
+    </div>
+  );
+}
+
+const EASES: [label: string, rate: string, tip: string][] = [
+  ['Linear', 'linear', 'Constant speed from start to end'],
+  ['Ease in', 'rush_into', 'Starts slowly and ends at full speed (rush_into)'],
+  ['Ease out', 'rush_from', 'Starts at full speed and slows to a stop (rush_from)'],
+  ['Ease in-out', 'smooth', 'Slow at both ends (smooth, manim’s usual easing)'],
+  ['There and back', 'there_and_back', 'Goes all the way, then comes back (there_and_back)'],
+];
+const rateName = (v: string | undefined) => (v ?? '').trim().replace(/^rate_functions\./, '');
+
+/** Easing presets in front of rate_func (the full list stays in the arguments below). A rate_func given to self.play
+ * applies to every animation in it, so when there is one the presets change that. */
+function EaseRow({ anim, step, nested, def }: { anim: Anim; step: Step; nested: boolean; def?: string }) {
+  const onPlay = !nested && !!step.args?.rate_func;
+  const usual = rateName(def) || 'smooth';
+  const current = onPlay ? rateName(step.args!.rate_func) : rateName(anim.args.rate_func) || usual;
+  const set = (v: string) =>
+    onPlay
+      ? setStep(step.id, (s) => setArg((s.args ??= {}), 'rate_func', v), 'arg:rate_func')
+      : setAnim(anim.id, (a) => setArg(a.args, 'rate_func', v === usual ? '' : v), 'arg:rate_func');
+  const known = EASES.some(([, r]) => r === current);
+  return (
+    <>
+      <div className="fx-row ease-row"><Tip tip={CLIP_HELP.easing}>Easing</Tip>
+        <div className="seg ease" role="group" aria-label="Easing">
+          {EASES.map(([label, rate, tip]) => (
+            <button key={rate} className={current === rate ? 'on' : ''} aria-pressed={current === rate} title={tip + (rate === usual ? `\n${anim.cls}’s default` : '')} onClick={() => set(rate)}>
+              <svg className="rate-icon" viewBox="0 0 24 16" aria-hidden="true"><path d={ratePath(rate, 24, 16)} /></svg>{label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {(!known || onPlay) && (
+        <p className="muted small ease-note">
+          {!known && <>Easing: <span className="mono">{current}</span>. </>}
+          {onPlay && <>Set on <button className="link" onClick={() => selectClips([step.id])}>self.play</button>: it applies to every animation playing with this one.</>}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The keyframes of this animation's object(s): where each of their animations starts and ends. ◀ ▶ move the playhead
+ * from one to the next; a diamond selects the animation it belongs to. */
+function KeyframesRow({ anim }: { anim: Anim }) {
+  const doc = useStore((s) => s.doc);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const time = useStore((s) => s.time);
+  const names = new Set(targetsOf(anim));
+  if (!names.size) return null;
+  const keys: { t: number; id: string }[] = [];
+  for (const step of doc.timeline) {
+    if (step.kind !== 'play' || step.disabled) continue;
+    for (const a of walk(step.anims)) {
+      if (a.anims?.length || a.disabled || !targetsOf(a).some((n) => names.has(n))) continue;
+      const sp = lay.anims.get(a.id);
+      if (sp) keys.push({ t: sp.start, id: a.id }, { t: sp.end, id: a.id });
+    }
+  }
+  const times = [...new Set(keys.map((k) => Math.round(k.t * 1e4) / 1e4))].sort((a, b) => a - b);
+  const prev = [...times].reverse().find((t) => t < time - EPS);
+  const next = times.find((t) => t > time + EPS);
+  const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
+  const end = Math.max(lay.end, EPS);
+  const who = [...names].join(', ');
+  return (
+    <div className="fx-row kf-row"><Tip tip={CLIP_HELP.keyframes}>Keyframes</Tip>
+      <button className="x-btn" disabled={prev === undefined} title={`Previous keyframe of ${who}`} aria-label={`Previous keyframe of ${who}`} onClick={() => go(prev)}>◀</button>
+      <div className="kf-strip" aria-label={`Keyframes of ${who}`}>
+        <i className="kf-now" style={{ left: `${(Math.min(time, end) / end) * 100}%` }} />
+        {keys.map((k, i) => (
+          <button key={i} className={`kf-dot ${k.id === anim.id ? 'mine' : ''}`} style={{ left: `${(k.t / end) * 100}%` }}
+            title={`${timecode(k.t)}: ${i % 2 ? 'end' : 'start'} of ${animLabel(findAnim(doc, k.id)!.anim).title}`}
+            aria-label={`${i % 2 ? 'End' : 'Start'} at ${timecode(k.t)}`}
+            onClick={() => { go(k.t); if (k.id !== anim.id) selectClips([k.id]); }} />
+        ))}
+      </div>
+      <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${who}`} aria-label={`Next keyframe of ${who}`} onClick={() => go(next)}>▶</button>
     </div>
   );
 }

@@ -9,7 +9,8 @@ import {
 } from '../timeline';
 import type { Anim, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
-import { ratePath } from './rates';
+import { rampPath, ratePath } from './rates';
+import { clipRoles, type ClipRole } from '../clipRole';
 import { keys } from '../keys';
 
 const ROW = 46; // animation track height
@@ -99,6 +100,7 @@ export function Timeline() {
   }, [doc, lay, drag, timeline]);
   const sdoc = shown.doc;
   const slay = shown.lay;
+  const roles = useMemo(() => clipRoles(sdoc, timeline), [sdoc, timeline]);
 
   const { pps, start: v0 } = view;
   const rows = Math.max(3, slay.rows + (drag?.mode === 'anims' && drag.moved ? 1 : 0));
@@ -346,16 +348,18 @@ export function Timeline() {
     const label = animLabel(a);
     const warn = warnOf(a.id);
     const kids = a.anims ? [...flatKids(a.anims, 0)] : [];
+    const role: ClipRole = roles.get(a.id) ?? 'effect';
+    const curve = sp.curve ?? (step.args?.rate_func || a.args?.rate_func);
     return (
       <div
         key={a.id}
-        className={`clip anim ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
+        className={`clip anim ${kids.length ? '' : role} ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
         style={{ left, width: w, top: rowTop(row) + 3, height: ROW - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
         title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(a.id)}
-        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}${kids.length ? '' : `, ${ROLE[role].word}`}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
         onKeyDown={(e) => keySelect(e, a.id)}
         onPointerDown={(e) => onAnimDown(e, a, step, row)}
         onContextMenu={(e) => openMenu(e, a.id)}
@@ -363,7 +367,7 @@ export function Timeline() {
       >
         <div className="clip-head">
           {warn && <span className="clip-warn">!</span>}
-          <span className="fx">fx</span>
+          {kids.length ? <span className="fx">fx</span> : <span className={`fx ${role}`} title={ROLE[role].title}>{ROLE[role].badge}</span>}
           <span className="clip-name">{clipText(a).name}</span>
           {clipText(a).sub && <span className="clip-sub">{clipText(a).sub}</span>}
         </div>
@@ -384,8 +388,15 @@ export function Timeline() {
             })}
           </div>
         ) : (
-          w > 24 && <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none"><path d={ratePath(sp.curve ?? (step.args?.rate_func || a.args?.rate_func), w, ROW - 28)} /></svg>
+          w > 24 && (
+            <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none">
+              {(role === 'in' || role === 'swap') && <path className="ramp in" d={rampPath(curve, w, ROW - 28)} />}
+              {(role === 'out' || role === 'swap') && <path className="ramp out" d={rampPath(curve, w, ROW - 28, true)} />}
+              {role === 'effect' && <path d={ratePath(curve, w, ROW - 28)} />}
+            </svg>
+          )
         )}
+        {!kids.length && role === 'effect' && w > 18 && <><i className="kf start" /><i className="kf end" /></>}
       </div>
     );
   };
@@ -761,6 +772,14 @@ export function stepLabel(s: Step): { name: string; sub: string; title: string }
       return { name: s.kind === 'add' ? '+ add' : '− remove', sub: targets, title: `self.${s.kind}(${targets})` };
   }
 }
+
+/** How a clip shows what its animation does to its object (like transitions and keyframes in a video editor). */
+const ROLE: Record<ClipRole, { badge: string; word: string; title: string }> = {
+  in: { badge: 'IN', word: 'intro', title: 'Intro: brings its object on screen. The ramp shows it coming in, shaped by the easing' },
+  out: { badge: 'OUT', word: 'outro', title: 'Outro: takes its object off screen' },
+  swap: { badge: '⇄', word: 'swap', title: 'Swap: one object goes as another comes in (like a cross dissolve)' },
+  effect: { badge: 'fx', word: 'effect', title: 'Effect: changes an object on screen, from the keyframe at its start ◆ to the one at its end ◆. The line is its easing' },
+};
 
 function animColor(a: Anim, anims?: { name: string; category: string }[]): string {
   if (a.cls === 'animate') return '#2f5c8c';

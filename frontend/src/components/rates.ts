@@ -80,6 +80,19 @@ function sampled(curve: number[]): (t: number) => number {
   };
 }
 
+/** SVG path of the area under how much of an object is shown across an intro (``out``: an outro), over a w×h box. */
+export function rampPath(rate: string | number[] | undefined, w: number, h: number, out = false): string {
+  const f = Array.isArray(rate) ? (rate.length > 1 ? sampled(rate) : rateFn('linear')) : rateFn(rate);
+  const n = Math.max(8, Math.min(64, Math.round(w / 4)));
+  let d = `M0,${h}`;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const v = Math.max(0, Math.min(1, out ? 1 - f(t) : f(t)));
+    d += `L${(t * w).toFixed(1)},${(h - v * h).toFixed(1)}`;
+  }
+  return d + `L${w},${h}Z`;
+}
+
 /** SVG path of the curve over a w×h box (y up): a rate function's name, or progress samples measured by manim. */
 export function ratePath(rate: string | number[] | undefined, w: number, h: number): string {
   const f = Array.isArray(rate) ? (rate.length > 1 ? sampled(rate) : rateFn('linear')) : rateFn(rate);

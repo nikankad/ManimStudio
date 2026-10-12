@@ -595,7 +595,65 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def clip_roles(b):
+    """Clips show what their animation does to its object, like transitions and keyframes in a video editor (an intro
+    ramps up, an outro ramps down, a swap does both, an effect has a keyframe at each end), read from what manim
+    reports on screen; Effect Controls have easing presets and step through the object's keyframes."""
+    code = ("from manim import *\n\nclass Shown(Scene):\n    def construct(self):\n"
+            "        a = Circle()\n        b = Square()\n"
+            "        self.play(FadeIn(a))\n        self.play(a.animate.shift(RIGHT))\n"
+            "        self.play(ReplacementTransform(a, b))\n        self.play(Indicate(b))\n        self.play(FadeOut(b))\n")
+    drop_file = """([name, text]) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([text], name, {type: 'text/x-python'}));
+      document.body.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: dt}));
+    }"""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.evaluate(drop_file, ["shown.py", code])
+        pg.wait_for_selector(".toolbar")
+        pg.wait_for_selector(".tl-lanes .clip.anim:not(.estimated)", timeout=30000)
+        pg.wait_for_timeout(500)
+        clip = lambda text: pg.locator(".tl-lanes .clip.anim", has_text=text)
+        role = lambda text: clip(text).get_attribute("aria-label").split(", ")[-2]
+        assert [role(t) for t in ["FadeIn", ".animate", "ReplacementTransform", "Indicate", "FadeOut"]] == \
+            ["intro", "effect", "swap", "effect", "outro"], [role(t) for t in ["FadeIn", ".animate", "ReplacementTransform", "Indicate", "FadeOut"]]
+        assert clip("FadeIn").locator(".ramp.in").count() == 1 and clip("FadeOut").locator(".ramp.out").count() == 1
+        assert clip("ReplacementTransform").locator(".ramp").count() == 2, "a swap ramps one out and one in"
+        assert clip(".animate").locator(".kf").count() == 2, "an effect has a keyframe at each end"
+
+        # easing presets: Linear writes rate_func=linear; Ease in-out (the usual) takes it away again
+        clip(".animate").click()
+        ease = pg.locator(".seg.ease")
+        assert ease.get_by_role("button", name="Ease in-out").get_attribute("aria-pressed") == "true"
+        ease.get_by_role("button", name="Linear").click()
+        pg.wait_for_timeout(400)
+        assert ease.get_by_role("button", name="Linear").get_attribute("aria-pressed") == "true"
+        assert pg.locator('aside select.field:has(option[value="linear"])').first.input_value() == "linear", "the full rate_func agrees"
+        ease.get_by_role("button", name="Ease in-out").click()
+        pg.wait_for_timeout(400)
+        assert pg.locator('aside select.field:has(option[value="linear"])').first.input_value() == ""
+
+        # keyframes of a: ◀ ▶ step the playhead through its animations' starts and ends (0, 1, 2, 3 s)
+        now = lambda: pg.locator(".tl-header .timecode").first.inner_text()
+        pg.keyboard.press("Home")
+        kf = pg.locator(".kf-row")
+        assert kf.locator(".kf-dot").count() == 6 and kf.locator(".kf-dot.mine").count() == 2
+        seen = []
+        for _ in range(3):
+            kf.get_by_role("button", name="Next keyframe of a").click()
+            seen.append(now())
+        assert seen == ["00:00:01:00", "00:00:02:00", "00:00:03:00"], seen
+        assert kf.get_by_role("button", name="Next keyframe of a").is_disabled()
+        kf.get_by_role("button", name="Previous keyframe of a").click()
+        assert now() == "00:00:02:00", now()
+        kf.locator(".kf-dot").first.click()  # FadeIn's start: selects it
+        pg.wait_for_timeout(300)
+        assert now() == "00:00:00:00" and clip("FadeIn").get_attribute("aria-pressed") == "true"
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

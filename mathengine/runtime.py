@@ -56,6 +56,9 @@ class StepTiming:
     start: float
     end: float
     curve: list[float] | None = None  # an animation's progress at evenly spaced times from start to end
+    # a step's objects on screen (ids) just before and just after it: the timeline's object view (measuring run only)
+    shown_before: list[str] | None = None
+    shown_after: list[str] | None = None
 
 
 @dataclass
@@ -75,7 +78,9 @@ class RunResult:
     def to_json(self) -> dict:
         return {
             "duration": float(self.duration),
-            "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end)} for s in self.steps],
+            "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end),
+                       **({"before": s.shown_before, "after": s.shown_after} if s.shown_after is not None else {})}
+                      for s in self.steps],
             "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6),
                        **({"curve": s.curve} if s.curve else {})} for s in self.anims],
             "objects": self.objects,
@@ -99,6 +104,7 @@ class PreviewMixin:
         self.renderer.play = self._me_render_play
         self._me_registry: dict[str, tuple[Any, str]] = {}
         self._me_open: dict[str, float] = {}
+        self._me_before: dict[str, list[str] | None] = {}
         self._me_steps: list[StepTiming] = []
         self._me_anims: list[StepTiming] = []
         self._me_current_step: str | None = None
@@ -108,13 +114,22 @@ class PreviewMixin:
     def _me_reg(self, name: str, mob: Any, oid: str) -> None:
         self._me_registry[name] = (mob, oid)
 
+    def _me_shown(self) -> list[str] | None:
+        """Ids of the objects on screen now, for the timeline's measuring run only: shown whole, as part of a group, or
+        in parts (a group whose members were brought in one by one, as LaggedStartMap(FadeIn, group) does)."""
+        if self._me_target is not None:
+            return None
+        on = set(id(x) for x in self.get_mobject_family_members())
+        return [oid for mob, oid in self._me_registry.values() if any(id(x) in on for x in mob.get_family())]
+
     def _me_step(self, sid: str) -> None:
         self._me_current_step = sid
         self._me_open[sid] = self.renderer.time
+        self._me_before[sid] = self._me_shown()
 
     def _me_step_end(self, sid: str) -> None:
         start = self._me_open.pop(sid, self.renderer.time)
-        self._me_steps.append(StepTiming(sid, start, self.renderer.time))
+        self._me_steps.append(StepTiming(sid, start, self.renderer.time, None, self._me_before.pop(sid, None), self._me_shown()))
 
     def _me_tag(self, anim: Any, aid: str) -> Any:
         """Mark an animation of the timeline so its timing can be reported (manim's own prepare_animation)."""

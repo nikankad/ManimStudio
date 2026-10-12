@@ -241,7 +241,8 @@ export interface Diagnostic {
 
 export interface RunResult {
   duration: number;
-  steps: { id: string; start: number; end: number }[]; // when each statement runs (measured by manim)
+  // when each statement runs (measured by manim), and which objects (ids) were on screen just before and after it
+  steps: { id: string; start: number; end: number; before?: string[]; after?: string[] }[];
   anims: { id: string; start: number; end: number; curve?: number[] }[]; // when manim runs each animation; curve: its progress over that time
   objects: ObjInfo[];
   camera: { center: [number, number]; width: number; height: number } | null;

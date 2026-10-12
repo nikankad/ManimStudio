@@ -259,6 +259,29 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .clip-sub { color: rgba(255, 255, 255, 0.95); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; }
 .rate { display: block; margin-top: 2px; }
 .rate path { fill: none; stroke: rgba(255, 255, 255, 0.45); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+/* what a clip does to its object, like transitions and keyframes in a video editor */
+.rate path.ramp { fill: rgba(255, 255, 255, 0.2); stroke: none; }
+.rate path.ramp.out { fill: rgba(0, 0, 0, 0.28); }
+.clip.swap .rate path.ramp.in { fill: rgba(255, 255, 255, 0.16); }
+.fx.in, .fx.out, .fx.swap { font-style: normal; letter-spacing: 0.04em; color: #fff; }
+.fx.in { background: #17633a; }
+.fx.out { background: #9a2a2a; }
+.fx.swap { background: #5a3ea6; }
+.kf { position: absolute; bottom: 9px; width: 7px; height: 7px; transform: rotate(45deg); background: #e4e6ee; border: 1px solid rgba(0, 0, 0, 0.6); pointer-events: none; }
+.kf.start { left: 3px; }
+.kf.end { right: 3px; }
+.clip.sel .kf { background: #ffd36b; }
+.ease-row { flex-wrap: wrap; row-gap: 4px; }
+.seg.ease { flex: 1 0 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); }
+.seg.ease button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px; box-shadow: 0 0 0 0.5px var(--line); }
+.seg.ease button + button { border-left: 0; }
+.seg.ease button.on .rate-icon path { stroke: #fff; }
+.ease-note { margin: 2px 0 4px 84px; }
+.kf-strip { position: relative; flex: 1; height: 18px; border-radius: 3px; background: #24252b; border: 1px solid var(--line); }
+.kf-now { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1px solid var(--blue); pointer-events: none; }
+.kf-dot { position: absolute; top: 50%; width: 9px; height: 9px; margin: -5px 0 0 -5px; padding: 0; transform: rotate(45deg); border-radius: 1px; background: #8a8c96; border: 1px solid #111; }
+.kf-dot.mine { background: #ffd36b; z-index: 1; }
+.kf-dot:hover, .kf-dot:focus-visible { background: #fff; }
 .code-peek { font: 10.5px var(--mono); color: rgba(255, 255, 255, 0.75); padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clip.sel { border-color: #fff; box-shadow: 0 0 0 1px #fff; z-index: 1; }
 .clip.err { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
