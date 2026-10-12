@@ -48,6 +48,19 @@ def test_wrong_kinds_of_values_fall_back_to_empty(tmp_path):
     assert doc["scene"] == new_project()["scene"] and doc["header"] == "" and doc["config"] == new_project()["config"]
 
 
+def test_a_save_that_cannot_happen_says_why_and_leaves_nothing_behind(tmp_path):
+    from mathengine.project import save_project
+
+    blocker = tmp_path / "a_file"
+    blocker.write_text("not a folder")
+    with pytest.raises(ProjectError) as err:
+        save_project(blocker / "inside" / "talk.manimstudio", new_project())  # the "folder" is a file
+    assert "talk.manimstudio couldn't be saved" in str(err.value) and "Save it somewhere else" in str(err.value)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a_file"]
+    save_project(tmp_path / "ok" / "talk.manimstudio", new_project())  # a new folder is made as before
+    assert (tmp_path / "ok" / "talk.manimstudio").is_file() and not list((tmp_path / "ok").glob("*.tmp"))
+
+
 def handler(path):
     out = object.__new__(Handler)
     out.app = AppState(str(path))

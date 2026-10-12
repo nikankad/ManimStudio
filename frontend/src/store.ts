@@ -226,6 +226,7 @@ function forgetRecovery() {
 }
 
 export function toast(msg: string) {
+  msg = msg.replace(/^Error: /, ''); // String(error) puts that in front of every message
   setState({ toast: msg });
   setTimeout(() => getState().toast === msg && setState({ toast: null }), 4000);
 }

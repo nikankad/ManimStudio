@@ -120,10 +120,18 @@ def upgrade(doc: dict) -> dict:
 
 def save_project(path: str | Path, doc: dict) -> None:
     p = Path(path).expanduser()
-    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)  # no half-written file left beside the project
+        except OSError:
+            pass
+        reason = exc.strerror or str(exc)
+        raise ProjectError(f"{p.name} couldn't be saved in {p.parent}: {reason}. Save it somewhere else instead.") from None
 
 
 def upgrade_v2(doc: dict) -> dict:
