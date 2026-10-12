@@ -605,6 +605,10 @@ def accessibility(b):
         pg.keyboard.press("o")
         assert pg.locator(".work-area").count() == 1
         found["range"] = violations(pg)
+        pg.get_by_role("button", name="? Help").first.click()
+        pg.get_by_role("button", name="Try this: your first animation").click()
+        pg.wait_for_timeout(300)
+        found["try this"] = violations(pg)
         pg.get_by_role("button", name="</> Code").click()
         pg.wait_for_timeout(1500)
         found["Code tab"] = violations(pg)
@@ -1166,7 +1170,52 @@ def preview_freshness(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, preview_freshness, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def try_this(b):
+    """Help › Try this walks through a first animation with the controls only: each step ticks itself from the scene
+    (add a circle, reveal it, move it, preview, export), the card doesn't get in the timeline's way, and it closes."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.on("dialog", lambda d: d.accept(os.path.join(home, "first.mp4") if d.type == "prompt" else None))
+        new_project(pg)
+        pg.get_by_role("button", name="? Help").click()
+        pg.get_by_role("button", name="Try this: your first animation").click()
+        card = pg.get_by_role("region", name="Try this: your first animation")
+        current = lambda: card.locator("li[aria-current=step] .try-title").inner_text()
+        done = lambda: card.locator("li.done").count()
+        assert current().endswith("Add a circle") and done() == 0
+        card.get_by_role("button", name="Show me").click()
+        assert "try-flash" in pg.locator('[data-tour="library"]').get_attribute("class")
+
+        add(pg, "Circle")  # Auto-intro reveals it with Create
+        assert done() == 2 and current().endswith("Move it"), (done(), current())
+        pg.get_by_role("button", name="Scene", exact=True).first.click()
+        pg.locator(".outline-row").filter(has_text="circle").first.click()
+        pg.locator(".inspector").get_by_role("button", name=".animate", exact=True).click()
+        assert done() == 3 and current().endswith("Preview it")
+
+        # the timeline works as usual with the card up
+        pg.locator(".tl-lanes .clip.anim").first.click()
+        assert pg.locator(".tl-lanes .clip.anim.sel").count() == 1
+        pg.keyboard.press("Home")
+        pg.keyboard.press("Space")
+        pg.wait_for_timeout(300)
+        pg.keyboard.press("k")
+        assert done() == 4 and current().endswith("Export it")
+
+        pg.route("**/api/render", lambda r: r.fulfill(json={"id": "j1", "state": "running", "progress": 0, "message": "Rendering"}))
+        pg.route("**/api/render/j1", lambda r: r.fulfill(json={"id": "j1", "state": "running", "progress": 0.5, "message": "Rendering"}))
+        pg.get_by_role("button", name="Export video").click()
+        pg.get_by_role("dialog", name="Export video").get_by_role("button", name="Render with manim").click()
+        pg.wait_for_timeout(500)
+        pg.keyboard.press("Escape")
+        assert done() == 5 and "Done: a whole animation without code" in card.inner_text()
+        assert pg.locator(".code-monitor").count() == 0, "no code needed"
+        card.get_by_role("button", name="Close", exact=True).click()
+        assert card.count() == 0
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

@@ -37,6 +37,7 @@ export interface AppState {
   future: SceneDoc[];
   panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project';
   tour: number | null; // guided tour step
+  tryThis: { played: boolean; exported: boolean } | null; // Help › Try this, the guided first animation: what has happened
   panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
   tool: Tool; // canvas drawing tool
   starters: Template[]; // built-in constructions
@@ -93,6 +94,7 @@ let state: AppState = {
   panelData: null,
   tool: 'select',
   tour: null,
+  tryThis: null,
   starters: [],
   library: [],
   snap: true,
@@ -485,6 +487,7 @@ export function setPlaying(playing: boolean, keepRange = false) {
     if (state.time >= to - 1e-3 || (state.time < from - 1e-6 && (state.loop || state.playingRange))) setState({ time: from });
   }
   setState({ playing, showVideo: playing ? previewFresh() : state.showVideo });
+  if (playing && state.tryThis && !state.tryThis.played) setState({ tryThis: { ...state.tryThis, played: true } });
   if (!playing) return requestFrame();
   let last = performance.now();
   const tick = (now: number) => {

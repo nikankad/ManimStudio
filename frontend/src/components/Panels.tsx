@@ -4,6 +4,7 @@ import {
   addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
+import { noteTry } from './TryThis';
 import { zoomBy, zoomToFit } from './Timeline';
 import type { Job } from '../types';
 import { Field } from './ParamField';
@@ -434,6 +435,7 @@ function ExportPanel() {
     const j = await api.render(doc, quality, out);
     setJob(j);
     if (!j.id || j.state === 'error') return;
+    noteTry('exported');
     jobRef.current = j.id;
     poll(j.id, (u) => {
       if (jobRef.current !== j.id) return false;

@@ -5,6 +5,7 @@ import { getState, setState, useStore } from '../store';
 import { Modal } from './Modal';
 import { keys } from '../keys';
 import { pref, setPref } from '../prefs';
+import { startTryThis } from './TryThis';
 
 // ---------------------------------------------------------------- guided tour
 
@@ -186,7 +187,7 @@ const TOPICS: Topic[] = [
         </ol>
       </>
     ),
-    actions: [{ label: 'Take the tour', run: () => startTour(0) }],
+    actions: [{ label: 'Take the tour', run: () => startTour(0) }, { label: 'Try this: your first animation', run: startTryThis }],
   },
   {
     id: 'draw',
@@ -442,10 +443,11 @@ export function WelcomeCard() {
   return (
     <div className="welcome-card" role="dialog" aria-label="Welcome">
       <b>New to Manim Studio?</b>
-      <p className="muted small">A one-minute tour shows where everything is. You can reopen it from Help at any time.</p>
+      <p className="muted small">A one-minute tour shows where everything is, and <i>Try this</i> walks you through a first animation, from a circle to a video, without code. Both are in Help at any time.</p>
       <div className="row">
         <button className="ghost small" onClick={dismiss}>Not now</button>
         <span className="spacer" />
+        <button className="ghost small" onClick={() => { dismiss(); startTryThis(); }}>Try this</button>
         <button className="primary" onClick={() => { dismiss(); startTour(0); }}>Take the tour</button>
       </div>
     </div>

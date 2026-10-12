@@ -316,7 +316,10 @@ move into an **Options** menu, so Settings, Export video and Help stay in reach 
 
 **Help**: the toolbar's **? Help** button (or `?` / `F1`) opens a searchable guide to every feature, with
 buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
-users are offered the tour once.
+users are offered the tour once. **Try this** (in Help's *Getting started*, and on the welcome card) walks through
+a first animation with the controls only: add a circle, reveal it, move it, preview, export. A small checklist
+over the canvas ticks each step as the scene gets there (any way of doing it counts), *Show me* points at where
+to do it, and × closes it; nothing else is blocked while it is open.
 
 Shortcuts: Space play · J/K/L · I / O set In / Out (Shift: go to it) · ⇧Space play In to Out · ⇧⌘X clear In and Out ·
 ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·

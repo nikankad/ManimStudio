@@ -9,7 +9,7 @@ import type { Anim, RunResult, SceneDoc } from './types';
 
 export type ClipRole = 'in' | 'out' | 'swap' | 'effect';
 
-const IN = /^(Create|Write|DrawBorderThenFill|FadeIn|Grow\w*|SpinInFromNothing|AddText\w*|ShowIncreasingSubsets|TypeWithCursor|SpiralIn)$/;
+export const IN = /^(Create|Write|DrawBorderThenFill|FadeIn|Grow\w*|SpinInFromNothing|AddText\w*|ShowIncreasingSubsets|TypeWithCursor|SpiralIn)$/;
 const OUT = /^(Uncreate|Unwrite|FadeOut|ShrinkToCenter|RemoveText\w*|UntypeWithCursor)$/;
 const SWAP = /^(ReplacementTransform|TransformMatching\w*|FadeTransform\w*|TransformFromCopy)$/;
 

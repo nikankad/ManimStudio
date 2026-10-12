@@ -8,6 +8,7 @@ import { Timeline } from './components/Timeline';
 import { Viewport } from './components/Viewport';
 import { CodeEditor } from './components/CodeEditor';
 import { Tour, WelcomeCard } from './components/Help';
+import { TryThis } from './components/TryThis';
 import { Home } from './components/Home';
 import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
 import { useAutoLabels } from './a11y';
@@ -99,6 +100,7 @@ export function App() {
       <SharedLists />
       <Tour />
       <WelcomeCard />
+      <TryThis />
       {message && <div className="toast">{message}</div>}
     </div>
   );
