@@ -699,3 +699,6 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 }
 
 .clip:focus-visible { outline: 2px solid #fff; outline-offset: 1px; z-index: 5; }
+.order-note { margin: 0; padding-bottom: 4px; line-height: 1.4; }
+.outline-row .order-n { margin-left: 0; min-width: 1.5em; text-align: right; font-variant-numeric: tabular-nums; }
+.lanes-label { cursor: help; }

@@ -395,7 +395,7 @@ def timeline_edit(b):
         pg.mouse.click(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] + 40)
         pg.wait_for_timeout(300)
         assert bands.nth(0).get_attribute("aria-pressed") == "true", "a click on the shading selects the group"
-        assert pg.locator("aside h3").last.inner_text() == "Animations together"
+        assert pg.locator("aside h3").last.inner_text() == "Play together"
 
         # 2. drag a clip of the selected group: the whole group moves (its start changes)
         before = start(bands.nth(0))
@@ -846,7 +846,31 @@ def editing_fixes(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def drawing_order(b):
+    """The V lanes are animation lanes, not drawing layers: Scene › Drawing order lists what is on top at the playhead
+    (later-added objects over earlier ones), and the timeline says which is which."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        add(pg, "Circle")
+        add(pg, "Square")
+        assert "Animation lanes" in pg.locator(".tl-corner").inner_text()
+        assert "Not a drawing layer" in pg.locator(".track-head:not(.steps-head)").first.get_attribute("title")
+        assert pg.locator(".play-band").first.get_attribute("aria-label").startswith("Play together:")
+        pg.keyboard.press("End")
+        pg.get_by_role("button", name="Scene", exact=True).first.click()
+        pg.get_by_role("button", name="Drawing order").click()
+        rows = pg.locator(".outline .outline-row")
+        rows.first.wait_for(timeout=30000)
+        pg.wait_for_function("document.querySelectorAll('.outline .outline-row').length === 2", timeout=30000)
+        labels = [rows.nth(i).get_attribute("aria-label") for i in range(rows.count())]
+        assert labels == ["square, on top", "circle, 2 from the top"], labels
+        rows.nth(1).click()
+        assert "sel" in rows.nth(1).get_attribute("class")
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

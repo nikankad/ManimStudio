@@ -230,6 +230,7 @@ export interface ObjInfo {
   path?: Pt[]; // sampled outline (graphs, circles) for snapping
   axes?: { origin: Pt; ux: Pt; uy: Pt; x_range: [number, number]; y_range: [number, number] };
   parts?: { id: string; box: [number, number, number, number] | null }[];
+  layer?: number | null; // drawing order at this time: higher is drawn later (on top); null when nothing of it is on screen
 }
 
 export interface Diagnostic {

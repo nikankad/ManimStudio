@@ -171,15 +171,17 @@ function Outline() {
   const selection = useStore((s) => s.selection);
   const frame = useStore((s) => s.frame);
   const error = frame?.error;
-  const [view, setView] = useState<'objects' | 'relationships'>('objects');
+  const [view, setView] = useState<'objects' | 'order' | 'relationships'>('objects');
   const count = objects.filter((o) => o.link).length;
   const toggle = (
     <div className="seg outline-view">
       <button className={view === 'objects' ? 'on' : ''} onClick={() => setView('objects')}>Objects</button>
+      <button className={view === 'order' ? 'on' : ''} onClick={() => setView('order')} title="What is drawn on top of what at the playhead">Drawing order</button>
       <button className={view === 'relationships' ? 'on' : ''} onClick={() => setView('relationships')} title="Every relationship in the scene: what is coupled to what, and whether it is in effect">Relationships{count ? ` (${count})` : ''}</button>
     </div>
   );
   if (view === 'relationships') return <div className="outline-wrap">{toggle}<Relationships /></div>;
+  if (view === 'order') return <div className="outline-wrap">{toggle}<DrawingOrder /></div>;
   return (
     <div className="outline-wrap">
     {toggle}
@@ -214,6 +216,42 @@ function Outline() {
         );
       })}
     </div>
+    </div>
+  );
+}
+
+/**
+ * The objects on screen at the playhead, top first: manim draws later-added objects over earlier ones (z_index
+ * comes first). This is not the timeline's V lanes, which only order the animations of each Play together group.
+ */
+function DrawingOrder() {
+  const objects = useStore((s) => s.doc.objects);
+  const selection = useStore((s) => s.selection);
+  const frame = useStore((s) => s.frame);
+  const time = useStore((s) => s.time);
+  const shown = (frame?.objects ?? []).filter((i) => i.layer !== null && i.layer !== undefined && objects.some((o) => o.id === i.id))
+    .sort((a, b) => b.layer! - a.layer!);
+  const sel = selectedObjectIds(selection);
+  return (
+    <div className="scroll outline">
+      <p className="muted small pad order-note">
+        On screen at {timecode(time)}, top first. Objects added later are drawn over earlier ones; a <span className="mono">z_index</span> argument
+        overrides that. The timeline’s V1, V2… lanes don’t change it.
+      </p>
+      {shown.length === 0 && <div className="muted pad">Nothing is on screen at the playhead.</div>}
+      {shown.map((info, i) => {
+        const o = objects.find((x) => x.id === info.id)!;
+        return (
+          <div key={o.id} className={`outline-row ${sel.includes(o.id) ? 'sel' : ''}`} tabIndex={0} role="button" aria-pressed={sel.includes(o.id)}
+            aria-label={`${o.name}, ${i === 0 ? 'on top' : `${i + 1} from the top`}`}
+            onClick={(e) => { selectObjects([o.id]); e.currentTarget.blur(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectObjects([o.id]); } }}>
+            <span className="order-n muted">{i + 1}</span>
+            <span className="mono">{o.name}</span>
+            <span className="muted">{o.ctor}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

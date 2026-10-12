@@ -55,3 +55,27 @@ def test_seeking_a_frame_does_not_pay_for_it():
     res = runtime.run(doc, 1.5, render=False)
     assert all(s.shown_after is None for s in res.steps)
     assert all("after" not in s for s in res.to_json()["steps"])
+
+
+LAYERS = '''
+from manim import *
+
+
+class Layers(Scene):
+    def construct(self):
+        a = Circle()
+        b = Square()
+        c = Dot()
+        self.add(a, b)
+        self.wait()
+        self.add(a)
+        self.wait()
+'''
+
+
+def test_frames_report_drawing_order():
+    doc = import_code(LAYERS).doc
+    order = lambda t: {o["name"]: o["layer"] for o in runtime.run(doc, t, render=False).objects}
+    first, later = order(0.5), order(1.5)
+    assert first["b"] > first["a"] and first["c"] is None, first  # added after: drawn on top; c isn't on screen
+    assert later["a"] > later["b"], later  # added again: brought to the top

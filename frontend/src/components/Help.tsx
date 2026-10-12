@@ -59,7 +59,7 @@ export const TOUR: TourStep[] = [
     target: '[data-tour="timeline"]',
     title: 'Timeline',
     before: libraryTab('Objects'),
-    body: <>The scene, in order. Animations that play together share a shaded column (stacked on tracks V1, V2…); a hatched block is a pause; the next group starts when the one before ends. Click the shading to select a group, drag clips to move them, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
+    body: <>The scene, in order. Animations that play together share a shaded <b>Play together</b> column, stacked on animation lanes V1, V2… (lanes are not drawing layers; Scene › Drawing order shows what is on top); a hatched block is a pause; the next group starts when the one before ends. Click the shading to select a group, drag clips to move them, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
   },
   {
     target: '[data-tour="record"]',
@@ -302,7 +302,7 @@ const TOPICS: Topic[] = [
     body: (
       <>
         <ul>
-          <li>The timeline is the scene in order, exactly as manim runs it. Animations that play together (one <code>self.play</code>) share a <b>shaded column</b> and are stacked on tracks V1, V2…; the group lasts as long as its longest animation, and the next one starts when it ends. A <b>hatched block</b> is a pause (<code>self.wait</code>). Clips read object first: <i>circle · Create</i>.</li>
+          <li>The timeline is the scene in order, exactly as manim runs it. Animations that play together (one <code>self.play</code>) share a shaded <b>Play together</b> column and are stacked on <b>animation lanes</b> V1, V2… (the 1st, 2nd… animation of the group; lanes are not drawing layers: <i>Scene › Drawing order</i> lists what is drawn on top); the group lasts as long as its longest animation, and the next one starts when it ends. A <b>hatched block</b> is a pause (<code>self.wait</code>). Clips read object first: <i>circle · Create</i>.</li>
           <li>Steps that aren’t animations (objects added or removed without one, code, couple / uncouple, scene calls, and anything disabled) sit in a slim <b>Other</b> strip under the ruler, shown only when the scene has some.</li>
           <li>Drag the line under a track’s name (V1, V2…) to make that track taller or shorter; double-click it for the usual height. <b>+ Add track</b> adds empty tracks; × removes the last one while it’s empty.</li>
           <li>Clips show what they do to their object, like transitions and keyframes in a video editor: <b>IN</b> ramps up as it brings the object on screen, <b>OUT</b> ramps down as it takes it off, <b>⇄</b> swaps one object for another (<code>ReplacementTransform</code>), and <b>fx</b> changes an object already there, from the keyframe ◆ at its start to the one at its end. In Effect Controls, <b>Easing</b> sets how the change is spread over time, and <b>Keyframes</b> ◀ ▶ step the playhead through the object’s animations.</li>

@@ -384,7 +384,9 @@ def _geometry(mob: Any, oid: str, part_index: dict[str, dict[str, int]]) -> dict
 
 def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = None) -> list[dict]:
     m = manim()
-    on_screen = set(id(x) for x in scene.get_mobject_family_members())
+    drawn = scene.get_mobject_family_members()  # in drawing order (z_index first, then the order added)
+    on_screen = set(id(x) for x in drawn)
+    order = {id(x): i for i, x in enumerate(drawn)}
     out = []
     for name, (mob, oid) in scene._me_registry.items():
         visible = id(mob) in on_screen
@@ -400,6 +402,9 @@ def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = Non
         except Exception:
             center = None
         info = {"id": oid, "name": name, "visible": visible, "box": box, "center": center}
+        # where it is drawn: the later its last drawn part, the more it covers (None: nothing of it on screen)
+        layer = max((order[id(x)] for x in mob.get_family() if id(x) in order), default=None)
+        info["layer"] = layer
         info.update(_geometry(mob, oid, part_index or {}))
         out.append(info)
     return out

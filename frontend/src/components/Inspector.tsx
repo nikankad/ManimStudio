@@ -69,7 +69,7 @@ function SceneInfo() {
         <li><b>ƒ Graph</b> builds axes and a graph from an expression like <code>y = a*x^2 + b</code>, with parameter sliders you can animate.</li>
         <li>The <b>Constructions</b> tab holds reusable pieces: a labeled triangle, the unit circle, a number line, secant-to-tangent, and your own.</li>
         <li>Drag any manim class onto the <b>canvas</b> or straight onto a <b>timeline track</b>.</li>
-        <li>The timeline is the scene’s <code>construct()</code>: each <b>self.play</b> plays its animations together (V1, V2… are its 1st, 2nd… animation), then the next statement starts. Drag clips to move them, drag their right edges to trim, and Alt-drag to duplicate.</li>
+        <li>The timeline is the scene’s <code>construct()</code>: each <b>self.play</b> is a <b>Play together</b> group whose animations run at once (animation lanes V1, V2… hold its 1st, 2nd… animation; they are not drawing layers, see Scene › Drawing order), then the next statement starts. Drag clips to move them, drag their right edges to trim, and Alt-drag to duplicate.</li>
         <li>The <b>Code</b> tab shows the same scene as manim code. Edit it, or paste a whole manim file, and the timeline follows.</li>
         <li>On the canvas, drag an object to move it. Corner handles scale it, edge handles stretch it, and the top knob rotates it. With <b>Record</b> on, each of these becomes an animation clip at the playhead.</li>
         <li>Every field takes Python, like <code>BLUE</code>, <code>UP * 2</code> or <code>lambda x: x**2</code>.</li>
@@ -547,7 +547,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3>{{ play: 'Animations together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
+      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />

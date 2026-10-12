@@ -82,7 +82,7 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
 
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline, in order,
   exactly as manim runs it: each step starts when the one before it ends.
-  - Animations that play together (one `self.play`) share a **shaded column** and are stacked on tracks V1, V2…;
+  - Animations that play together (one `self.play`) share a shaded **Play together** column and are stacked on **animation lanes** V1, V2… (lanes are not drawing layers: Scene › Drawing order lists what is drawn on top);
     the group lasts as long as its longest animation. Clips read object first (*circle · Create*). A **hatched
     block** across the tracks is a pause (`self.wait`). `AnimationGroup`, `LaggedStart` and `Succession` show their
     animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.

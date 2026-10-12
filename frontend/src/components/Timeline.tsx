@@ -532,14 +532,16 @@ export function Timeline() {
       <div className="tl-body" ref={bodyRef}>
         <div className="tl-grid" style={{ height: totalH }}>
           <div className="tl-heads">
-            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} {doc.timeline.length === 1 ? 'step' : 'steps'}</span></div>
+            <div className="tl-corner" style={{ height: RULER }}>
+              <span className="muted small lanes-label" title={`Animation lanes: V1 holds the first animation of each Play together group (a shaded column), V2 the second, and so on. Lanes are not drawing layers: what is drawn on top is in Scene › Drawing order.\n${doc.timeline.length} ${doc.timeline.length === 1 ? 'step' : 'steps'} in the scene`}>Animation lanes ⓘ</span>
+            </div>
             {stripH > 0 && (
               <div className="track-head steps-head" style={{ height: stripH }} title="Steps that aren't animations: objects added or removed without one, code, couple / uncouple, scene calls, and anything disabled">
                 <span className="th-name">Other</span>
               </div>
             )}
             {Array.from({ length: rows }, (_, r) => (
-              <div key={r} className="track-head" style={{ height: rowH(r) }} title={`Track ${r + 1}: animations that play together (the shaded column behind them) are stacked on separate tracks`}>
+              <div key={r} className="track-head" style={{ height: rowH(r) }} title={`V${r + 1}: animation lane ${r + 1}, the ${ordinal(r + 1)} animation of each Play together group. Not a drawing layer: what is drawn on top is in Scene › Drawing order`}>
                 <span className="th-name">V{r + 1}</span>
                 {r === rows - 1 && r >= slay.rows && rows > 1 && (
                   <button className="x-btn th-remove" title={`Remove V${r + 1} (it is empty)`} aria-label={`Remove V${r + 1}`} onClick={() => setTrackCount(rows - 1)}>×</button>
@@ -582,7 +584,7 @@ export function Timeline() {
                 <div key={'band' + s.id} className={`play-band ${selected.has(s.id) ? 'sel' : ''} ${ghost(s.id) ? 'ghost' : ''}`}
                   style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: rowTop(0), height: tracksH(rows) }}
                   tabIndex={0} role="button" aria-pressed={selected.has(s.id)}
-                  aria-label={`${n} animation${n === 1 ? '' : 's'} together${kw ? ` (${kw})` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+                  aria-label={`Play together: ${n} animation${n === 1 ? '' : 's'}${kw ? ` (${kw})` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
                   onKeyDown={(e) => keySelect(e, s.id)}>
                   {kw && (sp.end - sp.start) * pps > 40 && <span className="band-label">{kw}</span>}
                 </div>
@@ -831,6 +833,8 @@ const ROLE: Record<ClipRole, { badge: string; word: string; title: string }> = {
   swap: { badge: '⇄', word: 'swap', title: 'Swap: one object goes as another comes in (like a cross dissolve)' },
   effect: { badge: 'fx', word: 'effect', title: 'Effect: changes an object on screen, from the keyframe at its start ◆ to the one at its end ◆. The line is its easing' },
 };
+
+const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 
 function animColor(a: Anim, anims?: { name: string; category: string }[]): string {
   if (a.cls === 'animate') return '#2f5c8c';
