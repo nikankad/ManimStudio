@@ -2,6 +2,8 @@
 
 How much of real manim code becomes an editable scene, measured by `scripts/import_fidelity.py` (manim 0.22.0, 15 fps, 192×108). Scenes manim itself can't render here (no LaTeX on this machine, OpenGL only, missing asset files) are skipped and left out of the numbers.
 
+Reading the numbers: a statement kept as a code step still runs exactly as written (the parity rows), but the editor can't show or change what it does: its objects aren't in the scene's object list, its animations have no keyframe rows. So the share of statements on the timeline is how much of a project is editable, and parity is how much of it is safe.
+
 ## Project-shaped files (scripts/fidelity_corpus)
 
 | | |
@@ -34,15 +36,15 @@ How much of real manim code becomes an editable scene, measured by `scripts/impo
 
 | | |
 |---|---|
-| Scenes | 393 (119 skipped: manim can't render them here) |
-| Imported | 274 of 274 |
-| construct() statements on the timeline (not code steps) | **77%** (1182 of 1534) |
-| Scenes with no code steps at all | 51% (139 of 274) |
+| Scenes | 383 (119 skipped: manim can't render them here) |
+| Imported | 264 of 264 |
+| construct() statements on the timeline (not code steps) | **78%** (1130 of 1443) |
+| Scenes with no code steps at all | 51% (135 of 264) |
 | Animations whose target is one of the scene's objects (keyframe rows) | 66% (117 of 177) |
-| Regenerated code: same length and plays as the original under manim | 100% (274 of 274; 0 failed to run) |
-| Regenerated code: same frame at the end of every play and wait, pixel for pixel | 100% (273 of 274; 270 of these scenes show something) |
-| Editor preview: same length as manim | 99% (271 of 274) |
-| Regenerated construct() is the same Python (AST) | 52% (143 of 274; the others: 79 split chains, 36 keywords, 16 split chains + keywords) |
+| Regenerated code: same length and plays as the original under manim | 100% (264 of 264; 0 failed to run) |
+| Regenerated code: same frame at the end of every play and wait, pixel for pixel | 100% (264 of 264; 260 of these scenes show something) |
+| Editor preview: same length as manim | 100% (264 of 264) |
+| Regenerated construct() is the same Python (AST) | 53% (141 of 264; the others: 76 split chains, 30 keywords, 17 split chains + keywords) |
 
 ## Keyframes (all imported scenes)
 
@@ -66,20 +68,20 @@ Why a keyframe is read-only:
 
 Statements of construct() kept as code steps, by kind:
 
-- 86× method call on an object, later in the scene (.set_color, .next_to, .move_to…)
-- 75× plain value (number, list, dict, lambda…)
+- 74× plain value (number, list, dict, lambda…)
+- 66× method call on an object, later in the scene (.set_color, .next_to, .move_to…)
 - 48× object built by a call the importer doesn't take (a method, a helper function, *args…)
-- 35× loop
 - 32× method call on an expression (VGroup(...).arrange(), group[0].shift()…)
+- 27× loop
 - 20× self.add(…) with computed arguments
 - 20× self.play(…) with computed arguments
-- 12× updater
-- 10× += / -=
+- 10× updater
 - 8× assignment to an attribute, item or several names
 - 7× function definition
 - 7× list comprehension
 - 4× Expr
 - 4× other assignment
+- 2× += / -=
 
 The importer's own notes:
 
@@ -99,9 +101,7 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 
 ## Failures
 
-- `table__TableExamples.py` TableExamples: preview: xml.etree.ElementTree.ParseError: no element found: line 1, column 0
-- `table__TableExamples.py` TableExamples: preview: xml.etree.ElementTree.ParseError: no element found: line 1, column 0
-- `table__BackgroundRectanglesExample.py` BackgroundRectanglesExample: preview: xml.etree.ElementTree.ParseError: no element found: line 1, column 0
+None.
 
 ## Per scene
 
@@ -172,17 +172,14 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 | arc__ArcPolygonExample2.py | ArcPolygonExample2 | 3/11 | 0/1 | yes | keywords |
 | boolean_ops__UnionExample.py | UnionExample | 7/7 | 0/0 | yes | yes |
 | boolean_ops__DifferenceExample.py | DifferenceExample | 7/7 | 0/0 | yes | keywords |
-| boolean_ops__IntersectionExample.py | IntersectionExample | 7/7 | 0/0 | yes | keywords |
-| boolean_ops__IntersectionExample.py | IntersectionExample | 7/7 | 0/0 | yes | keywords |
+| boolean_ops__IntersectionExample.py | IntersectionExample | 7/7 | 0/0 | yes | yes |
 | labeled__LabelExample.py | LabelExample | 3/3 | 0/0 | yes | yes |
 | labeled__LabeledPolygramExample.py | LabeledPolygramExample | 8/11 | 0/0 | yes | split chains |
-| line__LineExample.py | LineExample | 7/11 | 0/0 | yes | keywords |
-| line__LineExample.py | LineExample | 7/11 | 0/0 | yes | keywords |
+| line__LineExample.py | LineExample | 5/5 | 0/0 | yes | split chains + keywords |
 | line__DashedLineExample.py | DashedLineExample | 4/4 | 0/0 | yes | split chains |
 | line__TangentLineExample.py | TangentLineExample | 4/4 | 0/0 | yes | yes |
 | line__ElbowExample.py | ElbowExample | 5/5 | 0/0 | yes | split chains |
-| line__ArrowExample.py | ArrowExample | 5/19 | 0/0 | yes | yes |
-| line__ArrowExample.py | ArrowExample | 5/19 | 0/0 | yes | yes |
+| line__ArrowExample.py | ArrowExample | 10/11 | 0/0 | yes | split chains |
 | line__VectorExample.py | VectorExample | 4/4 | 0/0 | yes | yes |
 | line__DoubleArrowExample.py | DoubleArrowExample | 5/5 | 0/0 | yes | split chains |
 | line__DoubleArrowExample2.py | DoubleArrowExample2 | 5/8 | 0/0 | yes | yes |
@@ -207,7 +204,7 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 | shape_matchers__ExampleBackgroundRectangle.py | ExampleBackgroundRectangle | 12/12 | 2/2 | yes | split chains |
 | shape_matchers__ExampleCross.py | ExampleCross | 2/2 | 0/0 | yes | yes |
 | tips__ArrowTipsShowcase.py | ArrowTipsShowcase | 0/5 | 0/0 | yes | yes |
-| graph__ImportNetworkxGraph.py | ImportNetworkxGraph | 2/4 | 0/2 | no ([3.0, 3.0], 21.6% px) | yes |
+| graph__ImportNetworkxGraph.py | ImportNetworkxGraph | 2/4 | 0/2 | yes | yes |
 | graph__ChangeGraphLayout.py | ChangeGraphLayout | 4/4 | 2/2 | yes | keywords |
 | graph__MovingVertices.py | MovingVertices | 6/8 | 1/10 | yes | keywords |
 | graph__GraphAutoPosition.py | GraphAutoPosition | 3/8 | 0/0 | yes | split chains |
@@ -227,8 +224,6 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 | coordinate_systems__GetRiemannRectanglesExample.py | GetRiemannRectanglesExample | 7/7 | 0/0 | yes | keywords |
 | coordinate_systems__AntiderivativeExample.py | AntiderivativeExample | 4/4 | 0/0 | yes | keywords |
 | coordinate_systems__AxesWithDifferentTips.py | AxesWithDifferentTips | 2/2 | 0/0 | yes | yes |
-| coordinate_systems__GetAxisLabelsExample.py | GetAxisLabelsExample | 4/4 | 0/0 | yes | keywords |
-| coordinate_systems__GetAxisLabelsExample.py | GetAxisLabelsExample | 4/4 | 0/0 | yes | keywords |
 | coordinate_systems__NumberPlaneExample.py | NumberPlaneExample | 2/2 | 0/0 | yes | yes |
 | coordinate_systems__NumberPlaneScaled.py | NumberPlaneScaled | 4/4 | 0/0 | yes | split chains |
 | functions__PlotParametricFunction.py | PlotParametricFunction | 1/2 | 0/0 | yes | split chains |
@@ -284,8 +279,6 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 | brace__BraceTextExample.py | BraceTextExample | 10/10 | 0/0 | yes | split chains + keywords |
 | brace__BraceBPExample.py | BraceBPExample | 4/6 | 1/2 | yes | keywords |
 | brace__ArcBraceExample.py | ArcBraceExample | 13/14 | 0/0 | yes | split chains + keywords |
-| table__TableExamples.py | TableExamples | 9/9 | 0/0 | yes | split chains |
-| table__TableExamples.py | TableExamples | 9/9 | 0/0 | yes | split chains |
 | table__BackgroundRectanglesExample.py | BackgroundRectanglesExample | 8/8 | 0/0 | yes | split chains |
 | table__GetHorizontalLinesExample.py | GetHorizontalLinesExample | 2/3 | 0/0 | yes | yes |
 | table__GetVerticalLinesExample.py | GetVerticalLinesExample | 2/3 | 0/0 | yes | yes |
@@ -360,15 +353,12 @@ animate 80, Write 39, FadeIn 26, Create 24, FadeOut 13, LaggedStartMap 8, Indica
 | vectorized_mobject__AddIterableToVGroupExample.py | AddIterableToVGroupExample | 3/3 | 0/0 | yes | yes |
 | vectorized_mobject__LineGradientExample.py | LineGradientExample | 3/4 | 0/0 | yes | yes |
 | vectorized_mobject__DashedVMobjectExample.py | DashedVMobjectExample | 8/14 | 0/0 | yes | split chains + keywords |
-| value_tracker__ValueTrackerExample.py | ValueTrackerExample | 5/6 | 0/0 | yes | split chains |
-| value_tracker__ValueTrackerExample.py | ValueTrackerExample | 5/6 | 0/0 | yes | split chains |
 | value_tracker__ComplexValueTrackerExample.py | ComplexValueTrackerExample | 6/7 | 4/4 | yes | split chains |
 | vector_field__ScaleVectorFieldFunction.py | ScaleVectorFieldFunction | 5/7 | 1/1 | yes | yes |
 | vector_field__Nudging.py | Nudging | 6/12 | 0/0 | yes | split chains |
 | vector_field__BasicUsage.py | BasicUsage | 0/2 | 0/0 | yes | yes |
 | vector_field__SizingAndSpacing.py | SizingAndSpacing | 6/8 | 1/1 | yes | yes |
 | vector_field__Coloring.py | Coloring | 4/6 | 0/0 | yes | split chains |
-| vector_field__BasicUsage.py | BasicUsage | 0/2 | 0/0 | yes | yes |
 | vector_field__StreamLineCreation.py | StreamLineCreation | 2/4 | 0/0 | yes | yes |
 | vector_field__ContinuousMotion.py | ContinuousMotion | 3/5 | 0/0 | yes | yes |
 | vector_field__EndAnimation.py | EndAnimation | 3/6 | 0/0 | yes | yes |

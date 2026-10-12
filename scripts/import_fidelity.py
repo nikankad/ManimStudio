@@ -377,7 +377,11 @@ def report(results: list[dict], sources: dict) -> str:
              "How much of real manim code becomes an editable scene, measured by `scripts/import_fidelity.py` "
              f"(manim {__import__('manim').__version__}, {FPS} fps, {SIZE[0]}×{SIZE[1]}). "
              "Scenes manim itself can't render here (no LaTeX on this machine, OpenGL only, missing asset files) are "
-             "skipped and left out of the numbers.", ""]
+             "skipped and left out of the numbers.", "",
+             "Reading the numbers: a statement kept as a code step still runs exactly as written (the parity rows), "
+             "but the editor can't show or change what it does: its objects aren't in the scene's object list, its "
+             "animations have no keyframe rows. So the share of statements on the timeline is how much of a project is "
+             "editable, and parity is how much of it is safe.", ""]
 
     def section(title, rs):
         rs_ran = [r for r in rs if "skip" not in r]
