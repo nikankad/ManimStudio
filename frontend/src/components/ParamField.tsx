@@ -21,6 +21,7 @@ export function Field({ value, onChange, placeholder, className, list, multiline
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
+  const cancelled = useRef(false);
   const props = {
     value: local,
     placeholder,
@@ -30,7 +31,21 @@ export function Field({ value, onChange, placeholder, className, list, multiline
       setLocal(e.target.value);
       onChange(e.target.value);
     },
-    onBlur: () => onBlur?.(local),
+    onBlur: () => {
+      if (!cancelled.current) onBlur?.(local);
+      cancelled.current = false;
+    },
+    // a field that takes its value when left (a name): Enter takes it now, Esc puts the old one back
+    onKeyDown: onBlur && !multiline ? (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (e.key === 'Enter') e.currentTarget.blur();
+      else if (e.key === 'Escape') {
+        cancelled.current = true;
+        setLocal(value);
+        e.currentTarget.blur();
+      } else return;
+      e.preventDefault();
+      e.stopPropagation();
+    } : undefined,
     autoFocus,
     'aria-label': ariaLabel,
     onFocus: autoFocus ? (e: { currentTarget: { select: () => void } }) => e.currentTarget.select() : undefined,

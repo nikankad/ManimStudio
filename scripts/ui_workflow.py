@@ -816,7 +816,37 @@ def timeline_fixes(b):
         assert "UnboundLocalError" not in pg.content()
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def editing_fixes(b):
+    """Regressions: Enter renames an object (Esc puts the old name back); playback runs on (frame by frame) when the
+    preview video can't play in the window."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        add(pg, "Circle")
+        pg.get_by_role("button", name="Scene", exact=True).first.click()
+        pg.locator(".outline-row").filter(has_text="circle").first.click()
+        name = pg.get_by_label("Object name")
+        name.fill("hoop")
+        name.press("Escape")
+        assert name.input_value() == "circle"
+        name.fill("ring")
+        name.press("Enter")
+        pg.wait_for_timeout(500)
+        assert "ring" in pg.locator(".tl-lanes .clip.anim").first.get_attribute("aria-label"), "Enter renames"
+        if pg.evaluate("document.createElement('video').canPlayType('video/mp4; codecs=\"avc1.42E01E\"')") == "":
+            pg.get_by_role("button", name="Objects", exact=True).first.click()
+            add(pg, "Square")
+            pg.wait_for_function("document.querySelector('video')?.getAttribute('src')", timeout=120000)
+            pg.keyboard.press("Home")
+            pg.locator(".tl-lanes").click(position={"x": 5, "y": 200})
+            pg.keyboard.press("Space")
+            pg.wait_for_timeout(1200)
+            assert pg.locator(".tl-header .timecode").inner_text() >= "00:00:00:30", "playback moves on"
+            assert "can’t play" in " ".join(pg.locator(".toast").all_inner_texts())
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

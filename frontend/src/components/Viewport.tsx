@@ -65,6 +65,9 @@ const ENTRY_HINT: Record<Tool, string[]> = {
   circle: ['x, y of center', 'radius'], rect: ['x, y of a corner', 'width, height'], polygon: ['x, y of next vertex'],
 };
 
+/** The preview video that failed to play (told once). */
+let unplayable: string | null | undefined;
+
 export function Viewport() {
   const doc = useStore((s) => s.doc);
   const frame = useStore((s) => s.frame);
@@ -140,7 +143,13 @@ export function Viewport() {
     if (!v || !showVideo) return;
     if (playing) {
       if (Math.abs(v.currentTime - getState().time) > 0.25) v.currentTime = getState().time;
-      void v.play();
+      v.play().catch((err: DOMException) => {
+        // the video can't play here (a codec the window lacks, a file gone): play frame by frame instead
+        if (err.name === 'AbortError' || !getState().playing) return;
+        if (unplayable !== video?.url) toast('The preview video can’t play here, so playback shows frames as they are drawn');
+        unplayable = video?.url;
+        setState({ showVideo: false });
+      });
       let raf = 0;
       const loop = () => {
         if (!getState().playing) return;
