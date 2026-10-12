@@ -76,7 +76,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   if the app closes or crashes first, Home lists it under **Unsaved work** with *Restore* and *Discard*, and opening
   that project's file offers to restore the changes. Saving, or discarding the changes, removes the copy. Starting
   or opening another project over unsaved changes asks *Save*, *Don't save* or *Cancel*, and closing the app's
-  window with unsaved changes asks whether to close anyway. A file that isn't a project (empty, damaged, or some
+  window with unsaved changes asks whether to close anyway. Dropping a manim `.py` file on the window opens it (the native app opens
+  project files too), and a dropped file never navigates the window away. A file that isn't a project (empty, damaged, or some
   other kind) is refused with a sentence saying so; launched with one, the editor starts at Home and says why.
 
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline. Every

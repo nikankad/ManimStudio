@@ -342,6 +342,32 @@ def failing_backend(b):
             ctx.close()
 
 
+def dropped_files(b):
+    """A file dropped on the window doesn't navigate away: a .py opens as a project, anything else is explained."""
+    drop = """([name, text, type]) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([text], name, {type}));
+      const over = new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer: dt});
+      document.body.dispatchEvent(over);
+      const ev = new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: dt});
+      document.body.dispatchEvent(ev);
+      return [over.defaultPrevented, ev.defaultPrevented];
+    }"""
+    code = "from manim import *\n\nclass Dropped(Scene):\n    def construct(self):\n        c = Circle()\n        self.play(Create(c))\n"
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url)
+        assert pg.evaluate(drop, ["photo.png", "x", "image/png"]) == [True, True], "dragover and drop are taken over"
+        pg.wait_for_selector(".toast")
+        assert "Use Open" in pg.locator(".toast").inner_text()
+        assert pg.locator(".home").count() == 1
+        assert pg.evaluate(drop, ["scene.py", code, "text/x-python"]) == [True, True]
+        pg.wait_for_selector(".toolbar")
+        pg.wait_for_timeout(1500)
+        assert "Dropped" in pg.locator(".monitor-title").first.inner_text() or "Dropped" in pg.content()
+        assert pg.title().startswith("•"), pg.title()
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -465,7 +491,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, failing_backend, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

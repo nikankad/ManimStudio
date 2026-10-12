@@ -102,6 +102,25 @@ export async function openProject() {
   if (path) await openPath(path);
 }
 
+/**
+ * A file dropped on the window. Without this the webview navigates to it and the editor is gone. The native app
+ * hands over the file's path (pywebviewFullPath); a browser doesn't, so a .py is read and imported, and a project
+ * file is pointed at Open….
+ */
+export async function openDropped(file: File) {
+  const full = (file as File & { pywebviewFullPath?: string }).pywebviewFullPath;
+  if (full) return openPath(full);
+  if (/\.py$/i.test(file.name)) {
+    if (!(await discardOk())) return;
+    const res = await api.importCode(await file.text(), null);
+    if (!res.ok) return toast(`${file.name}: ${res.error}`);
+    loadDoc(res.doc, null);
+    setState({ centerTab: 'code', dirty: true });
+    return toast(`Opened ${file.name} as a new project`);
+  }
+  toast(`Use Open… to choose ${file.name}: a browser doesn’t tell the page where a dropped file is`);
+}
+
 /** Open a manim .py file as a new project: its code becomes the timeline. */
 export async function importManimFile() {
   const path = await askPath('open', '', [PYTHON_FILES], 'manim .py file path:');
@@ -564,7 +583,21 @@ export function useShortcuts() {
       else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') toggleDisabled(s.selection.ids);
       else if (e.key === 'Escape') setState({ selection: null, panel: null });
     };
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    const onDragOver = (e: DragEvent) => hasFiles(e) && e.preventDefault(); // (library drags carry no files: untouched)
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      const file = e.dataTransfer?.files[0];
+      if (file) void openDropped(file).catch((err) => toast(String(err)));
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
   }, []);
 }
