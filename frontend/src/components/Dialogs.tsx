@@ -189,7 +189,7 @@ export function GraphBuilder() {
             <>
               {breaks.length === 0 && <p className="muted small">None found in the domain.</p>}
               <div className="chips">
-                {breaks.map((b, i) => <span key={i} className="chip value-chip mono">x = {Math.round(b * 10000) / 10000}<button className="x-btn" onClick={() => setDisc(breaks.filter((_, k) => k !== i))}>×</button></span>)}
+                {breaks.map((b, i) => <span key={i} className="chip value-chip mono">x = {Math.round(b * 10000) / 10000}<button className="x-btn" title="Remove" aria-label="Remove" onClick={() => setDisc(breaks.filter((_, k) => k !== i))}>×</button></span>)}
               </div>
               {breaks.length > 0 && <p className="muted small">The curve is not drawn across these points (manim <code>discontinuities</code>, gap {analysis.gap ?? 0.01} on each side, chosen to keep asymptote branches inside the y range).</p>}
               {disc && <button className="ghost small" onClick={() => setDisc(null)}>Use detected</button>}

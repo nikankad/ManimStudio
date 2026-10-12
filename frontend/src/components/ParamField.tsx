@@ -515,7 +515,7 @@ function ColorMapField({ value, onChange }: { value: string; onChange: (v: strin
         <div key={i} className="row list-row">
           <Field value={pyString(k) ?? k} placeholder="text" onChange={(t) => write(items.map((x, j) => (j === i ? [pyQuote(t), x[1]] : x)))} />
           <ColorField value={v} onChange={(c) => write(items.map((x, j) => (j === i ? [x[0], c || 'WHITE'] : x)))} />
-          <button className="x-btn" onClick={() => write(items.filter((_, j) => j !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, j) => j !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, ['"x"', 'YELLOW']])}>+ color a substring</button>
@@ -606,7 +606,7 @@ function ValuesField({ value, onChange, star, def }: { value: string; onChange: 
         {items.map((it, i) => (
           <span key={i} className="chip value-chip">
             <Field value={it} className="mono" onChange={(v) => write(items.map((x, k) => (k === i ? v || '0' : x)))} />
-            <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+            <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
           </span>
         ))}
         <button className="ghost small" onClick={() => write([...items, fresh])}>+ add</button>
@@ -630,7 +630,7 @@ function PairsField({ value, onChange, star, vertices }: { value: string; onChan
       {items.map(([a, b], i) => (
         <div key={i} className="row list-row">
           {pick(a, (v) => end(i, 0, v))}<span className="muted">—</span>{pick(b, (v) => end(i, 1, v))}
-          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, [vertices[0] ?? '1', vertices[1] ?? vertices[0] ?? '2']])}>+ edge</button>
@@ -666,7 +666,7 @@ function DictsField({ value, onChange, hint }: { value: string; onChange: (v: st
         <div key={i} className="row list-row">
           <span className="muted small idx">{i}</span>
           <DictField value={d === '{}' ? '' : d} hint={hint} def="" onChange={(v) => write(items.map((x, k) => (k === i ? v || '{}' : x)))} />
-          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, '{}'])}>+ add</button>

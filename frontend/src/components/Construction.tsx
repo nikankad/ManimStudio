@@ -366,7 +366,7 @@ function GraphFields({ obj, link }: { obj: SceneObject; link: Extract<Link, { ki
       <div className="fx-row wide-row"><span>breaks at</span>
         <div className="chips">
           {disc.map((d, i) => (
-            <span key={i} className="chip value-chip mono">{d}<button className="x-btn" onClick={() => set((x) => void (x.discontinuities = disc.filter((_, k) => k !== i)), 'disc')}>×</button></span>
+            <span key={i} className="chip value-chip mono">{d}<button className="x-btn" title="Remove" aria-label="Remove" onClick={() => set((x) => void (x.discontinuities = disc.filter((_, k) => k !== i)), 'disc')}>×</button></span>
           ))}
           {analysis?.ok && analysis.discontinuities.join() !== disc.join() && (
             <button className="ghost small" title="Use the jumps found by sampling the function" onClick={() => set((x) => {
