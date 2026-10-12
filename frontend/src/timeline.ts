@@ -83,6 +83,20 @@ export function stepEstimate(s: Step): number {
 
 // ---------------------------------------------------------------------------- layout
 
+// A measurement holds only for the steps that haven't changed since it was made. Until manim measures again, the
+// others are estimated from their arguments: a trimmed clip follows the pointer, a moved one shows where it went.
+const signature = (s: Step) => JSON.stringify(s, (k, v) => (k === 'comment' || k === 'label' ? undefined : v));
+const measuredSigs = new WeakMap<RunResult, Map<string, string>>();
+
+/** Whether manim's measurement still describes this step (it is unchanged since it was measured). */
+export function isMeasured(s: Step, measured: RunResult | null): boolean {
+  if (!measured) return false;
+  if (!measured.doc) return true;
+  let sigs = measuredSigs.get(measured);
+  if (!sigs) measuredSigs.set(measured, (sigs = new Map(measured.doc.timeline.map((x) => [x.id, signature(x)]))));
+  return sigs.get(s.id) === signature(s);
+}
+
 export function layout(doc: SceneDoc, measured: RunResult | null): Layout {
   const ms = new Map((measured?.steps ?? []).map((x) => [x.id, x]));
   const ma = new Map((measured?.anims ?? []).map((x) => [x.id, x]));
@@ -91,7 +105,7 @@ export function layout(doc: SceneDoc, measured: RunResult | null): Layout {
   let t = 0;
   let rows = 0;
   for (const s of doc.timeline ?? []) {
-    const m = s.disabled ? undefined : ms.get(s.id);
+    const m = s.disabled || !isMeasured(s, measured) ? undefined : ms.get(s.id);
     const dur = s.disabled ? 0 : m ? Math.max(0, m.end - m.start) : stepEstimate(s);
     steps.set(s.id, { start: t, end: t + dur, estimated: !m && !s.disabled });
     if (s.kind === 'play') {
@@ -360,6 +374,14 @@ export function ensureDefined(d: SceneDoc, stepId: string) {
   }
 }
 
+/**
+ * After steps move, every step must still find its objects: objects created right after a moved step move with it,
+ * so a step that stayed where it was may now come before an object it uses.
+ */
+function ensureAllDefined(d: SceneDoc) {
+  for (const s of [...d.timeline]) ensureDefined(d, s.id);
+}
+
 // ---------------------------------------------------------------------------- moving and trimming
 
 /** Move (or copy) top-level animations to time `t`, at `row` of the self.play there. Returns the ids now placed. */
@@ -388,6 +410,7 @@ export function moveAnims(d: SceneDoc, measured: RunResult | null, ids: string[]
   refs.forEach((r, i) => lay0.anims.has(r.anim.id) && lay.anims.set(moving[i].id, lay0.anims.get(r.anim.id)!));
   const playId = placeAnims(d, lay, landing(d, lay, t, true), moving, row);
   ensureDefined(d, playId);
+  ensureAllDefined(d);
   return moving.map((a) => a.id);
 }
 
@@ -411,7 +434,7 @@ export function moveSteps(d: SceneDoc, measured: RunResult | null, ids: string[]
   }
   const lay = layout(d, measured);
   placeSteps(d, lay, landing(d, lay, t, false), moving, length);
-  for (const s of moving) ensureDefined(d, s.id);
+  ensureAllDefined(d);
   return moving.map((s) => s.id);
 }
 

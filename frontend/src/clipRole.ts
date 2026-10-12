@@ -4,7 +4,7 @@
 // Read from what manim reported was on screen before and after each self.play (RunResult.steps[].before / .after);
 // until it has, guessed from the class name.
 
-import { targetsOf, walk } from './timeline';
+import { isMeasured, targetsOf, walk } from './timeline';
 import type { Anim, RunResult, SceneDoc } from './types';
 
 export type ClipRole = 'in' | 'out' | 'swap' | 'effect';
@@ -26,7 +26,7 @@ export function clipRoles(doc: SceneDoc, measured: RunResult | null): Map<string
   const shown = new Map((measured?.steps ?? []).filter((s) => s.after).map((s) => [s.id, s]));
   for (const step of doc.timeline) {
     if (step.kind !== 'play') continue;
-    const m = shown.get(step.id);
+    const m = isMeasured(step, measured) ? shown.get(step.id) : undefined;
     for (const a of walk(step.anims)) {
       if (a.anims?.length) continue; // a composition: its animations have their own roles
       roles.set(a.id, m ? measuredRole(a, m.before!, m.after!, idOf) : guessed(a));

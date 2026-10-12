@@ -170,10 +170,13 @@ export function Timeline() {
     const r = laneRef.current!.getBoundingClientRect();
     return Math.max(0, v0 + (clientX - r.left) / pps);
   };
+  /** The pointer's height in the tracks (they scroll with the timeline, so their box already includes the scroll). */
+  const laneY = (clientY: number) => clientY - laneRef.current!.getBoundingClientRect().top;
+  /** Whether the pointer is on the ruler, which stays at the top of the timeline while the tracks scroll under it. */
+  const onRuler = (clientY: number) => clientY - bodyRef.current!.getBoundingClientRect().top < RULER;
   /** Track row under the pointer: -1 for the strip of other steps, 0… for V1… */
   const rowAt = (clientY: number) => {
-    const r = laneRef.current!.getBoundingClientRect();
-    const y = clientY - r.top + bodyRef.current!.scrollTop - RULER;
+    const y = laneY(clientY) - RULER;
     if (stripH && y < stripH) return -1;
     let row = 0;
     for (let top = stripH + rowH(0); top <= y; top += rowH(row)) row++;
@@ -226,8 +229,7 @@ export function Timeline() {
       const d = dragRef.current!;
       if (d.mode === 'scrub') return setState({ time: frameSnap(timeAt(e.clientX)), showVideo: false });
       if (d.mode === 'marquee') {
-        const r = laneRef.current!.getBoundingClientRect();
-        const nx = e.clientX - r.left, ny = e.clientY - r.top + bodyRef.current!.scrollTop;
+        const nx = e.clientX - laneRef.current!.getBoundingClientRect().left, ny = laneY(e.clientY);
         const t0 = v0 + Math.min(d.x0, nx) / pps, t1 = v0 + Math.max(d.x0, nx) / pps;
         const y0 = Math.min(d.y0, ny), y1 = Math.max(d.y0, ny);
         const hit: string[] = [];
@@ -322,8 +324,8 @@ export function Timeline() {
     if (e.button !== 0) return;
     setMenu(null);
     const r = laneRef.current!.getBoundingClientRect();
-    const y = e.clientY - r.top + bodyRef.current!.scrollTop;
-    if (y < RULER) {
+    const y = laneY(e.clientY);
+    if (onRuler(e.clientY)) {
       setPlaying(false);
       setState({ time: frameSnap(timeAt(e.clientX)), showVideo: false });
       return setDrag({ mode: 'scrub' });
@@ -344,9 +346,7 @@ export function Timeline() {
   };
   /** Right-click on the shading of an animation group: the same menu as on a clip, for the whole group. */
   const onLaneMenu = (e: React.MouseEvent) => {
-    const r = laneRef.current!.getBoundingClientRect();
-    const y = e.clientY - r.top + bodyRef.current!.scrollTop;
-    const band = y >= rowTop(0) ? bandAt(timeAt(e.clientX)) : undefined;
+    const band = !onRuler(e.clientY) && laneY(e.clientY) >= rowTop(0) ? bandAt(timeAt(e.clientX)) : undefined;
     if (band) openMenu(e, band.id);
     else e.preventDefault();
   };

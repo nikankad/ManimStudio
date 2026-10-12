@@ -819,9 +819,11 @@ function KeyframesRow({ anim }: { anim: Anim }) {
       if (sp) keys.push({ t: sp.start, id: a.id }, { t: sp.end, id: a.id });
     }
   }
-  const times = [...new Set(keys.map((k) => Math.round(k.t * 1e4) / 1e4))].sort((a, b) => a - b);
-  const prev = [...times].reverse().find((t) => t < time - EPS);
-  const next = times.find((t) => t > time + EPS);
+  // in frames, as the playhead moves: a keyframe between two frames is where the playhead lands for it
+  const times = [...new Set(keys.map((k) => frameSnap(k.t)))].sort((a, b) => a - b);
+  const half = 0.5 / fps();
+  const prev = [...times].reverse().find((t) => t < time - half);
+  const next = times.find((t) => t > time + half);
   const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
   const end = Math.max(lay.end, EPS);
   const who = [...names].join(', ');

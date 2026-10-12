@@ -252,6 +252,7 @@ export interface RunResult {
   elapsed_ms: number;
   values: Record<string, number>; // ValueTracker values at this time
   diagnostics: Diagnostic[];
+  doc?: SceneDoc; // the document this measured (set by the editor): its timings hold only for steps unchanged since
 }
 
 export interface Job {

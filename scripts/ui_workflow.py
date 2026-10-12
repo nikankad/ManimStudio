@@ -730,7 +730,93 @@ def add_tracks(b):
         assert heads() == 2, "remembered"
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def timeline_fixes(b):
+    """Regressions: a scrolled timeline (marquee under the pointer, ruler click, drag between tracks); a trim and a move
+    show at once (not after manim measures again); ▶ steps past a keyframe between two frames; moving a group past
+    an object created after it keeps the code runnable."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        for cls in ["Circle", "Square", "Triangle"]:
+            pg.keyboard.press("Home")
+            add(pg, cls)  # one group, V1–V3
+        for _ in range(6):
+            pg.get_by_role("button", name="+ Add track").click()
+        pg.wait_for_selector(".tl-lanes .clip.anim:not(.estimated)", timeout=30000)
+        body = pg.locator(".tl-body")
+        body.evaluate("e => e.scrollTop = 92")
+        pg.wait_for_timeout(200)
+        heads = pg.locator(".track-head:not(.steps-head)")
+        lanes = pg.locator(".tl-lanes").bounding_box()
+        x0, y0 = lanes["x"] + 600, heads.nth(4).bounding_box()["y"] + 10
+        pg.mouse.move(x0, y0)
+        pg.mouse.down()
+        pg.mouse.move(x0 + 60, y0 + 30, steps=4)
+        mq = pg.locator(".marquee").bounding_box()
+        pg.mouse.up()
+        assert abs(mq["y"] - y0) < 2, ("the marquee starts under the pointer", y0, mq)
+        rb = pg.locator(".ruler").bounding_box()
+        pg.mouse.click(rb["x"] + 400, rb["y"] + rb["height"] / 2)
+        pg.wait_for_timeout(200)
+        assert pg.locator(".tl-header .timecode").inner_text() != "00:00:01:00", "a click on the ruler moves the playhead"
+        tri = pg.locator(".tl-lanes .clip.anim", has_text="triangle")
+        sq = pg.locator(".tl-lanes .clip.anim", has_text="square")
+        tb, sb = tri.bounding_box(), sq.bounding_box()
+        pg.mouse.move(tb["x"] + 20, tb["y"] + 20)
+        pg.mouse.down()
+        pg.mouse.move(tb["x"] + 22, sb["y"] + 20, steps=6)
+        pg.mouse.up()
+        pg.wait_for_timeout(400)
+        assert abs(tri.bounding_box()["y"] - sb["y"]) < 2, "the triangle moved up a track"
+        pg.keyboard.press("Control+z")
+
+        # a trim shows while dragging, before manim measures it
+        body.evaluate("e => e.scrollTop = 0")
+        cb = pg.locator(".tl-lanes .clip.anim", has_text="circle").bounding_box()
+        pg.mouse.move(cb["x"] + cb["width"] - 3, cb["y"] + cb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(cb["x"] + cb["width"] + 100, cb["y"] + cb["height"] / 2, steps=8)
+        grown = pg.locator(".tl-lanes .clip.anim", has_text="circle").bounding_box()["width"]
+        pg.mouse.up()
+        assert grown > cb["width"] + 80, ("the trim shows while dragging", cb["width"], grown)
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+
+        # ▶ steps through keyframes that fall between frames
+        pg.locator(".tl-lanes .clip.anim", has_text="circle").click()
+        row = pg.locator(".fx-row", has_text="Duration").first
+        row.locator(".scrub").first.click()
+        row.locator("input.scrub-edit").fill("1.01")
+        row.locator("input.scrub-edit").press("Enter")
+        pg.wait_for_timeout(500)
+        pg.keyboard.press("Home")
+        nxt = pg.get_by_role("button", name="Next keyframe of circle")
+        nxt.click()
+        first = pg.locator(".tl-header .timecode").inner_text()
+        assert nxt.is_disabled() or (nxt.click() or pg.locator(".tl-header .timecode").inner_text() != first), "▶ doesn't get stuck"
+        assert not pg.errors, pg.errors
+        ctx.close()
+
+    code = ("from manim import *\n\nclass Anchored(Scene):\n    def construct(self):\n        c = Circle()\n"
+            "        self.play(Create(c))\n        s = Square().shift(RIGHT * 2)\n        self.play(Create(s))\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "anchored.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_selector(".tl-lanes .clip.anim:not(.estimated)", timeout=30000)
+        circle = pg.locator(".tl-lanes .clip.anim").first  # Create(c), the first group
+        cb = circle.bounding_box()
+        pg.mouse.click(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] + 30)  # the group's shading
+        pg.mouse.move(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(cb["x"] + cb["width"] / 2 + 3 * cb["width"], cb["y"] + cb["height"] / 2, steps=10)
+        pg.mouse.up()
+        pg.wait_for_timeout(4000)
+        assert pg.locator(".tl-lanes .clip.err").count() == 0, "s is created before Create(s) runs"
+        assert "UnboundLocalError" not in pg.content()
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

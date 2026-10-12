@@ -310,7 +310,7 @@ async function runTimeline() {
   const doc = state.doc;
   try {
     const timeline = await api.run(doc, null, false);
-    if (state.doc === doc) setState({ timeline });
+    if (state.doc === doc) setState({ timeline: { ...timeline, doc } });
   } catch (e) {
     toast(String(e));
   }
