@@ -178,10 +178,11 @@ const TOPICS: Topic[] = [
       <>
         <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and the statements of the scene’s <code>construct()</code> that animate them, shown as clips on a timeline. The <b>Code</b> tab shows the same scene as manim code; edit either one and the other follows, or paste a whole manim file to start from it.</p>
         <ol>
-          <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
+          <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b> (or double-click it; press <kbd>/</kbd> to search, then <kbd>Enter</kbd> adds the top result).</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
           <li>Select an object to edit it in the <b>Inspector</b>; select two to connect them.</li>
-          <li>Press <kbd>Space</kbd> to play, <kbd>{keys('⌘S')}</kbd> to save, and <b>Export video</b> to render with manim.</li>
+          <li>Press <kbd>Space</kbd> to play, <kbd>{keys('⌘S')}</kbd> to save, and <b>Export video</b> to render with manim; when it finishes, <b>Show in folder</b> and <b>Play</b> open the video.</li>
+          <li>Unsaved changes are kept as you work. If the app closes or crashes, <b>Home</b> lists them under <b>Unsaved work</b> and opening that project offers to restore them.</li>
         </ol>
       </>
     ),
@@ -373,6 +374,8 @@ const TOPICS: Topic[] = [
         <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source, or <b>Uncouple</b> / <b>Forget</b> the relationship.</li>
         <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or uncouple it during the clip (+ Uncouple at playhead / + Couple at playhead).</li>
         <li><b>“Needs LaTeX”</b> on an equation: install LaTeX (MiKTeX on Windows, MacTeX or BasicTeX on macOS, TeX Live on Linux), then click <b>Check again</b> in the scene panel; no restart needed. Until then, numbers and simple labels are drawn with plain text.</li>
+        <li><b>The app closed before I saved</b>: open <b>Home</b> (the toolbar’s ⌂ Home button) and use <b>Restore</b> under <b>Unsaved work</b>.</li>
+        <li><b>Some toolbar switches are missing</b>: in a narrow window <b>Snap</b>, <b>Auto-intro</b>, <b>Record</b> and <b>Auto-render</b> move into the <b>Options</b> menu.</li>
         <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
       </ul>
     ),
