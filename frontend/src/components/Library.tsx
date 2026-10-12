@@ -140,7 +140,16 @@ function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate
     <div
       className={`lib-item ${entry.kind}`}
       draggable
+      tabIndex={0}
+      role="button"
       title={entry.doc || entry.name}
+      onKeyDown={(ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return; // add it, as a double-click does (Space isn't "play" here)
+        ev.preventDefault();
+        ev.stopPropagation();
+        leaveSearch();
+        onActivate(entry);
+      }}
       onDragStart={(ev) => {
         leaveSearch();
         ev.dataTransfer.setData(DND_TYPE, JSON.stringify({ kind: entry.kind, name: entry.name } satisfies DragPayload));
@@ -181,7 +190,17 @@ function Outline() {
           <div
             key={o.id}
             className={`outline-row ${selectedObjectIds(selection).includes(o.id) ? 'sel' : ''} ${error?.id === o.id ? 'err' : ''}`}
+            tabIndex={0}
+            role="button"
+            aria-pressed={selectedObjectIds(selection).includes(o.id)}
             onClick={(e) => (e.shiftKey ? toggleObjectSelection(o.id) : selectObjects([o.id]))}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return; // select it (Space isn't "play" here)
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.shiftKey) toggleObjectSelection(o.id);
+              else selectObjects([o.id]);
+            }}
           >
             <span className={`dot ${info?.visible ? 'on' : ''}`} title={info?.visible ? 'on screen now' : 'not on screen now'} />
             <span className="mono">{o.name}</span>
@@ -214,7 +233,7 @@ function Relationships() {
   return (
     <div className="scroll relationships">
       <div className="rel-bar">
-        <select className="field" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+        <select className="field" aria-label="Show" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="all">All ({linked.length})</option>
           <option value="coupled">Coupled</option>
           <option value="uncoupled">Paused</option>

@@ -111,7 +111,7 @@ function SourcePicker({ value, types, required, self, onChange }: { value: strin
   const options = doc.objects.filter((o) => o.id !== self && (!types || types.includes(geoType(o, doc))) && o.ctor !== 'ValueTracker');
   const missing = value && !doc.objects.some((o) => o.id === value);
   return (
-    <select className={`field mono ${missing ? 'bad' : ''}`} value={missing ? '__missing' : value ?? ''} onChange={(e) => onChange(e.target.value)}>
+    <select className={`field mono ${missing ? 'bad' : ''}`} aria-label="Source object" value={missing ? '__missing' : value ?? ''} onChange={(e) => onChange(e.target.value)}>
       {(!required || !value) && <option value="">{required ? '— choose —' : '— none —'}</option>}
       {missing && <option value="__missing">(deleted object)</option>}
       {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -175,7 +175,7 @@ export function CoupleSection({ obj }: { obj: SceneObject }) {
       <h4>Relationship <span className="tag">independent</span></h4>
       <div className="fx-row wide-row">
         <span>couple to</span>
-        <select className="field mono" value={src ? to : ''} onChange={(e) => setTo(e.target.value)}>
+        <select className="field mono" aria-label="Couple to" value={src ? to : ''} onChange={(e) => setTo(e.target.value)}>
           <option value="">— choose an object —</option>
           {candidates.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
@@ -247,7 +247,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {link.kind === 'measure' && (
         <div className="fx-row">
           <span>shows</span>
-          <select className="field" value={link.what} onChange={(e) => set((x) => void (x.what = e.target.value), 'what')}>
+          <select className="field" aria-label="Shows" value={link.what} onChange={(e) => set((x) => void (x.what = e.target.value), 'what')}>
             {['length', 'angle', 'slope', 'integral', 'value'].map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
         </div>
@@ -297,7 +297,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {link.kind === 'riemann' && (
         <div className="fx-row">
           <span>sample</span>
-          <select className="field" value={link.sample ?? 'left'} onChange={(e) => set((x) => void (x.sample = e.target.value), 'sample')}>
+          <select className="field" aria-label="Sample" value={link.sample ?? 'left'} onChange={(e) => set((x) => void (x.sample = e.target.value), 'sample')}>
             {['left', 'right', 'center'].map((w) => <option key={w}>{w}</option>)}
           </select>
         </div>
@@ -307,7 +307,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       )}
       {(link.kind === 'brace') && (
         <div className="fx-row"><span>direction</span>
-          <select className="field mono" value={link.direction ?? 'DOWN'} onChange={(e) => set((x) => void (x.direction = e.target.value), 'dir')}>
+          <select className="field mono" aria-label="Direction" value={link.direction ?? 'DOWN'} onChange={(e) => set((x) => void (x.direction = e.target.value), 'dir')}>
             {['DOWN', 'UP', 'LEFT', 'RIGHT'].map((d) => <option key={d}>{d}</option>)}
           </select>
         </div>

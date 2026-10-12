@@ -10,6 +10,7 @@ import { CodeEditor } from './components/CodeEditor';
 import { Tour, WelcomeCard } from './components/Help';
 import { Home } from './components/Home';
 import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
+import { useAutoLabels } from './a11y';
 import { pref, setPref } from './prefs';
 import { loadTemplates } from './templates';
 
@@ -42,6 +43,7 @@ export function App() {
   const [tlHeight, setTlHeight] = useState(savedHeight);
   useShortcuts();
   useWindowTitle();
+  useAutoLabels();
   useEffect(() => {
     api.initialProject()
       .then((r) => {

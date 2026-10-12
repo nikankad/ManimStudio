@@ -132,7 +132,7 @@ export function GraphBuilder() {
     };
   }, [previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const num = (v: number, set: (v: number) => void, w = 'narrow') => <input className={`field num ${w}`} value={v} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) set(n); }} />;
+  const num = (v: number, set: (v: number) => void, label: string, w = 'narrow') => <input className={`field num ${w}`} aria-label={label} value={v} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) set(n); }} />;
 
   return (
     <Modal title="Graph a function" wide>
@@ -152,10 +152,10 @@ export function GraphBuilder() {
           ) : (
             <div key={p} className="row param-def">
               <span className="mono">{p}</span>
-              <span className="muted small">value</span>{num(defs[p]?.value ?? 1, (v) => setDefs({ ...defs, [p]: { ...defs[p], value: v } }))}
-              <span className="muted small">min</span>{num(defs[p]?.min ?? -5, (v) => setDefs({ ...defs, [p]: { ...defs[p], min: v } }))}
-              <span className="muted small">max</span>{num(defs[p]?.max ?? 5, (v) => setDefs({ ...defs, [p]: { ...defs[p], max: v } }))}
-              <span className="muted small">step</span>{num(defs[p]?.step ?? 0.1, (v) => setDefs({ ...defs, [p]: { ...defs[p], step: v } }))}
+              <span className="muted small">value</span>{num(defs[p]?.value ?? 1, (v) => setDefs({ ...defs, [p]: { ...defs[p], value: v } }), `${p} value`)}
+              <span className="muted small">min</span>{num(defs[p]?.min ?? -5, (v) => setDefs({ ...defs, [p]: { ...defs[p], min: v } }), `${p} min`)}
+              <span className="muted small">max</span>{num(defs[p]?.max ?? 5, (v) => setDefs({ ...defs, [p]: { ...defs[p], max: v } }), `${p} max`)}
+              <span className="muted small">step</span>{num(defs[p]?.step ?? 0.1, (v) => setDefs({ ...defs, [p]: { ...defs[p], step: v } }), `${p} step`)}
               {clashes.includes(p) && <span className="err-text small">{p === 'x' ? 'x is the variable' : 'name already used'}</span>}
             </div>
           ))}
@@ -176,12 +176,12 @@ export function GraphBuilder() {
           </label>
           {axesId === 'new' && (
             <>
-              <div className="row"><span className="muted small w60">x range</span>{num(ax.xmin, (v) => setAx({ ...ax, xmin: v }))}{num(ax.xmax, (v) => setAx({ ...ax, xmax: v }))}<span className="muted small">step</span>{num(ax.xstep, (v) => setAx({ ...ax, xstep: v }))}</div>
-              <div className="row"><span className="muted small w60">y range</span>{num(ax.ymin, (v) => setAx({ ...ax, ymin: v }))}{num(ax.ymax, (v) => setAx({ ...ax, ymax: v }))}<span className="muted small">step</span>{num(ax.ystep, (v) => setAx({ ...ax, ystep: v }))}</div>
-              <div className="row"><span className="muted small w60">size</span>{num(ax.xlen, (v) => setAx({ ...ax, xlen: v }))}<span className="muted small">×</span>{num(ax.ylen, (v) => setAx({ ...ax, ylen: v }))}</div>
+              <div className="row"><span className="muted small w60">x range</span>{num(ax.xmin, (v) => setAx({ ...ax, xmin: v }), 'x min')}{num(ax.xmax, (v) => setAx({ ...ax, xmax: v }), 'x max')}<span className="muted small">step</span>{num(ax.xstep, (v) => setAx({ ...ax, xstep: v }), 'x step')}</div>
+              <div className="row"><span className="muted small w60">y range</span>{num(ax.ymin, (v) => setAx({ ...ax, ymin: v }), 'y min')}{num(ax.ymax, (v) => setAx({ ...ax, ymax: v }), 'y max')}<span className="muted small">step</span>{num(ax.ystep, (v) => setAx({ ...ax, ystep: v }), 'y step')}</div>
+              <div className="row"><span className="muted small w60">size</span>{num(ax.xlen, (v) => setAx({ ...ax, xlen: v }), 'width')}<span className="muted small">×</span>{num(ax.ylen, (v) => setAx({ ...ax, ylen: v }), 'height')}</div>
             </>
           )}
-          <div className="row"><span className="muted small w60">domain</span>{num(dom[0], (v) => setDomain([v, dom[1]]))}{num(dom[1], (v) => setDomain([dom[0], v]))}{domain && <button className="ghost small" onClick={() => setDomain(null)}>= axes</button>}</div>
+          <div className="row"><span className="muted small w60">domain</span>{num(dom[0], (v) => setDomain([v, dom[1]]), 'domain start')}{num(dom[1], (v) => setDomain([dom[0], v]), 'domain end')}{domain && <button className="ghost small" onClick={() => setDomain(null)}>= axes</button>}</div>
           <div className="param"><span className="pname">Color</span><ColorField value={color} onChange={(c) => setColor(c || 'BLUE')} /></div>
 
           <h4>Discontinuities</h4>

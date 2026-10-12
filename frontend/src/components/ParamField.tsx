@@ -8,7 +8,7 @@ import { ratePath } from './rates';
 import { Tip, type TipContent } from './Tip';
 
 /** Text input that keeps local state while typing and commits on every change. */
-export function Field({ value, onChange, placeholder, className, list, multiline, onBlur, autoFocus }: {
+export function Field({ value, onChange, placeholder, className, list, multiline, onBlur, autoFocus, ariaLabel }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -17,6 +17,7 @@ export function Field({ value, onChange, placeholder, className, list, multiline
   multiline?: boolean;
   onBlur?: (v: string) => void;
   autoFocus?: boolean; // focus it when it appears, with its text selected
+  ariaLabel?: string; // its name, when no visible label wraps it
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
@@ -31,6 +32,7 @@ export function Field({ value, onChange, placeholder, className, list, multiline
     },
     onBlur: () => onBlur?.(local),
     autoFocus,
+    'aria-label': ariaLabel,
     onFocus: autoFocus ? (e: { currentTarget: { select: () => void } }) => e.currentTarget.select() : undefined,
   };
   return multiline ? <textarea {...props} rows={Math.min(14, Math.max(2, local.split('\n').length + 1))} /> : <input {...props} list={list} />;
@@ -110,7 +112,7 @@ export function ColorField({ value, onChange, placeholder }: { value: string; on
   return (
     <div className="row color-field">
       <button ref={btn} className={`swatch ${hex ? '' : 'none'}`} style={{ background: hex ?? undefined }} onClick={() => setOpen(!open)} title="Pick a color" />
-      <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" className="mono" />
+      <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" className="mono" ariaLabel="Color" />
       {open && rect && createPortal(
         <>
           <div className="popover-back" onPointerDown={() => setOpen(false)} />
@@ -553,7 +555,7 @@ function DictField({ value, onChange, hint, def }: { value: string; onChange: (v
       })}
       <div className="row">
         {hintParams.length > 0 ? (
-          <select className="field mono" value="" onChange={(e) => add(e.target.value)}>
+          <select className="field mono" aria-label="Add" value="" onChange={(e) => add(e.target.value)}>
             <option value="">+ {hint} option…</option>
             {hintParams.filter((p) => !used.has(p.name)).map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
           </select>
@@ -649,11 +651,11 @@ function AnimationField({ value, onChange }: { value: string; onChange: (v: stri
   const write = (c: string, t: string) => onChange(c ? `${c}(${t})` : '');
   return (
     <div className="row">
-      <select className="field mono" value={cls} onChange={(e) => write(e.target.value, target || names[0] || '')}>
+      <select className="field mono" aria-label="Animation" value={cls} onChange={(e) => write(e.target.value, target || names[0] || '')}>
         <option value="">— animation —</option>
         {catalog?.animations.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
       </select>
-      <select className="field mono" value={target} disabled={!cls} onChange={(e) => write(cls, e.target.value)}>
+      <select className="field mono" aria-label="Target object" value={target} disabled={!cls} onChange={(e) => write(cls, e.target.value)}>
         {[...new Set([...names, target])].map((n) => <option key={n} value={n}>{n || '—'}</option>)}
       </select>
     </div>

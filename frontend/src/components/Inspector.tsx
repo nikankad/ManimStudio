@@ -130,9 +130,9 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   return (
     <div className="pad">
       <div className="insp-head">
-        <Field value={obj.name} onChange={() => undefined} onBlur={commitName} className="mono name" />
+        <Field value={obj.name} onChange={() => undefined} onBlur={commitName} className="mono name" ariaLabel="Object name" />
         <span className="muted">=</span>
-        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => void (o.ctor = v), 'ctor')} list="me-mobjects" className="mono" />
+        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => void (o.ctor = v), 'ctor')} list="me-mobjects" className="mono" ariaLabel="manim class" />
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       {sig?.unknown && !obj.link && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
@@ -226,7 +226,7 @@ function CreatedSection({ obj }: { obj: SceneObject }) {
     <section>
       <h4><Tip tip={{ title: 'In the code', text: 'Where construct() creates this object: at the start, or right after a statement. Creating it later matters when it is placed relative to something that moves first (next_to, copy…). It is never created before what it is built from.' }}>In the code</Tip></h4>
       <div className="fx-row wide-row"><span>Created</span>
-        <select className="field" value={obj.after ?? ''} onChange={(e) => setObj(obj.id, (o) => { if (e.target.value) o.after = e.target.value; else delete o.after; }, 'after')}>
+        <select className="field" aria-label="Where in construct() it is created" value={obj.after ?? ''} onChange={(e) => setObj(obj.id, (o) => { if (e.target.value) o.after = e.target.value; else delete o.after; }, 'after')}>
           <option value="">at the start of construct()</option>
           {steps.map((s, i) => <option key={s.id} value={s.id}>after {i + 1}. {stepLabel(s).title.split('\n')[0].slice(0, 48)}</option>)}
         </select>
@@ -356,7 +356,7 @@ function ChainEditor({ chain, cls, onChange, title, placeholder, help }: { chain
     <section>
       <h4>
         {help ? <Tip tip={help}>{title}</Tip> : title}{' '}
-        <select className="inline" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
+        <select className="inline" aria-label="Add a method call" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
           <option value="">+ method</option>
           <optgroup label="Common">{top.map((m) => <option key={m}>{m}</option>)}</optgroup>
           <optgroup label={`All ${cls} methods`}>{rest.map((m) => <option key={m}>{m}</option>)}</optgroup>
@@ -563,7 +563,7 @@ function StepInspector({ step }: { step: Step }) {
         <>
           <section>
             <h4>Method</h4>
-            <select className="field mono" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; }, 'method')}>
+            <select className="field mono" aria-label="Scene method" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; }, 'method')}>
               {(calls ?? []).filter((m) => !['play', 'wait', 'add', 'remove'].includes(m)).map((m) => <option key={m} value={m}>self.{m}</option>)}
               {step.method && !calls?.includes(step.method) && <option value={step.method}>self.{step.method}</option>}
             </select>
@@ -643,7 +643,7 @@ function AnimationsList({ parentId, anims, title, rows }: { parentId: string; an
         </div>
       ))}
       <div className="row">
-        <select className="field mono" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an animation here (it targets the selected object)">
+        <select className="field mono" aria-label="Add an animation" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an animation here (it targets the selected object)">
           <option value="">+ animation…</option>
           <option value="animate">.animate</option>
           {(catalog?.animations ?? []).map((e) => <option key={e.name} value={e.name}>{e.name}</option>)}
@@ -651,7 +651,7 @@ function AnimationsList({ parentId, anims, title, rows }: { parentId: string; an
       </div>
       {anims.length > 1 && (
         <div className="row">
-          <select className="field mono" value={groupCls} onChange={(e) => setGroupCls(e.target.value)}>
+          <select className="field mono" aria-label="Group animations into" value={groupCls} onChange={(e) => setGroupCls(e.target.value)}>
             <option value="">Group {selected.length > 1 ? `${selected.length} selected` : 'all'} into…</option>
             {groups.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>

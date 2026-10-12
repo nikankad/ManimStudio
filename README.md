@@ -111,7 +111,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
 - **Library** (left): drag any manim class onto the canvas or straight onto a track. The *Effects* tab holds
   animations; dropping one on a track targets the selected object. Double-clicking a class adds it too, at the
   centre or the first free spot beside what is already there, so adding several doesn't pile them up. `/` jumps to
-  the search box; type a name and press Enter to add the top result.
+  the search box; type a name and press Enter to add the top result. Classes and the Scene outline can also be
+  reached with Tab and used with Enter or Space, and every control has an accessible name (checked with axe-core).
 - **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
   corner handles to scale it, the edge handles to stretch it, or the top knob to rotate it. Arrow keys
   nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
