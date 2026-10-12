@@ -22,7 +22,7 @@ Python, manim and ffmpeg, but not LaTeX, which equations need (see below; everyt
 
 - **Stable** releases (`v0.2.0`, …) are the ones to use. The app tells you when a newer one is out (it checks
   GitHub once per launch; turn it off in Settings, or set `MATHENGINE_NO_UPDATE_CHECK=1`). That choice, a dismissed
-  update notice, the welcome card and the timeline's height are remembered in `prefs.json` in the app folder.
+  update notice, the welcome card, the timeline's height and the Snap / Auto-intro / Auto-render switches are remembered in `prefs.json` in the app folder.
 - **Nightly** is a single pre-release rebuilt from every push to `main`. It can be unfinished; nightly builds
   tell you when a newer nightly is out.
 

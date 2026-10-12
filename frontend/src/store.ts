@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { api, type AppInfo, type Recovery } from './api';
+import { pref, setPref } from './prefs';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, newAnim, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
@@ -107,6 +108,22 @@ const subscribe = (l: () => void) => {
 
 export const getState = () => state;
 
+// The editor's switches are remembered between launches (prefs.json, through the backend).
+const SWITCHES = ['snap', 'timelineSnap', 'autoIntro', 'autoRender'] as const;
+let applyingPrefs = false;
+
+/** Start from the switches as they were left; call once the preferences are loaded. */
+export function applyPrefs() {
+  const patch: Partial<Pick<AppState, (typeof SWITCHES)[number]>> = {};
+  for (const k of SWITCHES) {
+    const v = pref('ui.' + k);
+    if (v === '0' || v === '1') patch[k] = v === '1';
+  }
+  applyingPrefs = true;
+  setState(patch);
+  applyingPrefs = false;
+}
+
 export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)) {
   const prev = state;
   state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) };
@@ -119,6 +136,7 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
     requestFrame();
   }
   if (state.doc.header !== prev.doc.header) void loadCatalog();
+  if (!applyingPrefs) for (const k of SWITCHES) if (state[k] !== prev[k]) setPref('ui.' + k, state[k] ? '1' : '0');
   if (state.doc !== prev.doc || state.dirty !== prev.dirty || state.path !== prev.path || state.hasProject !== prev.hasProject) syncRecovery();
   listeners.forEach((l) => l());
 }
