@@ -10,6 +10,7 @@ import {
 import type { Anim, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 import { ratePath } from './rates';
+import { keys } from '../keys';
 
 const ROW = 46; // animation track height
 const STEPS = 30; // statement lane height
@@ -566,7 +567,7 @@ function ClipMenu({ x, y, id, onClose }: { x: number; y: number; id: string; onC
     <div className="menu" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()}>
       {item(disabled ? 'Enable' : 'Disable', () => toggleDisabled(ids), 'Shift+E')}
       {item('Delete (leave a gap)', () => deleteSelection(), 'Del')}
-      {item('Ripple Delete', () => deleteSelection(true), '⇧Del')}
+      {item('Ripple Delete', () => deleteSelection(true), keys('⇧Del'))}
       {sp && item('Move playhead to start', () => setState({ time: frameSnap(sp.start), showVideo: false }))}
       {sp && item('Move playhead to end', () => setState({ time: frameSnap(sp.end), showVideo: false }))}
       {ref && isComposition(ref.anim) && item('Select the self.play', () => selectClips([ref.step.id]))}

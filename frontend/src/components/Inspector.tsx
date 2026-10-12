@@ -16,6 +16,7 @@ import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSe
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, standsAlone } from '../construct';
 import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
+import { keys } from '../keys';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
 const QUICK_ANIMS = ['Create', 'Write', 'FadeIn', 'FadeOut', 'Indicate', 'Circumscribe', 'Transform', 'ReplacementTransform', 'GrowFromCenter', 'Uncreate'];
@@ -77,7 +78,7 @@ function SceneInfo() {
       <ul className="tips keys">
         <li><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> frame · <kbd>↑</kbd><kbd>↓</kbd> edit points</li>
         <li><kbd>M</kbd> marker · <kbd>S</kbd> snap · <kbd>=</kbd>/<kbd>-</kbd> zoom · <kbd>\</kbd> fit</li>
-        <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
+        <li><kbd>Del</kbd> delete · <kbd>{keys('⇧Del')}</kbd> ripple delete · <kbd>{keys('⌘C')}</kbd>/<kbd>{keys('⌘V')}</kbd> clips</li>
       </ul>
       <LatexNotice />
       {catalog && <p className="muted small">Manim Studio {versionLabel(app)} · manim {catalog.manim_version}</p>}

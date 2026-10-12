@@ -12,6 +12,7 @@ import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from
 import { HelpPanel } from './Help';
 import { AppSettings, UpdateNotice } from './Updates';
 import { NewProjectDialog } from './Home';
+import { keys } from '../keys';
 
 /** Project files: .manimstudio, and .mathengine from versions before the rename. */
 const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
@@ -198,12 +199,12 @@ export function Toolbar() {
       <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />{!narrow && 'Manim Studio'}</button>
       <button className="ghost home-btn" title="Home: new, recent and sample projects" onClick={() => setState({ home: true })}>⌂ Home</button>
       <span className="muted">{name}{dirty ? ' •' : ''}</span>
-      <button className="ghost" title="New project (choose its format)" onClick={() => setState({ panel: 'new-project' })}>New</button>
-      <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
-      <button className="ghost" onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
+      <button className="ghost" title={`New project: choose its format (${keys('⌘N')})`} onClick={() => setState({ panel: 'new-project' })}>New</button>
+      <button className="ghost" title={`Open a project or manim file (${keys('⌘O')})`} onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
+      <button className="ghost" title={`Save (${keys('⌘S')}); ${keys('⇧⌘S')} saves a copy`} onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
       <span className="sep" />
-      <button className="ghost" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)">↶</button>
-      <button className="ghost" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)">↷</button>
+      <button className="ghost" disabled={!canUndo} onClick={undo} title={`Undo (${keys('⌘Z')})`}>↶</button>
+      <button className="ghost" disabled={!canRedo} onClick={redo} title={`Redo (${keys('⇧⌘Z')})`}>↷</button>
       <span className="sep" />
       {narrow ? <OptionsMenu /> : (
         <>

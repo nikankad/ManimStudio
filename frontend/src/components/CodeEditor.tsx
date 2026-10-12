@@ -4,6 +4,7 @@ import { getState, selectClips, selectObjects, setState, toast, updateDoc, useSt
 import type { SceneDoc } from '../types';
 import { importManimFile } from './Panels';
 import { codeKeys, highlight } from './CodeArea';
+import { keys } from '../keys';
 
 type LineMap = Record<string, [LineKind, string]>;
 
@@ -142,7 +143,7 @@ export function CodeEditor() {
           {status.kind === 'pending' ? 'Reading…' : status.kind === 'error' ? `⚠ ${status.message}` : edited ? 'Edited' : 'In sync with the timeline'}
         </span>
         <label className="toggle" title="Read the code into the scene as you type (after a short pause)"><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> Live</label>
-        {!live && <button className="primary small" disabled={!edited} onClick={() => void apply(text)} title="Read the code into the scene (⌘/Ctrl+Enter)">Apply</button>}
+        {!live && <button className="primary small" disabled={!edited} onClick={() => void apply(text)} title={`Read the code into the scene (${keys('⌘')}Enter)`}>Apply</button>}
         <button className="ghost small" onClick={() => navigator.clipboard.writeText(text).then(() => toast('Copied'))}>Copy</button>
         <button className="ghost small" title="Open a manim .py file as a new project" onClick={() => void importManimFile().catch((e) => toast(String(e)))}>Open .py…</button>
         <button className="ghost small" onClick={async () => {

@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { getState, setState, useStore } from '../store';
 import { Modal } from './Modal';
+import { keys } from '../keys';
 
 // ---------------------------------------------------------------- guided tour
 
@@ -179,7 +180,7 @@ const TOPICS: Topic[] = [
           <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
           <li>Select an object to edit it in the <b>Inspector</b>; select two to connect them.</li>
-          <li>Press <kbd>Space</kbd> to play, <kbd>⌘S</kbd> to save, and <b>Export video</b> to render with manim.</li>
+          <li>Press <kbd>Space</kbd> to play, <kbd>{keys('⌘S')}</kbd> to save, and <b>Export video</b> to render with manim.</li>
         </ol>
       </>
     ),
@@ -304,7 +305,7 @@ const TOPICS: Topic[] = [
           <li>Drag a clip onto another <code>self.play</code> to play it with that one, or into a pause to start it there (the pause shrinks, and later statements move only if it doesn’t fit). Drag it up or down to change its row. The drag shows the result before you let go. Drag a statement to move the whole statement. <kbd>Alt</kbd>-drag copies.</li>
           <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along.</li>
           <li>Effect Controls show every argument manim takes for the selected clip: the animation’s class, object(s), duration and arguments; a <code>self.play</code>’s animations (reorder, add, group into <code>LaggedStart</code>…) and the arguments it gives them all; a <code>self.wait</code>’s options. <i>+ self.…</i> on the timeline adds any other scene method: sections, sounds, subcaptions, the 3D camera…</li>
-          <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>⇧Del</kbd> (ripple delete) closes the gap.</li>
+          <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>{keys('⇧Del')}</kbd> (ripple delete) closes the gap.</li>
           <li>A clip marked <b>!</b> animates an object that isn’t on screen yet (no Create, FadeIn or Add before it): manim would show it from that clip on. Effect Controls explains it.</li>
           <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
           <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
@@ -348,11 +349,11 @@ const TOPICS: Topic[] = [
             ['← / →', 'Previous / next frame (Shift: 5 frames)'],
             ['↑ / ↓', 'Previous / next edit point'],
             ['Home / End', 'Start / end of the sequence'],
-            ['Del, ⇧Del', 'Delete, ripple delete'],
-            ['⌘D', 'Duplicate selected objects'],
-            ['⌘X / ⌘C / ⌘V', 'Cut / copy / paste clips'],
-            ['⌘Z / ⇧⌘Z', 'Undo / redo'],
-            ['⌘S / ⌘N', 'Save / new project'],
+            [keys('Del, ⇧Del'), 'Delete, ripple delete'],
+            [keys('⌘D'), 'Duplicate selected objects'],
+            [keys('⌘X / ⌘C / ⌘V'), 'Cut / copy / paste clips'],
+            [keys('⌘Z / ⇧⌘Z'), 'Undo / redo'],
+            [keys('⌘S / ⌘N'), 'Save / new project'],
             ['M · S · = / -', 'Marker · timeline snap · zoom'],
             ['? or F1', 'Open this guide'],
           ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
