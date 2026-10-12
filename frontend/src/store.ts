@@ -929,6 +929,15 @@ export function copyClips() {
   toast(`Copied ${n} clip${n === 1 ? '' : 's'}`);
 }
 
+/** Copy the selected clips and remove them (leaving the time as a gap, as Delete does). */
+export function cutClips() {
+  if (state.selection?.kind !== 'clips') return;
+  const n = state.selection.ids.length;
+  copyClips();
+  deleteSelection();
+  toast(`Cut ${n} clip${n === 1 ? '' : 's'}: Paste puts ${n === 1 ? 'it' : 'them'} back at the playhead`);
+}
+
 /** Paste at the playhead: animations into the self.play there (or a new one), statements as they were. */
 export function pasteClips() {
   const { steps, anims } = clipboard;

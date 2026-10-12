@@ -24,12 +24,27 @@ function savedHeight(): number {
   return Math.max(220, Math.round(window.innerHeight * 0.4)); // the window can be 0 tall while it opens
 }
 
+/** The window (or tab) is named after the open project; a dot marks unsaved changes. */
+function useWindowTitle() {
+  const home = useStore((s) => s.home);
+  const hasProject = useStore((s) => s.hasProject);
+  const path = useStore((s) => s.path);
+  const dirty = useStore((s) => s.dirty);
+  useEffect(() => {
+    const name = path ? path.split(/[\\/]/).pop()!.replace(/\.(manimstudio|mathengine)$/, '') : 'Untitled';
+    const title = home || !hasProject ? 'Manim Studio' : `${dirty ? '• ' : ''}${name} - Manim Studio`;
+    document.title = title;
+    api.setTitle(title).catch(() => undefined); // the native window isn't a page with a <title>
+  }, [home, hasProject, path, dirty]);
+}
+
 export function App() {
   const message = useStore((s) => s.toast);
   const home = useStore((s) => s.home);
   const centerTab = useStore((s) => s.centerTab);
   const [tlHeight, setTlHeight] = useState(savedHeight);
   useShortcuts();
+  useWindowTitle();
   useEffect(() => {
     api.initialProject()
       .then((r) => {

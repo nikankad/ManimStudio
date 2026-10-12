@@ -35,6 +35,7 @@ class AppState:
         self.jobs: dict[str, render.RenderJob] = {}
         self.catalog_cache: dict[str, dict] = {}
         self.dialogs: Any = None  # set by the desktop shell (pywebview)
+        self.set_title: Any = None  # likewise: names the window after the project
         self.port = 0
 
 
@@ -119,6 +120,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/samples/open"): self.api_sample_open,
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
+            ("POST", "/api/title"): self.api_title,
             ("POST", "/api/expr"): self.api_expr,
             ("POST", "/api/check_equation"): self.api_check_equation,
             ("GET", "/api/constructions"): self.api_constructions,
@@ -397,6 +399,12 @@ class Handler(BaseHTTPRequestHandler):
         tmp.write_text(json.dumps({"version": 1, "constructions": body.get("library", [])}, indent=2), encoding="utf-8")
         tmp.replace(LIBRARY_PATH)
         return {"path": str(LIBRARY_PATH)}
+
+    def api_title(self, _q: dict, body: dict) -> dict:
+        """Name the native window after the open project (a browser tab takes it from the page itself)."""
+        if self.app.set_title:
+            self.app.set_title(str(body.get("title", ""))[:200])
+        return {"ok": True}
 
     def api_dialog(self, _q: dict, body: dict) -> dict:
         if not self.app.dialogs:

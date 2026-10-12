@@ -267,7 +267,7 @@ buttons that take you to the right place, and a guided tour that spotlights each
 users are offered the tour once.
 
 Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
-S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S · ⌘D duplicate object(s) ·
+S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘X/⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S save · ⌘N new project · ⌘D duplicate object(s) ·
 1–7 drawing tools · Enter finish polygon · Esc cancel drawing · ? or F1 help.
 
 ## How it works

@@ -63,6 +63,7 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
         return res if isinstance(res, str) else res[0]
 
     app.dialogs = dialogs
+    app.set_title = window.set_title
     icon = Path(__file__).parent / "web" / "icon.png"  # the window icon on Linux (Windows and macOS use the app's)
     try:
         try:
@@ -72,6 +73,7 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
     except Exception as exc:
         print(f"Can't open a window ({exc}); opening in your browser instead.")
         app.dialogs = None
+        app.set_title = None
         return _open_editor_in_browser(url)
     server.shutdown()
 

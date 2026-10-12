@@ -126,6 +126,7 @@ export const api = {
   checkEquation: (parts: string[], ctor: string) => post<EquationCheck>('/api/check_equation', { parts, ctor }),
   constructions: () => get<{ starters: Template[]; library: Template[]; path: string }>('/api/constructions'),
   saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),
+  setTitle: (title: string) => post<{ ok: boolean }>('/api/title', { title }),
   dialog: (kind: 'open' | 'save', filename = '', types: string[] = []) =>
     post<{ path: string | null; unsupported?: boolean }>('/api/dialog', { kind, filename, types }),
 };

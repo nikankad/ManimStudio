@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
+  addMarker, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
@@ -287,6 +287,11 @@ export function useShortcuts() {
         void openProject().catch((err) => toast(String(err)));
         return;
       }
+      if (mod && k === 'n') {
+        e.preventDefault();
+        setState({ panel: 'new-project' });
+        return;
+      }
       if (e.key === 'F1') {
         e.preventDefault();
         setState({ panel: 'help', panelData: null });
@@ -307,6 +312,7 @@ export function useShortcuts() {
         else undo();
       } else if (mod && k === 'y') redo();
       else if (mod && k === 'c') copyClips();
+      else if (mod && k === 'x') cutClips();
       else if (mod && k === 'v') pasteClips();
       else if (mod && k === 'd') {
         e.preventDefault();

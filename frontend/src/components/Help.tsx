@@ -350,9 +350,9 @@ const TOPICS: Topic[] = [
             ['Home / End', 'Start / end of the sequence'],
             ['Del, ⇧Del', 'Delete, ripple delete'],
             ['⌘D', 'Duplicate selected objects'],
-            ['⌘C / ⌘V', 'Copy / paste clips'],
+            ['⌘X / ⌘C / ⌘V', 'Cut / copy / paste clips'],
             ['⌘Z / ⇧⌘Z', 'Undo / redo'],
-            ['⌘S', 'Save'],
+            ['⌘S / ⌘N', 'Save / new project'],
             ['M · S · = / -', 'Marker · timeline snap · zoom'],
             ['? or F1', 'Open this guide'],
           ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
