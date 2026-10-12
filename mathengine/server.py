@@ -116,6 +116,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/project/open"): self.api_project_open,
             ("POST", "/api/project/save"): self.api_project_save,
             ("GET", "/api/home"): self.api_home,
+            ("GET", "/api/samples"): self.api_samples,
             ("POST", "/api/recent/remove"): self.api_recent_remove,
             ("POST", "/api/recovery/save"): self.api_recovery_save,
             ("POST", "/api/recovery/open"): self.api_recovery_open,
@@ -363,9 +364,12 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def api_home(self, _q: dict, _b: dict) -> dict:
-        with self.app.manim_lock:  # sample lengths are measured by running them once
-            listing = samples.sample_list()
-        return {"recent": recent.listing(), "samples": listing, "recovery": recovery.listing()}
+        """What Home shows at once: recent projects and unsaved work (the samples come separately: see api_samples)."""
+        return {"recent": recent.listing(), "recovery": recovery.listing()}
+
+    def api_samples(self, _q: dict, _b: dict) -> dict:
+        with self.app.manim_lock:  # sample lengths are measured by running them once: seconds on a cold start
+            return {"samples": samples.sample_list()}
 
     def api_recent_remove(self, _q: dict, body: dict) -> dict:
         recent.remove(str(body.get("path", "")))

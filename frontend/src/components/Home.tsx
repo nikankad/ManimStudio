@@ -58,12 +58,13 @@ export function Home() {
   const path = useStore((s) => s.path);
   const [section, setSection] = useState<Section>('home');
   const [recent, setRecent] = useState<RecentProject[] | null>(null);
-  const [samples, setSamples] = useState<Sample[]>([]);
+  const [samples, setSamples] = useState<Sample[] | null>(null); // null: still being measured
   const [recovery, setRecovery] = useState<Recovery[]>([]);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); setRecovery((h.recovery ?? []).filter((r) => r.id !== currentRecoveryId())); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.home().then((h) => { setRecent(h.recent); setRecovery((h.recovery ?? []).filter((r) => r.id !== currentRecoveryId())); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.samples().then((h) => setSamples(h.samples)).catch((e) => { setSamples([]); toast(String(e)); });
     if (!getState().app) api.version().then((a) => setState({ app: a })).catch(() => undefined);
   }, []);
 
@@ -120,7 +121,8 @@ export function Home() {
               <section>
                 <h2>Start from a sample</h2>
                 <div className="sample-grid">
-                  {samples.map((s) => (
+                  {samples === null && <p className="muted">Loading samples…</p>}
+                  {(samples ?? []).map((s) => (
                     <button key={s.id} className="sample-card" title={s.description} onClick={() => void openSample(s)}>
                       <div className="sample-thumb">
                         {s.thumbnail ? <img src={s.thumbnail} alt="" /> : <span className="muted">no preview</span>}

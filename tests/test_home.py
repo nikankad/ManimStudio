@@ -74,7 +74,8 @@ def test_home_endpoints(tmp_path):
         path = str(tmp_path / "mine.manimstudio")
         call("/api/project/save", {"path": path, "doc": opened["doc"]})
         home = call("/api/home")
-        assert [r["name"] for r in home["recent"]] == ["mine"] and len(home["samples"]) == len(samples.SAMPLES)
+        assert [r["name"] for r in home["recent"]] == ["mine"] and "samples" not in home  # Home doesn't wait for them
+        assert len(call("/api/samples")["samples"]) == len(samples.SAMPLES)
         for _ in range(100):  # the preview is made in the background
             if call("/api/home")["recent"][0]["thumbnail"]:
                 break
