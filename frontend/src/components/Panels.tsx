@@ -48,8 +48,12 @@ export async function discardOk(): Promise<boolean> {
 function LeaveDialog() {
   const leave = useStore((s) => s.leave);
   const path = useStore((s) => s.path);
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!leave) return;
+    // Focus the dialog, not a button: this question often opens on an Enter keypress (Create in New project), and
+    // that same keypress would otherwise press the focused Save button before anyone has read the question.
+    box.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') leave.resolve('cancel');
       else if (e.key === 'Enter') leave.resolve('save');
@@ -64,14 +68,14 @@ function LeaveDialog() {
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
     <div className="modal-back leave-back" onPointerDown={(e) => e.target === e.currentTarget && leave.resolve('cancel')}>
-      <div className="modal" role="alertdialog" aria-label="Unsaved changes">
+      <div className="modal" role="alertdialog" aria-label="Unsaved changes" tabIndex={-1} ref={box}>
         <div className="modal-head"><h3>Save changes to {name}?</h3></div>
         <p className="muted">Your changes will be lost if you don’t save them.</p>
         <div className="row actions">
           <button onClick={() => leave.resolve('discard')}>Don’t save</button>
           <span className="spacer" />
           <button onClick={() => leave.resolve('cancel')}>Cancel</button>
-          <button className="primary" autoFocus onClick={() => leave.resolve('save')}>Save</button>
+          <button className="primary" onClick={() => leave.resolve('save')}>Save</button>
         </div>
       </div>
     </div>

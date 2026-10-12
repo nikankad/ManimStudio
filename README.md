@@ -327,5 +327,9 @@ camera. This takes about 50 to 150 ms per frame, and the frame is exactly what t
 Development: `cd frontend && npm run dev` rebuilds the UI on change, and `manim-studio --serve --port 8765`
 runs only the server. Tests: `uv pip install -e '.[dev]' && pytest`; they render real frames with manim,
 and the LaTeX tests skip when LaTeX isn't installed. `scripts/ui_smoke.py` drives the editor in Chromium
-(Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project. Design notes on the visual construction tools are in
+(Playwright) through drawing, connecting, graphing, equations and constructions, checking the saved project
+(it predates the statement timeline and its project-format checks need updating). `scripts/ui_workflow.py`
+starts its own server per scenario and checks the everyday workflow: unsaved-work recovery, leaving a project,
+shortcuts, remembered settings, the toolbar at every width, export, and (with `AXE_JS` set to axe-core's
+`axe.min.js`) accessibility. Design notes on the visual construction tools are in
 [`docs/research/math-object-creation.md`](docs/research/math-object-creation.md).
