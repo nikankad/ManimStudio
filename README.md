@@ -80,18 +80,20 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   project files too), and a dropped file never navigates the window away. A file that isn't a project (empty, damaged, or some
   other kind) is refused with a sentence saying so; launched with one, the editor starts at Home and says why.
 
-- **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline. Every
-  statement is one manim statement, in order, and starts when the one before it ends, exactly as manim runs it.
-  - The **Statements** lane shows each statement: `self.play`, `self.wait` (a pause), `self.add` / `self.remove`,
-    code, and couple / uncouple switches.
-  - The animations of a `self.play` start together on the tracks below it: its first animation on V1, the second
-    on V2, and so on. A `self.play` lasts as long as its longest animation. `AnimationGroup`, `LaggedStart` and
-    `Succession` show their animations inside the clip, at the times manim plays them. Times are measured by
-    running the scene with manim.
-  - Drag a clip onto another `self.play` to play it with that one, or into a pause to start it there. The pause
-    shrinks, and later statements move only when it doesn't fit, like an overwrite into a gap. Drag up or down to
-    change its row, drag a statement to move the whole statement, and Alt-drag to copy. While you drag, the
-    timeline shows the result.
+- **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline, in order,
+  exactly as manim runs it: each step starts when the one before it ends.
+  - Animations that play together (one `self.play`) share a **shaded column** and are stacked on tracks V1, V2…;
+    the group lasts as long as its longest animation. Clips read object first (*circle · Create*). A **hatched
+    block** across the tracks is a pause (`self.wait`). `AnimationGroup`, `LaggedStart` and `Succession` show their
+    animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.
+  - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, and anything
+    disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
+  - Click a group's shading to select it (Effect Controls show its animations and the settings it gives them all,
+    such as `run_time`, which also appear in the corner of the shading). With it selected, drag any of its clips to
+    move the whole group; drag the shading's right edge to retime it; right-click the shading for disable / delete.
+  - Drag a clip into another group's column to play it with that group, or into a pause to start it there. The
+    pause shrinks, and later steps move only when it doesn't fit, like an overwrite into a gap. Drag up or down to
+    change its track, and Alt-drag to copy. While you drag, the timeline shows the result.
   - Drag a clip's right edge to change its `run_time` (a pause's edge changes its length); everything after it
     moves along. Values are rounded so the code stays readable.
   - Delete leaves the time as a pause (`self.wait`), like Premiere; Shift+Delete (ripple delete) closes the gap.

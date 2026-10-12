@@ -4,7 +4,7 @@ import {
   previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
-  canTrimStep, EPS, findAnim, findStep, isComposition, landing, layout, moveAnims, moveSteps, setAnimDuration, setStepDuration,
+  canTrimStep, EPS, findAnim, findStep, landing, layout, moveAnims, moveSteps, setAnimDuration, setStepDuration,
   type Layout,
 } from '../timeline';
 import type { Anim, RunResult, SceneDoc, Step } from '../types';
@@ -13,7 +13,7 @@ import { ratePath } from './rates';
 import { keys } from '../keys';
 
 const ROW = 46; // animation track height
-const STEPS = 30; // statement lane height
+const STRIP = 24; // height of the strip for steps that aren't animations (add, remove, code…), when there are any
 const RULER = 30;
 const HEAD = 168; // track header width
 const SNAP_PX = 8;
@@ -45,10 +45,17 @@ const STEP_COLORS: Record<Step['kind'], string> = {
 
 type Drag =
   | { mode: 'anims'; ids: string[]; x0: number; y0: number; t0: number; row0: number; t: number; row: number; copy: boolean; moved: boolean }
-  | { mode: 'steps'; ids: string[]; x0: number; t0: number; t: number; copy: boolean; moved: boolean }
+  | { mode: 'steps'; ids: string[]; x0: number; t0: number; t: number; copy: boolean; moved: boolean; pick?: string }
   | { mode: 'trim-anim' | 'trim-step'; id: string; x0: number; dur0: number; dur: number }
-  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: string[] }
+  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: string[]; band?: string }
   | { mode: 'scrub' };
+
+/**
+ * Steps shown in the strip under the ruler: everything that isn't an animation group or a pause (add, remove, code,
+ * couple / uncouple, scene calls), and anything disabled. Animation groups show as the band behind their clips, and
+ * pauses as a block across the tracks.
+ */
+const inStrip = (s: Step) => !!s.disabled || (s.kind !== 'play' && s.kind !== 'wait');
 
 /** What a timeline drag does to the document (shown live while dragging, committed on release). */
 function applyDrag(d: SceneDoc, drag: Drag, measured: RunResult | null): string[] {
@@ -98,8 +105,10 @@ export function Timeline() {
   const selected = new Set(selection?.kind === 'clips' ? selection.ids : []);
   const end = slay.end;
   const x = (t: number) => (t - v0) * pps;
-  const rowTop = (r: number) => RULER + STEPS + r * ROW;
-  const totalH = RULER + STEPS + rows * ROW + 24;
+  // from the document, not the drag preview: the tracks mustn't jump under the pointer while dragging
+  const stripH = doc.timeline.some(inStrip) ? STRIP : 0;
+  const rowTop = (r: number) => RULER + stripH + r * ROW;
+  const totalH = RULER + stripH + rows * ROW + 24;
 
   useLayoutEffect(() => {
     const el = laneRef.current!;
@@ -118,12 +127,18 @@ export function Timeline() {
     const r = laneRef.current!.getBoundingClientRect();
     return Math.max(0, v0 + (clientX - r.left) / pps);
   };
-  /** Track row under the pointer: -1 for the statement lane, 0… for V1… */
+  /** Track row under the pointer: -1 for the strip of other steps, 0… for V1… */
   const rowAt = (clientY: number) => {
     const r = laneRef.current!.getBoundingClientRect();
     const y = clientY - r.top + bodyRef.current!.scrollTop - RULER;
-    return y < STEPS ? -1 : Math.floor((y - STEPS) / ROW);
+    return stripH && y < stripH ? -1 : Math.max(0, Math.floor((y - stripH) / ROW));
   };
+  /** The animation group (self.play) whose band is under a point of the tracks, if any. */
+  const bandAt = (t: number) => doc.timeline.find((s) => {
+    if (s.kind !== 'play' || s.disabled) return false;
+    const sp = lay.steps.get(s.id)!;
+    return t >= sp.start && t <= sp.end;
+  });
 
   // ------------------------------------------------------------ zoom / scroll
   const onWheel = (e: React.WheelEvent) => {
@@ -171,7 +186,8 @@ export function Timeline() {
         const y0 = Math.min(d.y0, ny), y1 = Math.max(d.y0, ny);
         const hit: string[] = [];
         const overlaps = (sp: { start: number; end: number }) => sp.start < t1 && Math.max(sp.end, sp.start + 2 / pps) > t0;
-        if (y0 < RULER + STEPS && y1 > RULER) for (const s of doc.timeline) if (overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
+        if (stripH && y0 < RULER + stripH && y1 > RULER) for (const s of doc.timeline) if (inStrip(s) && overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
+        if (y1 > rowTop(0)) for (const s of doc.timeline) if (s.kind === 'wait' && !s.disabled && overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
         for (const s of doc.timeline) (s.disabled ? [] : s.anims ?? []).forEach((a, i) => {
           if (rowTop(i) < y1 && rowTop(i) + ROW > y0 && overlaps(lay.anims.get(a.id)!)) hit.push(a.id);
         });
@@ -197,6 +213,9 @@ export function Timeline() {
       const d = dragRef.current!;
       setDrag(null);
       setGuide(null);
+      // a click (no drag) on the shading of an animation group selects the group; on a clip of a selected group, the clip
+      if (d.mode === 'marquee' && d.band && Math.abs(d.x1 - d.x0) < 3 && Math.abs(d.y1 - d.y0) < 3) return selectClips([d.band]);
+      if (d.mode === 'steps' && d.pick && !d.moved) return selectClips([d.pick]);
       if (!changes(d)) return;
       let ids: string[] = [];
       const measured = getState().timeline;
@@ -223,6 +242,13 @@ export function Timeline() {
   const onAnimDown = (e: React.PointerEvent, a: Anim, step: Step, row: number) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    const rect0 = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (selected.has(step.id) && !e.shiftKey && !e.metaKey && !e.ctrlKey && !(rect0.right - e.clientX < 7 && rect0.width > 10)) {
+      // the group is selected: dragging any of its clips moves the group (a click without dragging selects the clip)
+      const ssp = lay.steps.get(step.id)!;
+      const groups = (selection?.kind === 'clips' ? selection.ids : []).filter((id) => doc.timeline.some((x) => x.id === id));
+      return setDrag({ mode: 'steps', ids: groups, x0: e.clientX, t0: ssp.start, t: ssp.start, copy: e.altKey, moved: false, pick: a.id });
+    }
     const ids = pick(e, a.id);
     if (!ids) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -256,9 +282,27 @@ export function Timeline() {
       setState({ time: frameSnap(timeAt(e.clientX)), showVideo: false });
       return setDrag({ mode: 'scrub' });
     }
+    const t = timeAt(e.clientX);
+    const band = y >= rowTop(0) ? bandAt(t) : undefined;
+    if (band) {
+      const sp = lay.steps.get(band.id)!;
+      const px = x(sp.end) - (e.clientX - r.left);
+      if (px >= -1 && px < 7 && (sp.end - sp.start) * pps > 10) {
+        selectClips([band.id]);
+        return setDrag({ mode: 'trim-step', id: band.id, x0: e.clientX, dur0: sp.end - sp.start, dur: sp.end - sp.start });
+      }
+    }
     const base = e.shiftKey && selection?.kind === 'clips' ? selection.ids : [];
     if (!e.shiftKey) setState({ selection: null });
-    setDrag({ mode: 'marquee', x0: e.clientX - r.left, y0: y, x1: e.clientX - r.left, y1: y, base });
+    setDrag({ mode: 'marquee', x0: e.clientX - r.left, y0: y, x1: e.clientX - r.left, y1: y, base, band: e.shiftKey ? undefined : band?.id });
+  };
+  /** Right-click on the shading of an animation group: the same menu as on a clip, for the whole group. */
+  const onLaneMenu = (e: React.MouseEvent) => {
+    const r = laneRef.current!.getBoundingClientRect();
+    const y = e.clientY - r.top + bodyRef.current!.scrollTop;
+    const band = y >= rowTop(0) ? bandAt(timeAt(e.clientX)) : undefined;
+    if (band) openMenu(e, band.id);
+    else e.preventDefault();
   };
 
   // ------------------------------------------------------------ library drops
@@ -320,8 +364,8 @@ export function Timeline() {
         <div className="clip-head">
           {warn && <span className="clip-warn">!</span>}
           <span className="fx">fx</span>
-          <span className="clip-name">{label.name}</span>
-          {label.sub && <span className="clip-sub">{label.sub}</span>}
+          <span className="clip-name">{clipText(a).name}</span>
+          {clipText(a).sub && <span className="clip-sub">{clipText(a).sub}</span>}
         </div>
         {kids.length > 0 ? (
           <div className="kids">
@@ -349,20 +393,24 @@ export function Timeline() {
   const renderStep = (s: Step, l: Layout) => {
     const sp = l.steps.get(s.id)!;
     const w = (sp.end - sp.start) * pps;
-    const instant = w < 6 || s.disabled;
+    const pause = s.kind === 'wait' && !s.disabled;
+    const instant = !pause && (w < 6 || !!s.disabled);
     const left = x(sp.start);
     if (left + w < -40 || left > laneW + 40) return null;
     const label = stepLabel(s);
+    const shown = stepText(s);
+    const top = pause ? rowTop(0) + 3 : RULER + 2;
+    const height = pause ? rows * ROW - 6 : STRIP - 4;
     return (
       <div
         key={s.id}
-        className={`clip step ${s.kind} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
-        style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : w, top: RULER + 3, height: STEPS - 6, ['--clip' as string]: STEP_COLORS[s.kind] }}
+        className={`clip step ${s.kind} ${pause ? 'pause' : ''} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
+        style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : Math.max(w, 3), top, height, ['--clip' as string]: STEP_COLORS[s.kind] }}
         title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${s.disabled ? '\nDisabled: left out of the code' : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(s.id)}
-        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+        aria-label={`${shown.name}${shown.sub ? ` ${shown.sub}` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
         onKeyDown={(e) => keySelect(e, s.id)}
         onPointerDown={(e) => onStepDown(e, s)}
         onContextMenu={(e) => openMenu(e, s.id)}
@@ -370,8 +418,8 @@ export function Timeline() {
       >
         {!instant && (
           <div className="clip-head">
-            <span className="clip-name">{label.name}</span>
-            {label.sub && <span className="clip-sub">{label.sub}</span>}
+            <span className="clip-name">{shown.name}</span>
+            {shown.sub && <span className="clip-sub">{shown.sub}</span>}
           </div>
         )}
       </div>
@@ -429,18 +477,20 @@ export function Timeline() {
       <div className="tl-body" ref={bodyRef}>
         <div className="tl-grid" style={{ height: totalH }}>
           <div className="tl-heads">
-            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} {doc.timeline.length === 1 ? 'statement' : 'statements'}</span></div>
-            <div className="track-head steps-head" style={{ height: STEPS }} title="Each statement of construct(): self.play, self.wait, self.add, code… in order">
-              <span className="th-name">Statements</span>
-            </div>
+            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} {doc.timeline.length === 1 ? 'step' : 'steps'}</span></div>
+            {stripH > 0 && (
+              <div className="track-head steps-head" style={{ height: stripH }} title="Steps that aren't animations: objects added or removed without one, code, couple / uncouple, scene calls, and anything disabled">
+                <span className="th-name">Other</span>
+              </div>
+            )}
             {Array.from({ length: rows }, (_, r) => (
-              <div key={r} className="track-head" style={{ height: ROW }} title={`The ${ordinal(r + 1)} animation of each self.play`}>
+              <div key={r} className="track-head" style={{ height: ROW }} title={`Track ${r + 1}: animations that play together (the shaded column behind them) are stacked on separate tracks`}>
                 <span className="th-name">V{r + 1}</span>
               </div>
             ))}
           </div>
 
-          <div className="tl-lanes" ref={laneRef} onPointerDown={onLaneDown} onDragOver={onDragOver} onDragLeave={() => setDropAt(null)} onDrop={onDrop}>
+          <div className="tl-lanes" ref={laneRef} onPointerDown={onLaneDown} onContextMenu={onLaneMenu} onDragOver={onDragOver} onDragLeave={() => setDropAt(null)} onDrop={onDrop}>
             <div className="ruler" style={{ height: RULER }}>
               {ticks.map(({ t, major: mj }) => (
                 <div key={t.toFixed(4)} className={`tick ${mj ? 'major' : ''}`} style={{ left: x(t) }}>
@@ -458,20 +508,31 @@ export function Timeline() {
               <div className="end-mark" style={{ left: x(end) }} title="Sequence end" />
               <RenderBar left={x(0)} width={end * pps} />
             </div>
-            <div className="lane-row steps-lane" style={{ top: RULER, height: STEPS }} />
+            {stripH > 0 && <div className="lane-row steps-lane" style={{ top: RULER, height: stripH }} />}
             {Array.from({ length: rows }, (_, r) => <div key={r} className="lane-row" style={{ top: rowTop(r), height: ROW }} />)}
-            {/* each self.play spans all tracks: a faint band shows which animations play together */}
+            {/* Each self.play is the shaded column behind its clips: click it to select the group (its own settings, its
+                length), drag one of its clips once it is selected to move the group, drag its right edge to retime it. */}
             {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).map((s) => {
               const sp = slay.steps.get(s.id)!;
-              return <div key={'band' + s.id} className={`play-band ${selected.has(s.id) ? 'sel' : ''}`} style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: RULER + STEPS, height: rows * ROW }} />;
+              const n = s.anims?.length ?? 0;
+              const kw = Object.entries(s.args ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
+              return (
+                <div key={'band' + s.id} className={`play-band ${selected.has(s.id) ? 'sel' : ''} ${ghost(s.id) ? 'ghost' : ''}`}
+                  style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: rowTop(0), height: rows * ROW }}
+                  tabIndex={0} role="button" aria-pressed={selected.has(s.id)}
+                  aria-label={`${n} animation${n === 1 ? '' : 's'} together${kw ? ` (${kw})` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+                  onKeyDown={(e) => keySelect(e, s.id)}>
+                  {kw && (sp.end - sp.start) * pps > 40 && <span className="band-label">{kw}</span>}
+                </div>
+              );
             })}
-            {sdoc.timeline.map((s) => renderStep(s, slay))}
+            {sdoc.timeline.filter((s) => !(s.kind === 'play' && !s.disabled)).map((s) => renderStep(s, slay))}
             {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).flatMap((s) => (s.anims ?? []).map((a, i) => renderAnim(a, s, i, slay)))}
             {drag?.mode === 'marquee' && (
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
             )}
             {dropAt && dropLanding && (
-              <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? STEPS : ROW }}
+              <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? stripH : ROW }}
                 title={dropLanding.kind === 'join' ? 'Plays with the animations of this self.play' : 'A new self.play here'} />
             )}
             {guide !== null && <div className="snap-guide" style={{ left: x(guide), height: totalH }} />}
@@ -494,8 +555,6 @@ function* flatKids(anims: Anim[], depth: number): Generator<{ a: Anim; depth: nu
     if (a.anims) yield* flatKids(a.anims, depth + 1);
   }
 }
-
-const ordinal = (n: number) => `${n}${n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th'}`;
 
 /** Premiere-style render bar: green = smooth preview ready, yellow = rendering, red = live frames only. */
 function RenderBar({ left, width }: { left: number; width: number }) {
@@ -588,8 +647,7 @@ function ClipMenu({ x, y, id, onClose }: { x: number; y: number; id: string; onC
       {item('Ripple Delete', () => deleteSelection(true), keys('⇧Del'))}
       {sp && item('Move playhead to start', () => setState({ time: frameSnap(sp.start), showVideo: false }))}
       {sp && item('Move playhead to end', () => setState({ time: frameSnap(sp.end), showVideo: false }))}
-      {ref && isComposition(ref.anim) && item('Select the self.play', () => selectClips([ref.step.id]))}
-      {ref && !step && item('Select the self.play', () => selectClips([ref.step.id]))}
+      {ref && !step && item('Select the group it plays with', () => selectClips([ref.step.id]))}
       {item('Show in code', () => setState({ centerTab: 'code' }))}
       {target && s.doc.objects.some((o) => o.name === target) && item(`Select ${target}`, () => {
         const o = s.doc.objects.find((k) => k.name === target);
@@ -648,6 +706,34 @@ export function animLabel(a: Anim): { name: string; sub: string; title: string }
   }
   if (a.anims) return { name: a.cls, sub: `${a.anims.length} animation${a.anims.length === 1 ? '' : 's'}`, title: `${a.cls}(${a.anims.map((k) => animLabel(k).title).join(', ')})` };
   return { name: a.cls, sub: a.target || a.args['*'] || '', title: `${a.cls}(${[a.target, a.args['*']].filter(Boolean).join(', ')})` };
+}
+
+/** What a clip shows: the object first, then what happens to it ("circle · Create"). */
+export function clipText(a: Anim): { name: string; sub: string } {
+  if (a.anims) return { name: a.cls, sub: `${a.anims.length} animation${a.anims.length === 1 ? '' : 's'}` };
+  if (a.cls === 'animate') return { name: a.target, sub: `.animate${(a.chain ?? '').split('\n').join('').trim().match(/^\.\w+/)?.[0] ?? ''}` };
+  return a.target ? { name: a.target, sub: a.cls } : { name: a.cls, sub: a.args['*'] || '' };
+}
+
+/** What a step shows on the timeline, in plain words. */
+export function stepText(s: Step): { name: string; sub: string } {
+  const targets = (s.targets ?? []).join(', ');
+  switch (s.kind) {
+    case 'play': {
+      const n = s.anims?.length ?? 0;
+      return { name: 'Together', sub: `${n} animation${n === 1 ? '' : 's'}${s.disabled ? ' (disabled)' : ''}` };
+    }
+    case 'wait':
+      return { name: 'Pause', sub: s.args?.duration ? `${s.args.duration}s` : '1s' };
+    case 'add':
+      return { name: 'Add', sub: targets };
+    case 'remove':
+      return { name: 'Remove', sub: targets };
+    default: {
+      const l = stepLabel(s);
+      return { name: l.name, sub: l.sub };
+    }
+  }
 }
 
 /** How a statement reads on the timeline, and its code. */

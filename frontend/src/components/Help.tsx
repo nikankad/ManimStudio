@@ -59,7 +59,7 @@ export const TOUR: TourStep[] = [
     target: '[data-tour="timeline"]',
     title: 'Timeline',
     before: libraryTab('Objects'),
-    body: <>The scene’s <code>construct()</code>, statement by statement: each <code>self.play</code> plays its animations together on V1, V2…, then the next statement starts. Drag to move, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
+    body: <>The scene, in order. Animations that play together share a shaded column (stacked on tracks V1, V2…); a hatched block is a pause; the next group starts when the one before ends. Click the shading to select a group, drag clips to move them, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
   },
   {
     target: '[data-tour="record"]',
@@ -302,9 +302,10 @@ const TOPICS: Topic[] = [
     body: (
       <>
         <ul>
-          <li>The timeline is the scene’s <code>construct()</code>, in order. The <b>Statements</b> lane shows each one: <code>self.play</code>, <code>self.wait</code> (a pause), <code>self.add</code> / <code>self.remove</code>, and code. A statement starts when the one before it ends, exactly like manim.</li>
-          <li>The animations of one <code>self.play</code> start together: the first on V1, the second on V2, and so on. The <code>self.play</code> lasts as long as its longest animation. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
-          <li>Drag a clip onto another <code>self.play</code> to play it with that one, or into a pause to start it there (the pause shrinks, and later statements move only if it doesn’t fit). Drag it up or down to change its row. The drag shows the result before you let go. Drag a statement to move the whole statement. <kbd>Alt</kbd>-drag copies.</li>
+          <li>The timeline is the scene in order, exactly as manim runs it. Animations that play together (one <code>self.play</code>) share a <b>shaded column</b> and are stacked on tracks V1, V2…; the group lasts as long as its longest animation, and the next one starts when it ends. A <b>hatched block</b> is a pause (<code>self.wait</code>). Clips read object first: <i>circle · Create</i>.</li>
+          <li>Steps that aren’t animations (objects added or removed without one, code, couple / uncouple, scene calls, and anything disabled) sit in a slim <b>Other</b> strip under the ruler, shown only when the scene has some.</li>
+          <li>Click a group’s shading to select it: Effect Controls then show its animations and the settings it gives them all (<code>run_time</code>, <code>rate_func</code>…, shown in the corner of the shading when set). With the group selected, drag any of its clips to move the whole group; drag the shading’s right edge to retime it; right-click the shading to disable or delete it. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
+          <li>Drag a clip into another group’s column to play it with that group, or into a pause to start it there (the pause shrinks, and later steps move only if it doesn’t fit). Drag it up or down to change its track. The drag shows the result before you let go. <kbd>Alt</kbd>-drag copies.</li>
           <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along.</li>
           <li>Effect Controls show every argument manim takes for the selected clip: the animation’s class, object(s), duration and arguments; a <code>self.play</code>’s animations (reorder, add, group into <code>LaggedStart</code>…) and the arguments it gives them all; a <code>self.wait</code>’s options. <i>+ self.…</i> on the timeline adds any other scene method: sections, sounds, subcaptions, the 3D camera…</li>
           <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>{keys('⇧Del')}</kbd> (ripple delete) closes the gap.</li>

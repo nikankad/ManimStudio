@@ -78,7 +78,8 @@ def add(pg, cls):
 
 
 def clips(pg):
-    return pg.locator(".tl-lanes .clip").count()
+    """Animation clips on the timeline (not pauses or the strip of other steps)."""
+    return pg.locator(".tl-lanes .clip.anim").count()
 
 
 # ---------------------------------------------------------------------------------------------------- scenarios
@@ -181,12 +182,12 @@ def shortcuts(b):
         pg.keyboard.type("tria")
         pg.keyboard.press("Enter")
         pg.wait_for_timeout(1200)
-        assert pg.locator(".search").input_value() == "" and clips(pg) == n + 2, "Enter added the triangle"
+        assert pg.locator(".search").input_value() == "" and clips(pg) == n + 1, "Enter added the triangle"
         # keyboard-only: Tab focus + Enter adds
         pg.locator(".lib-item", has_text="Square").first.focus()
         pg.keyboard.press("Enter")
         pg.wait_for_timeout(1000)
-        assert clips(pg) == n + 4
+        assert clips(pg) == n + 2
         # cut and paste a clip
         before = clips(pg)
         pg.locator(".clip", has_text="Create").last.click()
@@ -368,6 +369,109 @@ def dropped_files(b):
         assert not pg.errors, pg.errors
 
 
+def timeline_edit(b):
+    """Animation groups without a bar: click the shading to select a group, drag clips and groups, trim a pause,
+    marquee from inside a group, disable a group from its menu."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        add(pg, "Circle")  # group 1: Create circle, 0-1 s
+        add(pg, "Square")  # group 2: Create square, 1-2 s
+        pg.get_by_role("button", name="+ Wait").click()  # a pause at the end, 2-3 s
+        pg.wait_for_timeout(600)
+        label = lambda loc: loc.get_attribute("aria-label")
+        start = lambda loc: label(loc).split(", ")[-1].split(" to ")[0]
+        square = pg.locator(".tl-lanes .clip.anim", has_text="square")
+        circle = pg.locator(".tl-lanes .clip.anim", has_text="circle")
+        assert "Create" in square.inner_text() and square.inner_text().index("square") < square.inner_text().index("Create"), \
+            "clips read object first"
+        assert pg.locator(".track-head", has_text="Statements").count() == 0, "no statement lane"
+        assert pg.locator(".tl-lanes .clip.step.pause").count() == 1, "the pause spans the tracks"
+        bands = pg.locator(".play-band")
+        assert bands.count() == 2
+
+        # 1. click the empty shading of group 1 (below its clip, on track 2): the group is selected
+        cb = circle.bounding_box()
+        pg.mouse.click(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] + 40)
+        pg.wait_for_timeout(300)
+        assert bands.nth(0).get_attribute("aria-pressed") == "true", "a click on the shading selects the group"
+        assert pg.locator("aside h3").last.inner_text() == "Animations together"
+
+        # 2. drag a clip of the selected group: the whole group moves (its start changes)
+        before = start(bands.nth(0))
+        pg.mouse.move(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(cb["x"] + cb["width"] / 2 + 150, cb["y"] + cb["height"] / 2, steps=8)
+        pg.mouse.up()
+        pg.wait_for_timeout(500)
+        assert start(circle) != "00:00:00:00", ("the group moved", before, start(circle))
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(400)
+        assert start(circle) == "00:00:00:00", "undo puts it back"
+
+        # 3. drag a single clip (its group not selected): that clip moves
+        pg.mouse.click(5 + pg.locator(".tl-lanes").bounding_box()["x"], pg.locator(".tl-lanes").bounding_box()["y"] + 5)  # deselect
+        sb = square.bounding_box()
+        s0 = start(square)
+        pg.mouse.move(sb["x"] + sb["width"] / 2, sb["y"] + sb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(sb["x"] + sb["width"] / 2 + 120, sb["y"] + sb["height"] / 2, steps=8)
+        pg.mouse.up()
+        pg.wait_for_timeout(500)
+        assert start(square) != s0, ("the clip moved", s0, start(square))
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(400)
+        assert start(square) == s0
+
+        # 4. trim the pause by its right edge
+        pause = pg.locator(".tl-lanes .clip.step.pause")
+        pb = pause.bounding_box()
+        l0 = label(pause)
+        pg.mouse.move(pb["x"] + pb["width"] - 3, pb["y"] + 20)
+        pg.mouse.down()
+        pg.mouse.move(pb["x"] + pb["width"] + 100, pb["y"] + 20, steps=8)
+        pg.mouse.up()
+        pg.wait_for_timeout(500)
+        assert label(pause) != l0 and "Pause" in label(pause), ("the pause got longer", l0, label(pause))
+
+        # 5. a marquee started inside a group's shading selects clips (it isn't swallowed by the band)
+        cb = circle.bounding_box()
+        sb = square.bounding_box()
+        pg.mouse.move(cb["x"] + 5, cb["y"] + cb["height"] + 60)
+        pg.mouse.down()
+        pg.mouse.move(sb["x"] + sb["width"] - 5, cb["y"] + 2, steps=8)
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
+        assert pg.locator('.tl-lanes .clip.anim[aria-pressed="true"]').count() == 2, "both clips selected"
+
+        # 6. right-click a group's shading: Disable takes its clips away and shows it in the strip; undo restores
+        pg.mouse.click(cb["x"] + cb["width"] / 2, cb["y"] + cb["height"] + 40, button="right")
+        pg.locator(".menu-item", has_text="Disable").click()
+        pg.wait_for_timeout(500)
+        assert clips(pg) == 1 and pg.locator(".steps-lane").count() == 1, "disabled group: out of the tracks, into the strip"
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(500)
+        assert clips(pg) == 2 and pg.locator(".steps-lane").count() == 0
+
+        # 7. a selected group moves as one: with two animations in it, dragging one moves the other too
+        pg.keyboard.press("Home")
+        add(pg, "Triangle")  # at the start: it joins group 1 (plays with the circle)
+        triangle = pg.locator(".tl-lanes .clip.anim", has_text="triangle")
+        assert start(triangle) == start(circle) == "00:00:00:00", (start(triangle), start(circle))
+        cb = circle.bounding_box()
+        pg.mouse.click(cb["x"] + cb["width"] / 2, cb["y"] + 2 * cb["height"] + 60)  # the shading, below both clips
+        pg.wait_for_timeout(300)
+        assert bands.nth(0).get_attribute("aria-pressed") == "true"
+        tb = triangle.bounding_box()
+        pg.mouse.move(tb["x"] + tb["width"] / 2, tb["y"] + tb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(tb["x"] + tb["width"] / 2 + 150, tb["y"] + tb["height"] / 2, steps=8)
+        pg.mouse.up()
+        pg.wait_for_timeout(500)
+        assert start(circle) != "00:00:00:00" and start(circle) == start(triangle), ("moved together", start(circle), start(triangle))
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -491,7 +595,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

@@ -537,7 +537,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3 className="mono">{step.kind === 'code' ? 'Code' : step.kind === 'couple' ? 'Couple' : step.kind === 'uncouple' ? 'Uncouple' : step.kind === 'call' ? `self.${step.method}(…)` : `self.${step.kind}(…)`}</h3>
+      <h3>{{ play: 'Animations together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />

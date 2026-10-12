@@ -584,8 +584,18 @@ button.brand:hover { background: var(--panel-2); }
 .track-head.steps-head { background: #1d1d21; }
 .track-head.steps-head .th-name { background: transparent; border-color: transparent; color: var(--muted); font-weight: 500; }
 .track-head .th-name { cursor: default; }
-.play-band { position: absolute; background: rgba(88, 196, 221, 0.035); border-left: 1px solid rgba(88, 196, 221, 0.18); border-right: 1px solid rgba(88, 196, 221, 0.18); pointer-events: none; }
-.play-band.sel { background: rgba(88, 196, 221, 0.09); }
+/* an animation group (self.play): the shaded column behind its clips, the only thing that marks it */
+.play-band { position: absolute; background: rgba(88, 196, 221, 0.05); border-left: 1px solid rgba(88, 196, 221, 0.22); border-right: 1px solid rgba(88, 196, 221, 0.22); pointer-events: none; }
+.play-band.sel { background: rgba(88, 196, 221, 0.13); border-color: rgba(88, 196, 221, 0.75); box-shadow: inset 0 2px 0 rgba(88, 196, 221, 0.75); }
+.play-band:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
+.play-band.ghost { opacity: 0.5; }
+.band-label { position: absolute; right: 4px; bottom: 2px; font: 10px var(--mono); color: #9fcfdd; white-space: nowrap; overflow: hidden; max-width: calc(100% - 8px); text-overflow: ellipsis; }
+/* a pause (self.wait): a hatched block across the tracks, where nothing moves */
+.clip.step.pause { background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 0 6px, rgba(255, 255, 255, 0.06) 6px 12px); border: 1px dashed #4a4b55; box-shadow: none; }
+.clip.step.pause .clip-head { align-items: flex-start; }
+.clip.step.pause .clip-name { color: var(--muted); font-weight: 500; }
+.clip.step.pause .clip-sub { color: var(--muted); }
+.clip.step.pause.sel { border: 1px solid #fff; }
 .clip.step .clip-head { background: transparent; min-height: 100%; }
 .clip.step.wait { background: repeating-linear-gradient(-45deg, #26272d 0 5px, #2c2d34 5px 10px); border-color: #3c3d45; }
 .clip.step.fixed::after { display: none; }
