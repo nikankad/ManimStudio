@@ -261,7 +261,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - Starters: a labeled triangle, a unit circle, a number line, and a secant-to-tangent demonstration.
 - **</> Code**: the whole scene as manim code, editable (see *Code* above).
 - **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**
-  renders at full quality.
+  renders at full quality; when it finishes, *Show in folder* and *Play* open the file manager at the video and
+  play it with your default app.
 
 **Help**: the toolbar's **? Help** button (or `?` / `F1`) opens a searchable guide to every feature, with
 buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time

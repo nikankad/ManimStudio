@@ -109,6 +109,7 @@ export const api = {
   exportCode: (doc: SceneDoc, path: string) => post<{ path: string }>('/api/export_code', { doc, path }),
   render: (doc: SceneDoc, quality: string, output?: string) => post<Job>('/api/render', { doc, quality, output }),
   job: (id: string) => get<Job>(`/api/render/${id}`),
+  reveal: (id: string, how: 'show' | 'open') => post<{ ok: boolean }>('/api/reveal', { id, how }),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
   initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; imported?: string; recovery?: Recovery[] }>('/api/project/initial'),

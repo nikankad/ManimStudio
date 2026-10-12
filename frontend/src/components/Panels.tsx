@@ -291,6 +291,7 @@ function ExportPanel() {
   const path = useStore((s) => s.path);
   const [quality, setQuality] = useState('project');
   const [output, setOutput] = useState(() => (path ? path.replace(PROJECT_EXT, '.mp4') : ''));
+  const suggested = `${path ? path.split(/[\\/]/).pop()!.replace(PROJECT_EXT, '') : doc.scene.name || 'scene'}.mp4`;
   const [job, setJob] = useState<Job | null>(null);
   const jobRef = useRef<string | null>(null);
   useEffect(() => () => { jobRef.current = null; }, []);
@@ -298,7 +299,7 @@ function ExportPanel() {
   const start = async () => {
     let out = output;
     if (!out) {
-      out = (await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:')) ?? '';
+      out = (await askPath('save', suggested, ['MP4 video (*.mp4)'], 'Save video to path:')) ?? '';
       if (!out) return;
       setOutput(out);
     }
@@ -329,7 +330,7 @@ function ExportPanel() {
         <span className="pname">Output</span>
         <div className="row">
           <Field className="mono" value={output} placeholder="choose a file…" onChange={setOutput} />
-          <button className="ghost" onClick={async () => { const p = await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:'); if (p) setOutput(p); }}>Browse</button>
+          <button className="ghost" onClick={async () => { const p = await askPath('save', suggested, ['MP4 video (*.mp4)'], 'Save video to path:'); if (p) setOutput(p); }}>Browse</button>
         </div>
       </label>
       {job && (
@@ -343,7 +344,15 @@ function ExportPanel() {
         {running ? (
           <button className="danger" onClick={() => job?.id && api.cancelJob(job.id).then(setJob)}>Cancel</button>
         ) : (
-          <button className="primary" onClick={() => start().catch((e) => toast(String(e)))}>Render with manim</button>
+          <>
+            {job?.state === 'done' && job.id && (
+              <>
+                <button onClick={() => api.reveal(job.id!, 'show').then((r) => r.ok || toast("Couldn't open the folder")).catch((e) => toast(String(e)))}>Show in folder</button>
+                <button onClick={() => api.reveal(job.id!, 'open').then((r) => r.ok || toast("Couldn't open the video")).catch((e) => toast(String(e)))}>Play</button>
+              </>
+            )}
+            <button className="primary" onClick={() => start().catch((e) => toast(String(e)))}>{job?.state === 'done' ? 'Render again' : 'Render with manim'}</button>
+          </>
         )}
       </div>
     </Modal>

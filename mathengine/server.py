@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, importer, mathexpr, recent, recovery, render, runtime, samples, starters, tex, version
+from . import catalog, codegen, importer, mathexpr, opener, recent, recovery, render, runtime, samples, starters, tex, version
 from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -121,6 +121,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
             ("POST", "/api/title"): self.api_title,
+            ("POST", "/api/reveal"): self.api_reveal,
             ("POST", "/api/expr"): self.api_expr,
             ("POST", "/api/check_equation"): self.api_check_equation,
             ("GET", "/api/constructions"): self.api_constructions,
@@ -399,6 +400,13 @@ class Handler(BaseHTTPRequestHandler):
         tmp.write_text(json.dumps({"version": 1, "constructions": body.get("library", [])}, indent=2), encoding="utf-8")
         tmp.replace(LIBRARY_PATH)
         return {"path": str(LIBRARY_PATH)}
+
+    def api_reveal(self, _q: dict, body: dict) -> dict:
+        """Show an export in the file manager, or play it with the default app. Only the result of a render job."""
+        job = self.app.jobs.get(str(body.get("id", "")))
+        if not job or job.state != "done" or not job.result:
+            return {"ok": False}
+        return {"ok": opener.open_path(Path(job.result), reveal=body.get("how") == "show")}
 
     def api_title(self, _q: dict, body: dict) -> dict:
         """Name the native window after the open project (a browser tab takes it from the page itself)."""
