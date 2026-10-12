@@ -241,19 +241,28 @@ def leaves(anims):
             yield a
 
 
+class _Unmeasured(Exception):
+    pass
+
+
 def one(path: str, scene: str) -> dict:
     from mathengine import codegen, runtime
     from mathengine.importer import CodeError, import_code
 
     src = Path(path).read_text()
     res: dict = {"scene": scene}
+    nat = None
     try:
         nat = native(src, scene)
     except BaseException as e:  # noqa: BLE001 - a scene manim can't run here
         res["skip"] = f"{type(e).__name__}: {str(e).strip().splitlines()[0][:120] if str(e).strip() else ''}"
-        return res
-    res["blank"] = all(bool((f == f[0, 0]).all()) for f in nat["frames"])
-    res["native_duration"] = nat["duration"]
+        # without LaTeX on this machine: still imported and counted, but how it plays isn't compared
+        res["unmeasured"] = "'latex'" in res["skip"]
+        if not res["unmeasured"]:
+            return res
+    if nat:
+        res["blank"] = all(bool((f == f[0, 0]).all()) for f in nat["frames"])
+        res["native_duration"] = nat["duration"]
     try:
         imp = import_code(src, scene=scene)
     except CodeError as e:
@@ -291,6 +300,8 @@ def one(path: str, scene: str) -> dict:
     # parity: regenerated code under manim, and the editor's preview
     regenerated = codegen.generate(doc, latex=True).source
     try:
+        if nat is None:
+            raise _Unmeasured
         again = native(regenerated, scene)
         res["regen_duration"] = [nat["duration"], again["duration"]]
         res["regen_plays"] = [nat["plays"], again["plays"]]
@@ -301,6 +312,8 @@ def one(path: str, scene: str) -> dict:
             worst = max(worst, float((abs(f0 - f1).max(axis=-1) > 2).mean()) if f0.shape == f1.shape else 1.0)
         res["regen_frame_diff"] = worst
         res["frames_compared"] = len(pairs)
+    except _Unmeasured:
+        pass
     except BaseException as e:  # noqa: BLE001
         res["regen_error"] = f"{type(e).__name__}: {str(e)[:160]}"
     try:
@@ -371,30 +384,32 @@ def pct(a: int, b: int) -> str:
 
 
 def report(results: list[dict], sources: dict) -> str:
-    ran = [r for r in results if "skip" not in r]
+    ran = [r for r in results if "skip" not in r or r.get("unmeasured")]
     imported = [r for r in ran if "import_error" not in r]
     lines = ["# Import fidelity", "",
              "How much of real manim code becomes an editable scene, measured by `scripts/import_fidelity.py` "
              f"(manim {__import__('manim').__version__}, {FPS} fps, {SIZE[0]}×{SIZE[1]}). "
-             "Scenes manim itself can't render here (no LaTeX on this machine, OpenGL only, missing asset files) are "
-             "skipped and left out of the numbers.", "",
+             "Scenes manim itself can't render here (OpenGL only, missing asset files, missing packages) are skipped "
+             "and left out of the numbers; scenes that only need LaTeX (not installed here) count in everything but "
+             "the comparisons with manim.", "",
              "Reading the numbers: a statement kept as a code step still runs exactly as written (the parity rows), "
              "but the editor can't show or change what it does: its objects aren't in the scene's object list, its "
              "animations have no keyframe rows. So the share of statements on the timeline is how much of a project is "
              "editable, and parity is how much of it is safe.", ""]
 
     def section(title, rs):
-        rs_ran = [r for r in rs if "skip" not in r]
+        rs_ran = [r for r in rs if "skip" not in r or r.get("unmeasured")]
         rs_imp = [r for r in rs_ran if "import_error" not in r]
+        measured = [r for r in rs_imp if "skip" not in r]
         st = sum(r["statements"] for r in rs_imp)
         code = sum(min(r["code_statements"], r["statements"]) for r in rs_imp)
         anims = sum(r["anims"] for r in rs_imp)
         on_obj = sum(r["anims_on_objects"] for r in rs_imp)
-        regen_ok = [r for r in rs_imp if "regen_error" not in r]
+        regen_ok = [r for r in measured if "regen_error" not in r]
         same_len = sum(1 for r in regen_ok if r["regen_duration"][0] == r["regen_duration"][1] and r["regen_plays"][0] == r["regen_plays"][1])
         same_frame = sum(1 for r in regen_ok if r["regen_frame_diff"] == 0)
         nonblank = sum(1 for r in regen_ok if not r["blank"])
-        ed = [r for r in rs_imp if "editor_error" not in r and "editor_duration" in r]
+        ed = [r for r in measured if "editor_error" not in r and "editor_duration" in r]
         ed_same = sum(1 for r in ed if abs(r["editor_duration"] - r["native_duration"]) < 1e-3)
         all_struct = sum(1 for r in rs_imp if r["code_statements"] == 0)
         same_ast = sum(1 for r in rs_imp if r["same_ast"])
@@ -402,14 +417,14 @@ def report(results: list[dict], sources: dict) -> str:
         rewrites = ", ".join(f"{n} {k}" for k, n in kinds.most_common()) or "none"
         return [f"## {title}", "",
                 "| | |", "|---|---|",
-                f"| Scenes | {len(rs)} ({len(rs) - len(rs_ran)} skipped: manim can't render them here) |",
+                f"| Scenes | {len(rs)} ({len(rs) - len(rs_ran)} skipped: manim can't render them here; {len(rs_imp) - len(measured)} more need LaTeX, so they count below except in the rows that compare with manim) |",
                 f"| Imported | {len(rs_imp)} of {len(rs_ran)} |",
                 f"| construct() statements on the timeline (not code steps) | **{pct(st - code, st)}** ({st - code} of {st}) |",
                 f"| Scenes with no code steps at all | {pct(all_struct, len(rs_imp))} ({all_struct} of {len(rs_imp)}) |",
                 f"| Animations whose target is one of the scene's objects (keyframe rows) | {pct(on_obj, anims)} ({on_obj} of {anims}) |",
-                f"| Regenerated code: same length and plays as the original under manim | {pct(same_len, len(regen_ok))} ({same_len} of {len(regen_ok)}; {len(rs_imp) - len(regen_ok)} failed to run) |",
+                f"| Regenerated code: same length and plays as the original under manim | {pct(same_len, len(regen_ok))} ({same_len} of {len(regen_ok)}; {len(measured) - len(regen_ok)} failed to run) |",
                 f"| Regenerated code: same frame at the end of every play and wait, pixel for pixel | {pct(same_frame, len(regen_ok))} ({same_frame} of {len(regen_ok)}; {nonblank} of these scenes show something) |",
-                f"| Editor preview: same length as manim | {pct(ed_same, len(rs_imp))} ({ed_same} of {len(rs_imp)}) |",
+                f"| Editor preview: same length as manim | {pct(ed_same, len(measured))} ({ed_same} of {len(measured)}) |",
                 f"| Regenerated construct() is the same Python (AST) | {pct(same_ast, len(rs_imp))} ({same_ast} of {len(rs_imp)}; the others: {rewrites}) |", ""]
 
     groups = collections.defaultdict(list)
@@ -419,6 +434,11 @@ def report(results: list[dict], sources: dict) -> str:
         if groups[g]:
             lines += section({"project-shaped": "Project-shaped files (scripts/fidelity_corpus)", "examples/": "This repository's examples/",
                               "manim docs": "manim's documentation examples"}[g], groups[g])
+
+    multi = sorted({r["file"] for r in imported if r.get("scenes_in_file", 1) > 1})
+    if multi:
+        lines += ["Files with several scenes (" + ", ".join(multi) + ") open one scene per project; the other scenes "
+                  "stay in the regenerated file as written.", ""]
 
     # keyframes
     per = collections.Counter()
@@ -455,9 +475,9 @@ def report(results: list[dict], sources: dict) -> str:
         cls.update(r.get("anim_classes", {}))
     lines += ["## Animation classes on the timeline", "", ", ".join(f"{c} {n}" for c, n in cls.most_common(30)), ""]
 
-    skipped = collections.Counter(re.sub(r"'[^']*'|\"[^\"]*\"", "…", r["skip"])[:100] for r in results if "skip" in r)
+    skipped = collections.Counter(re.sub(r"'[^']*'|\"[^\"]*\"", "…", r["skip"])[:100] for r in results if "skip" in r and not r.get("unmeasured"))
     lines += ["## Skipped (manim can't render them here)", ""] + [f"- {n}× {w}" for w, n in skipped.most_common(10)] + [""]
-    failed = [r for r in ran if "import_error" in r or "regen_error" in r or "editor_error" in r]
+    failed = [r for r in ran if "import_error" in r or "regen_error" in r or ("editor_error" in r and "skip" not in r)]
     lines += ["## Failures", ""]
     for r in failed:
         what = r.get("import_error") and f"import: {r['import_error']}" or r.get("regen_error") and f"regenerated: {r['regen_error']}" or f"preview: {r['editor_error']}"
@@ -466,12 +486,12 @@ def report(results: list[dict], sources: dict) -> str:
         lines.append("None.")
     lines += ["", "## Per scene", "", "| File | Scene | Statements on timeline | Anims on objects | Regenerated = original | Same AST |", "|---|---|---|---|---|---|"]
     for r in results:
-        if "skip" in r:
+        if "skip" in r and not r.get("unmeasured"):
             continue
         if "import_error" in r:
             lines.append(f"| {r['file']} | {r['scene']} | import failed | | | |")
             continue
-        regen = "error" if "regen_error" in r else ("yes" if r["regen_frame_diff"] == 0 and r["regen_duration"][0] == r["regen_duration"][1] else f"no ({r['regen_duration']}, {r['regen_frame_diff']:.1%} px)")
+        regen = "needs LaTeX" if r.get("unmeasured") else "error" if "regen_error" in r else ("yes" if r["regen_frame_diff"] == 0 and r["regen_duration"][0] == r["regen_duration"][1] else f"no ({r['regen_duration']}, {r['regen_frame_diff']:.1%} px)")
         lines.append(f"| {r['file']} | {r['scene']} | {r['statements'] - min(r['code_statements'], r['statements'])}/{r['statements']} | {r['anims_on_objects']}/{r['anims']} | {regen} | {'yes' if r['same_ast'] else r['code_diff']} |")
     return "\n".join(lines) + "\n"
 
