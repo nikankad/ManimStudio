@@ -77,6 +77,8 @@ def docstring_examples(dest: Path) -> list[Path]:
             except SyntaxError:  # a doctest (>>>) or a fragment, not a file
                 continue
             f = dest / f"{py.stem}__{name}.py"
+            if f.exists():  # the same example shown twice (a class's docstring and its module's)
+                continue
             f.write_text(("" if "from manim import" in src else "from manim import *\n\n") + src + "\n")
             out.append(f)
     return out
@@ -108,6 +110,8 @@ def native(src: str, scene: str) -> dict:
                        "pixel_height": SIZE[1], "verbosity": "ERROR", "progress_bar": "none", "write_to_movie": False,
                        "media_dir": media}):
         ns: dict = {"__name__": "corpus_scene"}
+        random.seed(0)  # module-level randomness too (a random graph made at import)
+        np.random.seed(0)
         exec(compile(src, "<scene>", "exec"), ns)
         s = ns[scene]()
         frames = []
@@ -337,7 +341,10 @@ def scenes_of(path: Path) -> list[str]:
 def run_one(args: tuple[str, str, str]) -> dict:
     path, scene, out = args
     try:
-        subprocess.run([sys.executable, __file__, "--one", path, scene, out], cwd=ROOT, timeout=180,
+        # its own cache (the preview's media folder): Text writes SVG files there, which scenes running side by
+        # side would otherwise read half-written
+        env = {**os.environ, "XDG_CACHE_HOME": tempfile.mkdtemp(prefix="import-fidelity-cache-")}
+        subprocess.run([sys.executable, __file__, "--one", path, scene, out], cwd=ROOT, timeout=180, env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         return json.loads(Path(out).read_text())
     except subprocess.TimeoutExpired:
