@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, importer, mathexpr, recent, render, runtime, samples, starters, tex, version
+from . import catalog, codegen, importer, mathexpr, recent, recovery, render, runtime, samples, starters, tex, version
 from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -113,6 +113,9 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/project/save"): self.api_project_save,
             ("GET", "/api/home"): self.api_home,
             ("POST", "/api/recent/remove"): self.api_recent_remove,
+            ("POST", "/api/recovery/save"): self.api_recovery_save,
+            ("POST", "/api/recovery/open"): self.api_recovery_open,
+            ("POST", "/api/recovery/clear"): self.api_recovery_clear,
             ("POST", "/api/samples/open"): self.api_sample_open,
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
@@ -334,11 +337,27 @@ class Handler(BaseHTTPRequestHandler):
     def api_home(self, _q: dict, _b: dict) -> dict:
         with self.app.manim_lock:  # sample lengths are measured by running them once
             listing = samples.sample_list()
-        return {"recent": recent.listing(), "samples": listing}
+        return {"recent": recent.listing(), "samples": listing, "recovery": recovery.listing()}
 
     def api_recent_remove(self, _q: dict, body: dict) -> dict:
         recent.remove(str(body.get("path", "")))
         return {"recent": recent.listing()}
+
+    def api_recovery_save(self, _q: dict, body: dict) -> dict:
+        """Keep the unsaved state of the open project, so a crash or a closed window doesn't lose it."""
+        path = body.get("path")
+        recovery.save(str(body.get("id", "")), str(path) if path else None, body["doc"])
+        return {"ok": True}
+
+    def api_recovery_open(self, _q: dict, body: dict) -> dict:
+        data = recovery.load(str(body.get("id", "")))
+        if not data:
+            raise ValueError("That unsaved work is gone")
+        return {"doc": data["doc"], "path": data.get("path")}
+
+    def api_recovery_clear(self, _q: dict, body: dict) -> dict:
+        recovery.clear(str(body.get("id", "")))
+        return {"recovery": recovery.listing()}
 
     def api_sample_open(self, _q: dict, body: dict) -> dict:
         """A sample opens as a new, unsaved project (saving asks where, so the sample itself never changes)."""

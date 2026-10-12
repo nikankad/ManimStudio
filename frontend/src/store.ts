@@ -115,6 +115,7 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
     requestFrame();
   }
   if (state.doc.header !== prev.doc.header) void loadCatalog();
+  if (state.doc !== prev.doc || state.dirty !== prev.dirty || state.path !== prev.path || state.hasProject !== prev.hasProject) syncRecovery();
   listeners.forEach((l) => l());
 }
 
@@ -150,11 +151,54 @@ export function redo() {
   setState({ doc: future[0], future: future.slice(1), past: [...past, doc], dirty: true });
 }
 
-export function loadDoc(doc: SceneDoc, path: string | null) {
+/** Open a document as the current project. `recoverId` is a copy of unsaved work being restored: it stays unsaved. */
+export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) {
   doc.markers ??= [];
   doc.constructions ??= [];
   doc.timeline ??= [];
-  setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
+  forgetRecovery(); // whatever was open is saved or discarded by now
+  if (recoverId) {
+    recoveryId = recoverId;
+    recoveryTouched = true;
+  }
+  setState({ video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
+}
+
+// ---------------------------------------------------------------- unsaved-work recovery
+
+// While the project has unsaved changes, a copy goes to the backend every few seconds (recovery.py); Home offers
+// it back after a crash. Saving, or opening another project over these changes, removes the copy.
+
+const RECOVERY_DELAY = 2500; // ms
+const newRecoveryId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+let recoveryId = newRecoveryId();
+let recoveryTouched = false; // a copy under this id may exist on the backend
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let recoveryChain: Promise<unknown> = Promise.resolve(); // requests go in order, so a late write can't undo a clear
+
+function syncRecovery() {
+  const { dirty, hasProject } = state;
+  if (dirty && hasProject) {
+    recoveryTimer ??= setTimeout(() => {
+      recoveryTimer = null;
+      const { dirty: d, hasProject: h, path, doc } = state;
+      if (!d || !h) return;
+      recoveryTouched = true;
+      const id = recoveryId;
+      recoveryChain = recoveryChain.then(() => api.saveRecovery(id, path, doc)).catch(() => undefined); // best effort
+    }, RECOVERY_DELAY);
+  } else forgetRecovery();
+}
+
+function forgetRecovery() {
+  if (recoveryTimer) clearTimeout(recoveryTimer);
+  recoveryTimer = null;
+  if (recoveryTouched) {
+    const id = recoveryId;
+    recoveryChain = recoveryChain.then(() => api.clearRecovery(id)).catch(() => undefined);
+  }
+  recoveryTouched = false;
+  recoveryId = newRecoveryId();
 }
 
 export function toast(msg: string) {

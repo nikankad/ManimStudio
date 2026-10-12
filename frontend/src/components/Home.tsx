@@ -2,7 +2,7 @@
 // project file was given) and from the toolbar's Manim Studio button.
 
 import { useEffect, useMemo, useState } from 'react';
-import { api, type RecentProject, type Sample } from '../api';
+import { api, type Recovery, type RecentProject, type Sample } from '../api';
 import { emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
@@ -41,6 +41,17 @@ async function openSample(s: Sample) {
   }
 }
 
+async function restore(r: Recovery) {
+  if (!discardOk()) return;
+  try {
+    const res = await api.openRecovery(r.id);
+    loadDoc(res.doc, res.path, r.id);
+    toast(`Restored the unsaved changes to ${r.name}. Save to keep them.`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
 export function Home() {
   const app = useStore((s) => s.app);
   const hasProject = useStore((s) => s.hasProject);
@@ -48,10 +59,11 @@ export function Home() {
   const [section, setSection] = useState<Section>('home');
   const [recent, setRecent] = useState<RecentProject[] | null>(null);
   const [samples, setSamples] = useState<Sample[]>([]);
+  const [recovery, setRecovery] = useState<Recovery[]>([]);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); setRecovery(h.recovery ?? []); }).catch((e) => { setRecent([]); toast(String(e)); });
     if (!getState().app) api.version().then((a) => setState({ app: a })).catch(() => undefined);
   }, []);
 
@@ -61,6 +73,7 @@ export function Home() {
   }, [recent, filter]);
 
   const remove = (r: RecentProject) => api.removeRecent(r.path).then((h) => setRecent(h.recent)).catch((e) => toast(String(e)));
+  const dropRecovery = (r: Recovery) => api.clearRecovery(r.id).then((h) => setRecovery(h.recovery)).catch((e) => toast(String(e)));
   const current = hasProject ? (path ? path.split(/[\\/]/).pop() : 'Untitled') : null;
 
   return (
@@ -89,6 +102,21 @@ export function Home() {
         <main className="home-main">
           {section === 'home' ? (
             <>
+              {recovery.length > 0 && (
+                <section className="recovery">
+                  <h2>Unsaved work</h2>
+                  <p className="muted small">Changes that were never saved: the app closed or crashed before you could.</p>
+                  {recovery.map((r) => (
+                    <div key={r.id} className="recovery-row">
+                      <span className="recovery-name"><b>{r.name}</b>{r.scene && <span className="muted"> · {r.scene}</span>}</span>
+                      <span className="muted">{ago(r.saved)}</span>
+                      <span className="spacer" />
+                      <button className="primary" onClick={() => void restore(r)}>Restore</button>
+                      <button title="Delete these unsaved changes for good" onClick={() => void dropRecovery(r)}>Discard</button>
+                    </div>
+                  ))}
+                </section>
+              )}
               <section>
                 <h2>Start from a sample</h2>
                 <div className="sample-grid">

@@ -79,6 +79,13 @@ export interface RecentProject {
   exists: boolean;
   thumbnail: string | null; // data URL
 }
+export interface Recovery {
+  id: string;
+  path: string | null; // the project it was a copy of (none: untitled)
+  name: string;
+  scene: string;
+  saved: number; // seconds since the epoch
+}
 export interface Sample {
   id: string;
   name: string;
@@ -107,8 +114,11 @@ export const api = {
   initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; imported?: string }>('/api/project/initial'),
   openProject: (path: string) => post<{ doc: SceneDoc; path: string | null; imported?: string; notes?: string[] }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
-  home: () => get<{ recent: RecentProject[]; samples: Sample[] }>('/api/home'),
+  home: () => get<{ recent: RecentProject[]; samples: Sample[]; recovery: Recovery[] }>('/api/home'),
   removeRecent: (path: string) => post<{ recent: RecentProject[] }>('/api/recent/remove', { path }),
+  saveRecovery: (id: string, path: string | null, doc: SceneDoc) => post<{ ok: boolean }>('/api/recovery/save', { id, path, doc }),
+  openRecovery: (id: string) => post<{ doc: SceneDoc; path: string | null }>('/api/recovery/open', { id }),
+  clearRecovery: (id: string) => post<{ recovery: Recovery[] }>('/api/recovery/clear', { id }),
   openSample: (id: string) => post<{ doc: SceneDoc; path: null }>('/api/samples/open', { id }),
   analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number]) =>
     post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range }),

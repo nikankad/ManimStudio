@@ -98,3 +98,34 @@ def test_missing_project_file_starts_at_home(tmp_path):
         assert r["home"] is True and r["path"] is None and r["missing"].endswith("gone.mathengine")
     finally:
         server.shutdown()
+
+
+def test_recovery_keeps_unsaved_work_until_cleared(tmp_path):
+    from mathengine import recovery
+
+    assert recovery.listing() == []
+    doc = {"version": 4, "scene": {"name": "Demo"}}
+    recovery.save("abc123456", None, doc)
+    recovery.save("def123456", str(tmp_path / "talk.manimstudio"), {**doc, "scene": {"name": "Talk"}})
+    items = recovery.listing()
+    assert {i["id"]: (i["name"], i["scene"]) for i in items} == {"abc123456": ("Untitled", "Demo"), "def123456": ("talk", "Talk")}
+    assert all("doc" not in i for i in items)
+    assert recovery.load("abc123456")["doc"] == doc
+    recovery.clear("abc123456")
+    recovery.clear("abc123456")  # already gone
+    assert [i["id"] for i in recovery.listing()] == ["def123456"]
+    assert recovery.load("abc123456") is None
+
+
+def test_recovery_ids_cannot_leave_the_folder_and_old_copies_go():
+    from mathengine import recovery
+
+    for bad in ("../x", "a/b", "", "short"):
+        with pytest.raises(ValueError):
+            recovery.save(bad, None, {})
+    for i in range(recovery.LIMIT + 3):
+        recovery.save(f"session{i:04d}", None, {"scene": {"name": str(i)}})
+        time.sleep(0.01)
+    kept = recovery.listing()
+    assert len(kept) == recovery.LIMIT
+    assert kept[0]["scene"] == str(recovery.LIMIT + 2)  # the newest survives
