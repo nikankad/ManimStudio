@@ -10,17 +10,14 @@ import { CodeEditor } from './components/CodeEditor';
 import { Tour, WelcomeCard } from './components/Help';
 import { Home } from './components/Home';
 import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
+import { pref, setPref } from './prefs';
 import { loadTemplates } from './templates';
 
 const TL_KEY = 'mathengine.timelineHeight';
 
 function savedHeight(): number {
-  try {
-    const v = Number(localStorage.getItem(TL_KEY));
-    if (v > 120) return v;
-  } catch {
-    /* storage unavailable */
-  }
+  const v = Number(pref(TL_KEY));
+  if (v > 120) return v;
   return Math.max(220, Math.round(window.innerHeight * 0.4)); // the window can be 0 tall while it opens
 }
 
@@ -74,11 +71,7 @@ export function App() {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', () => {
       window.removeEventListener('pointermove', move);
-      try {
-        localStorage.setItem(TL_KEY, String(Math.round(h)));
-      } catch {
-        /* storage unavailable */
-      }
+      setPref(TL_KEY, String(Math.round(h)));
     }, { once: true });
   };
 

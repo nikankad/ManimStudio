@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { getState, setState, useStore } from '../store';
 import { Modal } from './Modal';
 import { keys } from '../keys';
+import { pref, setPref } from '../prefs';
 
 // ---------------------------------------------------------------- guided tour
 
@@ -422,20 +423,10 @@ const WELCOME_KEY = 'mathengine.welcomed';
 export function WelcomeCard() {
   const tour = useStore((s) => s.tour);
   const panel = useStore((s) => s.panel);
-  const [show, setShow] = useState(() => {
-    try {
-      return !localStorage.getItem(WELCOME_KEY);
-    } catch {
-      return false; // storage unavailable: don't nag
-    }
-  });
+  const [show, setShow] = useState(() => !pref(WELCOME_KEY));
   const dismiss = () => {
     setShow(false);
-    try {
-      localStorage.setItem(WELCOME_KEY, '1');
-    } catch {
-      /* storage unavailable */
-    }
+    setPref(WELCOME_KEY, '1');
   };
   if (!show || tour !== null || panel) return null;
   return (

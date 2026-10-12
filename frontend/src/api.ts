@@ -127,6 +127,8 @@ export const api = {
   checkEquation: (parts: string[], ctor: string) => post<EquationCheck>('/api/check_equation', { parts, ctor }),
   constructions: () => get<{ starters: Template[]; library: Template[]; path: string }>('/api/constructions'),
   saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),
+  prefs: () => get<{ prefs: Record<string, string> }>('/api/prefs'),
+  setPref: (key: string, value: string | null) => post<{ prefs: Record<string, string> }>('/api/prefs', { key, value }),
   setTitle: (title: string) => post<{ ok: boolean }>('/api/title', { title }),
   dialog: (kind: 'open' | 'save', filename = '', types: string[] = []) =>
     post<{ path: string | null; unsupported?: boolean }>('/api/dialog', { kind, filename, types }),

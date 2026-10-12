@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, importer, mathexpr, opener, recent, recovery, render, runtime, samples, starters, tex, version
+from . import catalog, codegen, importer, mathexpr, opener, prefs, recent, recovery, render, runtime, samples, starters, tex, version
 from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -121,6 +121,8 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
             ("POST", "/api/title"): self.api_title,
+            ("GET", "/api/prefs"): self.api_prefs,
+            ("POST", "/api/prefs"): self.api_set_pref,
             ("POST", "/api/reveal"): self.api_reveal,
             ("POST", "/api/expr"): self.api_expr,
             ("POST", "/api/check_equation"): self.api_check_equation,
@@ -407,6 +409,12 @@ class Handler(BaseHTTPRequestHandler):
         if not job or job.state != "done" or not job.result:
             return {"ok": False}
         return {"ok": opener.open_path(Path(job.result), reveal=body.get("how") == "show")}
+
+    def api_prefs(self, _q: dict, _b: dict) -> dict:
+        return {"prefs": prefs.load()}
+
+    def api_set_pref(self, _q: dict, body: dict) -> dict:
+        return {"prefs": prefs.set_pref(body.get("key"), body.get("value"))}
 
     def api_title(self, _q: dict, body: dict) -> dict:
         """Name the native window after the open project (a browser tab takes it from the page itself)."""
