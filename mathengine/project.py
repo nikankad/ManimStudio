@@ -52,8 +52,18 @@ def new_project() -> dict:
     }
 
 
+def resolve_project_path(path: str | Path) -> Path:
+    """Follow a missing legacy filename to its renamed .manimstudio sibling."""
+    requested = Path(path).expanduser()
+    if not requested.exists() and requested.suffix == ".mathengine":
+        renamed = requested.with_suffix(".manimstudio")
+        if renamed.is_file():
+            return renamed
+    return requested
+
+
 def load_project(path: str | Path) -> dict:
-    doc = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    doc = json.loads(resolve_project_path(path).read_text(encoding="utf-8"))
     return upgrade(doc)
 
 

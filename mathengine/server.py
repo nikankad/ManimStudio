@@ -20,7 +20,7 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 from . import catalog, codegen, importer, mathexpr, recent, render, runtime, samples, starters, tex, version
-from .project import load_project, new_project, save_project, upgrade_template
+from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
 
@@ -30,7 +30,7 @@ WEB_DIR = Path(__file__).parent / "web"
 class AppState:
     def __init__(self, project_path: str | None):
         self.token = secrets.token_urlsafe(24)
-        self.project_path = project_path
+        self.project_path = str(resolve_project_path(project_path)) if project_path else None
         self.manim_lock = threading.Lock()
         self.jobs: dict[str, render.RenderJob] = {}
         self.catalog_cache: dict[str, dict] = {}
@@ -300,17 +300,18 @@ class Handler(BaseHTTPRequestHandler):
         return {"doc": res.doc, "path": None, "imported": path, "notes": res.notes, "scenes": res.scenes}
 
     def api_project_open(self, _q: dict, body: dict) -> dict:
-        if str(body["path"]).endswith(".py"):
+        path = str(resolve_project_path(body["path"]))
+        if path.endswith(".py"):
             try:
-                out = self._import_file(body["path"])
+                out = self._import_file(path)
             except importer.CodeError as exc:
                 raise ValueError(exc.message) from None
-            recent.add(body["path"])
+            recent.add(path)
             return out
-        doc = load_project(body["path"])
-        self.app.project_path = body["path"]
-        recent.add(body["path"])
-        return {"doc": doc, "path": body["path"]}
+        doc = load_project(path)
+        self.app.project_path = path
+        recent.add(path)
+        return {"doc": doc, "path": path}
 
     def api_project_save(self, _q: dict, body: dict) -> dict:
         save_project(body["path"], body["doc"])

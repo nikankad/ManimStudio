@@ -13,6 +13,8 @@ import os
 import time
 from pathlib import Path
 
+from .project import resolve_project_path
+
 LIMIT = 24
 MAX_THUMBNAIL = 400_000  # bytes
 
@@ -30,7 +32,7 @@ def _thumb(path: str) -> Path:
 
 
 def _norm(path: str | Path) -> str:
-    return str(Path(path).expanduser().resolve())
+    return str(resolve_project_path(path).resolve())
 
 
 def _load() -> list[dict]:
@@ -52,7 +54,7 @@ def _write(entries: list[dict]) -> None:
 def add(path: str | Path, thumbnail: str | None = None) -> None:
     """Put a project first in the list (opened or saved just now), with its preview if given (a JPEG data URL)."""
     path = _norm(path)
-    entries = [e for e in _load() if e["path"] != path]
+    entries = [e for e in _load() if _norm(e["path"]) != path]
     entries.insert(0, {"path": path, "opened": time.time()})
     _write(entries)
     if thumbnail:
@@ -76,9 +78,13 @@ def set_thumbnail(path: str | Path, thumbnail: str) -> None:
 def remove(path: str) -> None:
     """Take a project off the list (the file itself is left alone)."""
     entries = _load()
-    kept = [e for e in entries if e["path"] != path]
+    path = _norm(path)
+    kept = [e for e in entries if _norm(e["path"]) != path]
     if len(kept) != len(entries):
         _write(kept)
+        for e in entries:
+            if _norm(e["path"]) == path:
+                _thumb(e["path"]).unlink(missing_ok=True)
         _thumb(path).unlink(missing_ok=True)
 
 
@@ -86,15 +92,17 @@ def listing() -> list[dict]:
     """The list for the Home screen: name, folder, when opened, size, whether the file still exists, preview."""
     out = []
     for e in _load():
-        p = Path(e["path"])
+        p = resolve_project_path(e["path"])
         try:
             st = p.stat()
             exists, size, modified = True, st.st_size, st.st_mtime
         except OSError:
             exists, size, modified = False, None, None
         thumb = _thumb(e["path"])
+        if not thumb.is_file():
+            thumb = _thumb(str(p))
         out.append({
-            "path": e["path"], "name": p.stem, "folder": str(p.parent), "opened": e.get("opened"),
+            "path": str(p), "name": p.stem, "folder": str(p.parent), "opened": e.get("opened"),
             "modified": modified, "size": size, "exists": exists,
             "thumbnail": "data:image/jpeg;base64," + base64.b64encode(thumb.read_bytes()).decode() if exists and thumb.is_file() else None,
         })
