@@ -90,6 +90,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
   - Drag the line under a track's name (V1, V2…) to change that track's height; double-click it for the usual
     height. Heights are remembered between launches.
+  - **+ Add track** under the track names adds empty tracks, and × removes the last one while it's empty. A clip
+    moved onto an empty track joins that group on its next free track (its place in the `self.play`).
   - Clips show what they do to their object, like transitions and keyframes in Premiere: an **IN** clip (`Create`,
     `FadeIn`, …) ramps up as it brings its object on screen, an **OUT** clip ramps down, a **⇄** swap
     (`ReplacementTransform`) does both, and an **fx** clip changes an object already there, from the keyframe ◆ at

@@ -688,7 +688,49 @@ def track_heights(b):
         assert "ui.trackHeights" not in json.load(open(os.path.join(home, "prefs.json")))
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def add_tracks(b):
+    """+ Add track adds empty V tracks (remembered between launches); a clip moved onto one plays after the others in
+    its group (the next free track); × removes the last track while it is empty."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 1000)
+        new_project(pg)
+        add(pg, "Circle")  # group 1, V1
+        add(pg, "Square")  # group 2, V1
+        heads = lambda: pg.locator(".track-head:not(.steps-head)").count()
+        assert heads() == 3
+        for _ in range(3):
+            pg.get_by_role("button", name="+ Add track").click()
+        assert heads() == 6
+        assert json.load(open(os.path.join(home, "prefs.json")))["ui.tracks"] == "6"
+
+        # drag the square onto V6 in the circle's column: it joins the circle's group, on V2
+        circle = pg.locator(".tl-lanes .clip.anim", has_text="circle")
+        square = pg.locator(".tl-lanes .clip.anim", has_text="square")
+        cb, sb = circle.bounding_box(), square.bounding_box()
+        v6 = pg.locator(".track-head:not(.steps-head)").nth(5).bounding_box()
+        pg.mouse.move(sb["x"] + 10, sb["y"] + sb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(cb["x"] + 10, v6["y"] + v6["height"] / 2, steps=10)
+        pg.mouse.up()
+        pg.wait_for_timeout(600)
+        sb = square.bounding_box()
+        assert abs(sb["x"] - cb["x"]) < 2 and abs(sb["y"] - (cb["y"] + cb["height"] + 6)) < 3, ("next free track", cb, sb)
+
+        # × on the last (empty) track removes it; a track with clips has none
+        pg.get_by_role("button", name="Remove V6").click()
+        assert heads() == 5 and pg.get_by_role("button", name="Remove V5").count() == 1
+        for n in [5, 4, 3]:
+            pg.get_by_role("button", name=f"Remove V{n}").click()
+        assert heads() == 2 and pg.get_by_role("button", name="Remove V2").count() == 0, "V2 holds the square"
+        assert not pg.errors, pg.errors
+        ctx.close()
+        ctx, pg = page_in(b, url, 1500, 1000)
+        if pg.locator(".home").count():
+            new_project(pg)
+        assert heads() == 2, "remembered"
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

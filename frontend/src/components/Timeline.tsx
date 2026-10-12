@@ -19,6 +19,9 @@ const ROW_MIN = 26;
 const ROW_MAX = 240;
 const HEIGHTS_KEY = 'ui.trackHeights'; // each track's height (V1, V2…), comma-separated; empty for the usual one
 
+const TRACKS_KEY = 'ui.tracks'; // how many tracks to show at least (empty ones too)
+const TRACKS = 3;
+const savedTracks = () => Math.max(1, Math.min(32, Math.round(Number(pref(TRACKS_KEY))) || TRACKS));
 const savedHeights = () => (pref(HEIGHTS_KEY) ?? '').split(',').map((v) => (Number(v) >= ROW_MIN && Number(v) <= ROW_MAX ? Math.round(Number(v)) : 0));
 const STRIP = 24; // height of the strip for steps that aren't animations (add, remove, code…), when there are any
 const RULER = 30;
@@ -96,6 +99,7 @@ export function Timeline() {
   const [dropAt, setDropAt] = useState<{ t: number; row: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [heights, setHeights] = useState<number[]>(savedHeights);
+  const [tracks, setTracks] = useState(savedTracks);
 
   const lay = docLayout(doc, timeline);
   // While dragging, the timeline shows the result of the edit: later steps move along, like a magnetic timeline.
@@ -132,7 +136,13 @@ export function Timeline() {
       resizeTrack(r, h, true);
     }, { once: true });
   };
-  const rows = Math.max(3, slay.rows + (drag?.mode === 'anims' && drag.moved ? 1 : 0));
+  const rows = Math.max(tracks, slay.rows + (drag?.mode === 'anims' && drag.moved ? 1 : 0));
+  /** Show this many tracks (at least as many as the clips use), remembered between launches. */
+  const setTrackCount = (n: number) => {
+    const next = Math.max(1, Math.min(32, n));
+    setTracks(next);
+    setPref(TRACKS_KEY, next === TRACKS ? null : String(next));
+  };
   const selected = new Set(selection?.kind === 'clips' ? selection.ids : []);
   const end = slay.end;
   const x = (t: number) => (t - v0) * pps;
@@ -141,7 +151,7 @@ export function Timeline() {
   const rowH = (r: number) => heights[r] || ROW;
   const tracksH = (n: number) => { let h = 0; for (let i = 0; i < n; i++) h += rowH(i); return h; };
   const rowTop = (r: number) => RULER + stripH + tracksH(r);
-  const totalH = RULER + stripH + tracksH(rows) + 24;
+  const totalH = RULER + stripH + tracksH(rows) + 36; // room for + Add track
 
   useLayoutEffect(() => {
     const el = laneRef.current!;
@@ -531,11 +541,15 @@ export function Timeline() {
             {Array.from({ length: rows }, (_, r) => (
               <div key={r} className="track-head" style={{ height: rowH(r) }} title={`Track ${r + 1}: animations that play together (the shaded column behind them) are stacked on separate tracks`}>
                 <span className="th-name">V{r + 1}</span>
+                {r === rows - 1 && r >= slay.rows && rows > 1 && (
+                  <button className="x-btn th-remove" title={`Remove V${r + 1} (it is empty)`} aria-label={`Remove V${r + 1}`} onClick={() => setTrackCount(rows - 1)}>×</button>
+                )}
                 <div className="th-resize" role="separator" aria-orientation="horizontal" aria-label={`V${r + 1} height`} aria-valuenow={rowH(r)} aria-valuemin={ROW_MIN} aria-valuemax={ROW_MAX}
                   title={`Drag to change V${r + 1}'s height; double-click for the usual height`}
                   onPointerDown={(e) => startTrackResize(e, r)} onDoubleClick={() => resizeTrack(r, 0, true)} />
               </div>
             ))}
+            <button className="track-add" title="Add an empty track below the others. A clip moved onto it plays after the animations above it in its self.play" onClick={() => setTrackCount(rows + 1)}>+ Add track</button>
           </div>
 
           <div className="tl-lanes" ref={laneRef} onPointerDown={onLaneDown} onContextMenu={onLaneMenu} onDragOver={onDragOver} onDragLeave={() => setDropAt(null)} onDrop={onDrop}>
