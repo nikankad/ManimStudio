@@ -523,6 +523,8 @@ export function useShortcuts() {
       else if (mod && k === 'd') {
         e.preventDefault();
         if (selectedObjectIds().length) duplicateObjects(selectedObjectIds());
+      } else if (mod || e.altKey) {
+        // Any other Ctrl / ⌘ / Alt combination belongs to the system: ⌘M minimises, Ctrl+= zooms the page…
       } else if (e.key === ' ' || k === 'l') {
         e.preventDefault();
         setPlaying(e.key === ' ' ? !s.playing : true);

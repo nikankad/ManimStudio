@@ -199,6 +199,33 @@ def shortcuts(b):
         assert not pg.errors, pg.errors
 
 
+def system_keys(b):
+    """Ctrl / Alt combinations of single-key shortcuts are left to the system (⌘M minimises; Ctrl+= zooms the page)."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url)
+        new_project(pg)
+        add(pg, "Circle")
+        markers = lambda: pg.locator(".marker").count()
+        before = markers()
+        pg.keyboard.press("Control+m")
+        pg.keyboard.press("Alt+m")
+        pg.wait_for_timeout(200)
+        assert markers() == before, "Ctrl/Alt+M must not add a marker"
+        pg.keyboard.press("m")
+        pg.wait_for_timeout(200)
+        assert markers() == before + 1, "plain M adds one"
+        width = lambda: pg.evaluate("document.querySelector('.tl-lanes .clip.anim').getBoundingClientRect().width")
+        w0 = width()
+        pg.keyboard.press("Control+=")
+        pg.keyboard.press("Control+-")
+        pg.wait_for_timeout(200)
+        assert width() == w0, "Ctrl+= must not zoom the timeline"
+        pg.keyboard.press("=")
+        pg.wait_for_timeout(300)
+        assert width() > w0 * 1.2, "plain = zooms it"
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -322,7 +349,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

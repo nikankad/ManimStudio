@@ -654,3 +654,8 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .code-area-small .code-back, .code-area-small .code-text { padding: 6px 8px; }
 .code-area-small .code-ln { height: 18px; margin: 0 -8px; padding-left: 8px; }
 .code-area-small:focus-within { border-color: var(--blue); }
+
+/* People who ask their system for less motion get none: the tour spotlight, hover lifts and progress easing */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
