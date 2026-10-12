@@ -8,7 +8,7 @@ import { ratePath } from './rates';
 import { Tip, type TipContent } from './Tip';
 
 /** Text input that keeps local state while typing and commits on every change. */
-export function Field({ value, onChange, placeholder, className, list, multiline, onBlur }: {
+export function Field({ value, onChange, placeholder, className, list, multiline, onBlur, autoFocus }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -16,6 +16,7 @@ export function Field({ value, onChange, placeholder, className, list, multiline
   list?: string;
   multiline?: boolean;
   onBlur?: (v: string) => void;
+  autoFocus?: boolean; // focus it when it appears, with its text selected
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
@@ -29,6 +30,8 @@ export function Field({ value, onChange, placeholder, className, list, multiline
       onChange(e.target.value);
     },
     onBlur: () => onBlur?.(local),
+    autoFocus,
+    onFocus: autoFocus ? (e: { currentTarget: { select: () => void } }) => e.currentTarget.select() : undefined,
   };
   return multiline ? <textarea {...props} rows={Math.min(14, Math.max(2, local.split('\n').length + 1))} /> : <input {...props} list={list} />;
 }

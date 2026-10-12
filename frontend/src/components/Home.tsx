@@ -237,10 +237,17 @@ export function NewProjectDialog() {
   const scale = 120 / Math.max(w, h);
   return (
     <Modal title="New project">
-      <div className="new-project">
+      <div
+        className="new-project"
+        onKeyDown={(e) => {
+          const t = e.target as HTMLInputElement;
+          if (e.key === 'Enter' && t.tagName === 'INPUT' && t.type !== 'color') void create(); // Enter in a text field creates
+          else if (e.key === 'Escape') setState({ panel: null, panelData: null });
+        }}
+      >
         <div className="new-fields">
           <label className="param"><span className="pname">Name</span>
-            <Field value={name} onChange={setName} placeholder="My scene" />
+            <Field value={name} onChange={setName} placeholder="My scene" autoFocus />
           </label>
           <p className="muted small new-hint">The scene class will be <code>{toClassName(name) || 'MainScene'}</code>. You choose where to save on the first Save.</p>
           <label className="param"><span className="pname">Format</span>
