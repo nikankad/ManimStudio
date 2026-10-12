@@ -47,6 +47,31 @@ def manim_command() -> list[str]:
     return [sys.executable, "-m", "manim"]
 
 
+def partial_movie_readable(path: Path) -> bool:
+    """Whether a cached partial movie can be read. manim writes each one in place and takes any file that exists for
+    a finished animation, so a render killed midway (every edit cancels the running preview) leaves one with no
+    index that fails every later render of that animation with "Invalid data found"."""
+    try:
+        if path.stat().st_size < 64:
+            return False
+        import av
+
+        with av.open(str(path)) as container:
+            return any(stream.type == "video" for stream in container.streams)
+    except Exception:
+        return False
+
+
+def purge_broken_partials(media: Path) -> int:
+    """Delete the cached partial movies that can't be read (the next render makes them again); how many went."""
+    gone = 0
+    for movie in media.glob("videos/**/partial_movie_files/**/*.mp4"):
+        if not partial_movie_readable(movie):
+            movie.unlink(missing_ok=True)
+            gone += 1
+    return gone
+
+
 class RenderJob:
     def __init__(self, doc: dict, quality: str, output: str | None, project_key: str, plays: int = 1):
         self.id = uuid.uuid4().hex[:12]
@@ -61,6 +86,7 @@ class RenderJob:
         self._proc: subprocess.Popen | None = None
         self.workdir = cache_root() / "projects" / hashlib.sha1(project_key.encode()).hexdigest()[:12]
         self.total_plays = max(1, plays)
+        self._retried = False
 
     def to_json(self) -> dict:
         return {
@@ -98,6 +124,7 @@ class RenderJob:
             # self.play makes no video at all).
             for old in media.glob(f"videos/**/{out_name}.mp4"):
                 old.unlink(missing_ok=True)
+            purge_broken_partials(media)  # left by a render that was cancelled or killed
             cmd = [
                 *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,
@@ -113,6 +140,11 @@ class RenderJob:
             code = self._proc.wait()
             if self.state == "cancelled":
                 return
+            if code != 0 and not self._retried and "Invalid data found" in self.log and purge_broken_partials(media):
+                self._retried = True  # a cached piece was damaged after all: it is gone now, so once more
+                self.log = ""
+                self.progress = 0.0
+                return self._run()
             if code != 0:
                 self.state = "error"
                 self.message = _last_error(self.log) or f"manim exited with code {code}"
