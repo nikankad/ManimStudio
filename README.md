@@ -88,6 +88,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.
   - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, and anything
     disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
+  - Drag the line under a track's name (V1, V2…) to change that track's height; double-click it for the usual
+    height. Heights are remembered between launches.
   - Clips show what they do to their object, like transitions and keyframes in Premiere: an **IN** clip (`Create`,
     `FadeIn`, …) ramps up as it brings its object on screen, an **OUT** clip ramps down, a **⇄** swap
     (`ReplacementTransform`) does both, and an **fx** clip changes an object already there, from the keyframe ◆ at

@@ -12,8 +12,14 @@ import { DND_TYPE, type DragPayload } from './Library';
 import { rampPath, ratePath } from './rates';
 import { clipRoles, type ClipRole } from '../clipRole';
 import { keys } from '../keys';
+import { pref, setPref } from '../prefs';
 
-const ROW = 46; // animation track height
+const ROW = 46; // a track's height until it is resized
+const ROW_MIN = 26;
+const ROW_MAX = 240;
+const HEIGHTS_KEY = 'ui.trackHeights'; // each track's height (V1, V2…), comma-separated; empty for the usual one
+
+const savedHeights = () => (pref(HEIGHTS_KEY) ?? '').split(',').map((v) => (Number(v) >= ROW_MIN && Number(v) <= ROW_MAX ? Math.round(Number(v)) : 0));
 const STRIP = 24; // height of the strip for steps that aren't animations (add, remove, code…), when there are any
 const RULER = 30;
 const HEAD = 168; // track header width
@@ -89,6 +95,7 @@ export function Timeline() {
   const [guide, setGuide] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<{ t: number; row: number } | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [heights, setHeights] = useState<number[]>(savedHeights);
 
   const lay = docLayout(doc, timeline);
   // While dragging, the timeline shows the result of the edit: later steps move along, like a magnetic timeline.
@@ -103,14 +110,38 @@ export function Timeline() {
   const roles = useMemo(() => clipRoles(sdoc, timeline), [sdoc, timeline]);
 
   const { pps, start: v0 } = view;
+  // ---------------------------------------------------------- track heights (drag the line under a track's name)
+  const resizeTrack = (r: number, h: number, save: boolean) => setHeights((hs) => {
+    const next = [...hs];
+    while (next.length <= r) next.push(0);
+    next[r] = h && Math.round(h) !== ROW ? Math.round(Math.max(ROW_MIN, Math.min(ROW_MAX, h))) : 0;
+    while (next.length && !next[next.length - 1]) next.pop();
+    if (save) setPref(HEIGHTS_KEY, next.length ? next.join(',') : null);
+    return next;
+  });
+  const startTrackResize = (e: React.PointerEvent, r: number) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const y0 = e.clientY, h0 = rowH(r);
+    let h = h0;
+    const move = (ev: PointerEvent) => resizeTrack(r, (h = h0 + ev.clientY - y0), false);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', () => {
+      window.removeEventListener('pointermove', move);
+      resizeTrack(r, h, true);
+    }, { once: true });
+  };
   const rows = Math.max(3, slay.rows + (drag?.mode === 'anims' && drag.moved ? 1 : 0));
   const selected = new Set(selection?.kind === 'clips' ? selection.ids : []);
   const end = slay.end;
   const x = (t: number) => (t - v0) * pps;
   // from the document, not the drag preview: the tracks mustn't jump under the pointer while dragging
   const stripH = doc.timeline.some(inStrip) ? STRIP : 0;
-  const rowTop = (r: number) => RULER + stripH + r * ROW;
-  const totalH = RULER + stripH + rows * ROW + 24;
+  const rowH = (r: number) => heights[r] || ROW;
+  const tracksH = (n: number) => { let h = 0; for (let i = 0; i < n; i++) h += rowH(i); return h; };
+  const rowTop = (r: number) => RULER + stripH + tracksH(r);
+  const totalH = RULER + stripH + tracksH(rows) + 24;
 
   useLayoutEffect(() => {
     const el = laneRef.current!;
@@ -133,7 +164,10 @@ export function Timeline() {
   const rowAt = (clientY: number) => {
     const r = laneRef.current!.getBoundingClientRect();
     const y = clientY - r.top + bodyRef.current!.scrollTop - RULER;
-    return stripH && y < stripH ? -1 : Math.max(0, Math.floor((y - stripH) / ROW));
+    if (stripH && y < stripH) return -1;
+    let row = 0;
+    for (let top = stripH + rowH(0); top <= y; top += rowH(row)) row++;
+    return row;
   };
   /** The animation group (self.play) whose band is under a point of the tracks, if any. */
   const bandAt = (t: number) => doc.timeline.find((s) => {
@@ -191,7 +225,7 @@ export function Timeline() {
         if (stripH && y0 < RULER + stripH && y1 > RULER) for (const s of doc.timeline) if (inStrip(s) && overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
         if (y1 > rowTop(0)) for (const s of doc.timeline) if (s.kind === 'wait' && !s.disabled && overlaps(lay.steps.get(s.id)!)) hit.push(s.id);
         for (const s of doc.timeline) (s.disabled ? [] : s.anims ?? []).forEach((a, i) => {
-          if (rowTop(i) < y1 && rowTop(i) + ROW > y0 && overlaps(lay.anims.get(a.id)!)) hit.push(a.id);
+          if (rowTop(i) < y1 && rowTop(i) + rowH(i) > y0 && overlaps(lay.anims.get(a.id)!)) hit.push(a.id);
         });
         selectClips([...new Set([...d.base, ...hit])]);
         return setDrag({ ...d, x1: nx, y1: ny });
@@ -201,7 +235,7 @@ export function Timeline() {
         const { v, guide: g } = snapTo(d.t0 + dx, new Set(d.ids));
         setGuide(g);
         const moved = d.moved || Math.abs(e.clientX - d.x0) > 3 || (d.mode === 'anims' && Math.abs(e.clientY - d.y0) > 3);
-        if (d.mode === 'anims') return setDrag({ ...d, t: v, row: Math.max(0, d.row0 + Math.round((e.clientY - d.y0) / ROW)), copy: e.altKey, moved });
+        if (d.mode === 'anims') return setDrag({ ...d, t: v, row: Math.max(0, rowAt(e.clientY)), copy: e.altKey, moved });
         return setDrag({ ...d, t: v, copy: e.altKey, moved });
       }
       const sp = d.mode === 'trim-anim' ? lay.anims.get(d.id)! : lay.steps.get(d.id)!;
@@ -354,7 +388,7 @@ export function Timeline() {
       <div
         key={a.id}
         className={`clip anim ${kids.length ? '' : role} ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
-        style={{ left, width: w, top: rowTop(row) + 3, height: ROW - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
+        style={{ left, width: w, top: rowTop(row) + 3, height: rowH(row) - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
         title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
         tabIndex={0}
         role="button"
@@ -388,15 +422,15 @@ export function Timeline() {
             })}
           </div>
         ) : (
-          w > 24 && (
-            <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none">
-              {(role === 'in' || role === 'swap') && <path className="ramp in" d={rampPath(curve, w, ROW - 28)} />}
-              {(role === 'out' || role === 'swap') && <path className="ramp out" d={rampPath(curve, w, ROW - 28, true)} />}
-              {role === 'effect' && <path d={ratePath(curve, w, ROW - 28)} />}
+          w > 24 && rowH(row) >= 40 && (
+            <svg className="rate" width={w} height={rowH(row) - 26} preserveAspectRatio="none">
+              {(role === 'in' || role === 'swap') && <path className="ramp in" d={rampPath(curve, w, rowH(row) - 28)} />}
+              {(role === 'out' || role === 'swap') && <path className="ramp out" d={rampPath(curve, w, rowH(row) - 28, true)} />}
+              {role === 'effect' && <path d={ratePath(curve, w, rowH(row) - 28)} />}
             </svg>
           )
         )}
-        {!kids.length && role === 'effect' && w > 18 && <><i className="kf start" /><i className="kf end" /></>}
+        {!kids.length && role === 'effect' && w > 18 && rowH(row) >= 40 && <><i className="kf start" /><i className="kf end" /></>}
       </div>
     );
   };
@@ -411,7 +445,7 @@ export function Timeline() {
     const label = stepLabel(s);
     const shown = stepText(s);
     const top = pause ? rowTop(0) + 3 : RULER + 2;
-    const height = pause ? rows * ROW - 6 : STRIP - 4;
+    const height = pause ? tracksH(rows) - 6 : STRIP - 4;
     return (
       <div
         key={s.id}
@@ -495,8 +529,11 @@ export function Timeline() {
               </div>
             )}
             {Array.from({ length: rows }, (_, r) => (
-              <div key={r} className="track-head" style={{ height: ROW }} title={`Track ${r + 1}: animations that play together (the shaded column behind them) are stacked on separate tracks`}>
+              <div key={r} className="track-head" style={{ height: rowH(r) }} title={`Track ${r + 1}: animations that play together (the shaded column behind them) are stacked on separate tracks`}>
                 <span className="th-name">V{r + 1}</span>
+                <div className="th-resize" role="separator" aria-orientation="horizontal" aria-label={`V${r + 1} height`} aria-valuenow={rowH(r)} aria-valuemin={ROW_MIN} aria-valuemax={ROW_MAX}
+                  title={`Drag to change V${r + 1}'s height; double-click for the usual height`}
+                  onPointerDown={(e) => startTrackResize(e, r)} onDoubleClick={() => resizeTrack(r, 0, true)} />
               </div>
             ))}
           </div>
@@ -520,7 +557,7 @@ export function Timeline() {
               <RenderBar left={x(0)} width={end * pps} />
             </div>
             {stripH > 0 && <div className="lane-row steps-lane" style={{ top: RULER, height: stripH }} />}
-            {Array.from({ length: rows }, (_, r) => <div key={r} className="lane-row" style={{ top: rowTop(r), height: ROW }} />)}
+            {Array.from({ length: rows }, (_, r) => <div key={r} className="lane-row" style={{ top: rowTop(r), height: rowH(r) }} />)}
             {/* Each self.play is the shaded column behind its clips: click it to select the group (its own settings, its
                 length), drag one of its clips once it is selected to move the group, drag its right edge to retime it. */}
             {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).map((s) => {
@@ -529,7 +566,7 @@ export function Timeline() {
               const kw = Object.entries(s.args ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
               return (
                 <div key={'band' + s.id} className={`play-band ${selected.has(s.id) ? 'sel' : ''} ${ghost(s.id) ? 'ghost' : ''}`}
-                  style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: rowTop(0), height: rows * ROW }}
+                  style={{ left: x(sp.start), width: Math.max(0, (sp.end - sp.start) * pps), top: rowTop(0), height: tracksH(rows) }}
                   tabIndex={0} role="button" aria-pressed={selected.has(s.id)}
                   aria-label={`${n} animation${n === 1 ? '' : 's'} together${kw ? ` (${kw})` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
                   onKeyDown={(e) => keySelect(e, s.id)}>
@@ -543,7 +580,7 @@ export function Timeline() {
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
             )}
             {dropAt && dropLanding && (
-              <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? stripH : ROW }}
+              <div className="drop-ind" style={{ left: x(dropLanding.time), top: dropAt.row < 0 ? RULER : rowTop(Math.min(dropAt.row, rows - 1)), height: dropAt.row < 0 ? stripH : rowH(Math.min(dropAt.row, rows - 1)) }}
                 title={dropLanding.kind === 'join' ? 'Plays with the animations of this self.play' : 'A new self.play here'} />
             )}
             {guide !== null && <div className="snap-guide" style={{ left: x(guide), height: totalH }} />}

@@ -221,7 +221,9 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .tl-grid { display: flex; min-height: 100%; }
 .tl-heads { width: 168px; flex: none; background: var(--panel); border-right: 1px solid var(--line); position: relative; z-index: 3; }
 .tl-corner { position: sticky; top: 0; z-index: 4; background: var(--panel-2); border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 6px; }
-.track-head { display: flex; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid #2a2a2f; background: #222226; }
+.track-head { display: flex; align-items: center; gap: 4px; padding: 0 6px; border-bottom: 1px solid #2a2a2f; background: #222226; position: relative; }
+.th-resize { position: absolute; left: 0; right: 0; bottom: -4px; height: 7px; cursor: ns-resize; z-index: 2; }
+.th-resize:hover, .th-resize:active { background: linear-gradient(transparent 2px, var(--blue) 2px, var(--blue) 4px, transparent 4px); }
 .track-head.new { color: var(--muted); font-style: italic; justify-content: center; background: #1b2a3d; }
 .track-head.off .th-name { color: var(--muted); }
 .th-btn { width: 24px; height: 22px; padding: 0; display: inline-flex; align-items: center; justify-content: center; background: transparent; border-color: transparent; color: #6c6e78; }

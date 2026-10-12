@@ -653,7 +653,42 @@ def clip_roles(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def track_heights(b):
+    """Each V track has its own height: drag the line under its name (the clips grow with it), double-click for the
+    usual height; heights are remembered between launches."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        add(pg, "Circle")
+        heads = pg.locator(".track-head:not(.steps-head)")
+        height = lambda i: round(heads.nth(i).bounding_box()["height"])
+        assert height(0) == height(1) == 46, (height(0), height(1))
+        clip0 = pg.locator(".tl-lanes .clip.anim").first.bounding_box()["height"]
+        grip = pg.get_by_role("separator", name="V1 height").bounding_box()
+        pg.mouse.move(grip["x"] + 40, grip["y"] + grip["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(grip["x"] + 40, grip["y"] + grip["height"] / 2 + 60, steps=6)
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
+        assert height(0) == 106 and height(1) == 46, (height(0), height(1))
+        assert pg.locator(".tl-lanes .clip.anim").first.bounding_box()["height"] == clip0 + 60, "the clip grows with its track"
+        assert heads.nth(1).bounding_box()["y"] == heads.nth(0).bounding_box()["y"] + 106, "V2 moves down"
+        assert json.load(open(os.path.join(home, "prefs.json")))["ui.trackHeights"] == "106"
+        assert not pg.errors, pg.errors
+        ctx.close()
+
+        ctx, pg = page_in(b, url, 1500, 900)
+        if pg.locator(".home").count():
+            new_project(pg)
+        heads = pg.locator(".track-head:not(.steps-head)")
+        assert height(0) == 106, "remembered"
+        pg.get_by_role("separator", name="V1 height").dblclick()
+        pg.wait_for_timeout(300)
+        assert height(0) == 46
+        assert "ui.trackHeights" not in json.load(open(os.path.join(home, "prefs.json")))
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
