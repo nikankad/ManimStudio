@@ -299,6 +299,49 @@ def early_settings(b):
         assert not pg.errors, pg.errors
 
 
+def failing_backend(b):
+    """With every request but the first load refused or failing, the editor stays up and every dialog opens."""
+    keep = ("/api/project/initial", "/api/home", "/api/prefs", "/api/version")
+    with editor() as (url, home):
+        for mode in ("abort", "500"):
+            ctx = b.new_context(viewport={"width": 1500, "height": 900})
+            pg = ctx.new_page()
+            pg.errors = []
+            pg.on("pageerror", lambda e: pg.errors.append(str(e)))
+
+            def handle(route, mode=mode):
+                if any(k in route.request.url for k in keep):
+                    return route.continue_()
+                if mode == "abort":
+                    return route.abort()
+                return route.fulfill(status=500, content_type="application/json", body='{"error": "boom"}')
+
+            pg.route("**/api/**", handle)
+            pg.goto(url)
+            pg.wait_for_selector(".home")
+            new_project(pg)
+            for tab in ["Effects", "Build", "Scene", "Objects"]:
+                pg.get_by_role("button", name=tab, exact=True).first.click()
+                pg.wait_for_timeout(200)
+            for opener in [lambda: pg.locator("[data-tour=graph]").click(),
+                           lambda: pg.get_by_role("button", name="Settings", exact=True).click(),
+                           lambda: pg.get_by_role("button", name="Export video", exact=True).click(),
+                           lambda: pg.get_by_role("button", name="? Help", exact=True).click()]:
+                opener()
+                pg.wait_for_timeout(400)
+                assert pg.locator(".modal-back").count() == 1, f"a dialog opens ({mode})"
+                pg.keyboard.press("Escape")
+                pg.wait_for_timeout(200)
+            pg.get_by_role("button", name="</> Code").click()
+            pg.wait_for_timeout(500)
+            pg.get_by_role("button", name="Program").click()
+            pg.get_by_role("button", name="+ Wait").click()
+            pg.wait_for_timeout(300)
+            assert pg.locator(".toolbar").count() == 1, f"the editor is still there ({mode})"
+            assert not pg.errors, (mode, pg.errors)
+            ctx.close()
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -422,7 +465,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, failing_backend, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
