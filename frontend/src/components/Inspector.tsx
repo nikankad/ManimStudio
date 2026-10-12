@@ -4,7 +4,7 @@ import {
   addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
   timecode, toast, toggleDisabled, updateDoc, useSignature, useStore, setMarker, deleteMarker,
 } from '../store';
-import { addChild, anchorTo, EPS, findAnim, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { addChild, anchorTo, EPS, findAnim, layout, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
 import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
 import { animLabel, markerWhere, stepLabel } from './Timeline';
@@ -15,7 +15,8 @@ import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
-import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, standsAlone } from '../construct';
+import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
+import { addKey, CHANNELS, channelsOf, deleteKey, keyframes, setBaseValue, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
 import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
 import { keys } from '../keys';
 
@@ -284,6 +285,8 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
           </div>
         </section>
       )}
+
+      <KeyframeChannels obj={obj} />
 
       <ActionsSection ids={[obj.id]} terms={terms} />
 
@@ -561,6 +564,11 @@ const CLIP_HELP: Record<string, TipContent> = {
     text: 'How the change is spread over the clip’s time: at a constant speed, starting or ending slowly, or going there and back. The clip’s curve (or its intro and outro ramp) on the timeline shows it.',
     notes: ['Sets manim’s rate_func. Every rate function manim has is in the arguments below.'],
   },
+  channels: {
+    title: 'Keyframes',
+    text: 'Each property of the object at the playhead. ◆ adds a keyframe there (an animation that ends at the playhead) or removes the one there. Changing a value changes the keyframe under the playhead, or adds one; with no keyframes yet it changes the object as created.',
+    notes: ['A keyframe is plain manim code: obj.animate.move_to(…), .scale(…), .set_color(…), Rotate(obj, angle=…), tracker.animate.set_value(…). Editing one changes only that argument, in the way it was written.', 'Keyframes placed relative to something else (next_to, to_edge…) or written as expressions are shown but edited in the code.'],
+  },
   keyframes: {
     title: 'Keyframes',
     text: 'Where this object’s animations start and end, across the whole scene; this clip’s are highlighted. ◀ ▶ move the playhead to the previous or next one; click a diamond to go there and select its animation.',
@@ -794,6 +802,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
   const sp = lay.anims.get(anim.id);
   const targetCls = useChainClass(anim.target);
+  const targetObj = useStore((s) => s.doc.objects.find((o) => o.name === anim.target));
   const composition = !!anim.anims;
   const rt = literal(anim.args.run_time ?? (!parent ? step.args?.run_time : undefined));
   const target = sig?.target;
@@ -834,6 +843,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
         <KeyframesRow anim={anim} />
         <EnabledRow id={anim.id} disabled={anim.disabled} />
       </section>
+      {targetObj && <KeyframeChannels obj={targetObj} clip={anim.id} />}
 
       {composition && (
         <>
@@ -938,6 +948,128 @@ function KeyframesRow({ anim }: { anim: Anim }) {
     </div>
   );
 }
+
+/**
+ * Run a keyframe edit: tried on a copy first, so one that can't be done changes nothing and says why.
+ */
+function kfEdit(fn: (d: SceneDoc) => string | null, coalesce?: string) {
+  const err = fn(structuredClone(getState().doc));
+  if (err) return void toast(err);
+  updateDoc((d) => void fn(d), coalesce);
+}
+
+const showColor = (v: KeyValue | undefined) => (typeof v === 'string' ? (v.startsWith('#') ? `"${v}"` : v) : '');
+
+/**
+ * One row per channel (position, scale, rotation, opacity, colour; a ValueTracker's value) of an object, at the
+ * playhead. ◆ adds or removes a keyframe there; the value edits the keyframe under the playhead, else adds one (or,
+ * with no keyframes yet, sets the value as created). Every keyframe is a plain manim clip, so this writes
+ * `obj.animate.move_to(...)`, `.scale(...)`, `Rotate(...)`… and nothing else.
+ */
+function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
+  const doc = useStore((s) => s.doc);
+  const measured = useStore((s) => s.timeline);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const time = useStore((s) => s.time);
+  const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
+  const live = useStore((s) => s.frame?.values?.[obj.name]);
+  const keys = keyframes(doc, lay, measured, obj.name);
+  const half = 0.5 / fps();
+  const end = Math.max(lay.end, EPS);
+  const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
+  const fixed = ownsPosition(obj) || isFollow(obj);
+
+  /** Write `v` into the channel at the playhead. */
+  const write = (ch: Channel, v: KeyValue) =>
+    kfEdit((d) => {
+      const tl = getState().timeline;
+      const lay2 = layout(d, tl);
+      const own = keyframes(d, lay2, tl, obj.name).filter((k) => k.channel === ch);
+      const on = own.find((k) => Math.abs(frameSnap(k.t) - time) < half);
+      if (on) return setKeyValue(d, lay2, tl, on, v);
+      if (!own.length) {
+        const o = d.objects.find((x) => x.id === obj.id);
+        if (!o) return 'The object is gone';
+        setBaseValue(o, ch, v);
+        return null;
+      }
+      const r = addKey(d, tl, obj.name, ch, time, v);
+      return 'error' in r ? r.error : null;
+    }, `kf:${obj.id}:${ch}`);
+
+  return (
+    <section className="fx-section kf-channels">
+      <h4><Tip tip={CLIP_HELP.channels}>Keyframes of</Tip> <span className="mono kf-name">{obj.name}</span> <span className="muted small mono">{timecode(time)}</span></h4>
+      {channelsOf(obj).map((ch) => {
+        const meta = CHANNELS.find((c) => c.id === ch)!;
+        const own = keys.filter((k) => k.channel === ch);
+        const times = [...new Set(own.map((k) => frameSnap(k.t)))].sort((a, b) => a - b);
+        const prev = [...times].reverse().find((t) => t < time - half);
+        const next = times.find((t) => t > time + half);
+        const on = own.find((k) => Math.abs(frameSnap(k.t) - time) < half);
+        let value: KeyValue | undefined = on?.value;
+        if (value === undefined && ch === 'position' && info?.center) value = [info.center[0], info.center[1]];
+        if (value === undefined && ch === 'value' && typeof live === 'number') value = live;
+        if (value === undefined) value = valueBefore(own, obj, ch, time);
+        const why = on && !on.editable ? on.why : ch === 'position' && fixed ? 'Its position comes from its construction' : undefined;
+        const label = `${meta.label} of ${obj.name}`;
+        const toggle = () => {
+          if (on) return kfEdit((d) => deleteKey(d, layout(d, getState().timeline), on));
+          if (value === undefined) return void toast(`${label} here is not known yet: set a value instead`);
+          // with the value it has here; changing it right after is the same undo step
+          kfEdit((d) => {
+            const r = addKey(d, getState().timeline, obj.name, ch, time, value!);
+            return 'error' in r ? r.error : null;
+          }, `kf:${obj.id}:${ch}`);
+        };
+        const num = typeof value === 'number' ? value : null;
+        let editor;
+        if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
+        else if (ch === 'position') {
+          const p = Array.isArray(value) ? value : null;
+          editor = <>
+            <ScrubNumber value={p?.[0] ?? null} step={0.02} onChange={(x) => write(ch, [x, p?.[1] ?? 0])} />
+            <ScrubNumber value={p?.[1] ?? null} step={0.02} onChange={(y) => write(ch, [p?.[0] ?? 0, y])} />
+          </>;
+        } else if (ch === 'color') editor = <ColorField value={showColor(value)} placeholder="as created" onChange={(v) => v.trim() && write(ch, v)} />;
+        else if (ch === 'scale') editor = <ScrubNumber value={num} min={0.01} step={0.01} precision={3} suffix="×" onChange={(v) => write(ch, v)} />;
+        else if (ch === 'rotation') editor = <ScrubNumber value={num} step={0.5} precision={1} suffix="°" onChange={(v) => write(ch, v)} />;
+        else if (ch === 'opacity') editor = <ScrubNumber value={num} placeholder="1" min={0} max={1} step={0.01} onChange={(v) => write(ch, v)} />;
+        else editor = <ScrubNumber value={num} step={0.05} precision={3} onChange={(v) => write(ch, v)} />;
+        return (
+          <div key={ch} className="kf-channel" data-channel={ch}>
+            <div className="fx-row">
+              <span>{meta.label}</span>
+              <button className="x-btn" disabled={prev === undefined} title={`Previous keyframe of ${label}`} aria-label={`Previous keyframe of ${label}`} onClick={() => go(prev)}>◀</button>
+              <button className={`x-btn kf-toggle ${on ? 'on' : ''}`} aria-pressed={!!on} title={on ? `Remove this keyframe of ${label}` : `Add a keyframe of ${label} at ${timecode(time)}`} aria-label={on ? `Remove keyframe of ${label}` : `Add keyframe of ${label}`} onClick={toggle}>◆</button>
+              <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${label}`} aria-label={`Next keyframe of ${label}`} onClick={() => go(next)}>▶</button>
+              <div className="kf-value">{editor}</div>
+            </div>
+            {own.length > 0 && (
+              <div className="kf-strip kf-lane" aria-label={`Keyframes of ${label}`}>
+                <i className="kf-now" style={{ left: `${(Math.min(time, end) / end) * 100}%` }} />
+                {own.map((k, i) => (
+                  <button key={i} className={`kf-dot ${k.anim === clip ? 'mine' : ''} ${k.editable ? '' : 'fixed'}`} style={{ left: `${(k.t / end) * 100}%` }}
+                    title={`${timecode(k.t)}: ${keyCode(k)} → ${fmtKey(k.value)}${k.editable ? '' : ` (${k.why})`}`}
+                    aria-label={`${meta.label} keyframe at ${timecode(k.t)}`}
+                    onClick={() => { go(k.t); if (clip && k.anim !== clip) selectClips([k.anim]); }} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+function fmtKey(v: KeyValue | undefined): string {
+  if (v === undefined) return '?';
+  if (Array.isArray(v)) return `(${v.map((x) => Math.round(x * 100) / 100).join(', ')})`;
+  return typeof v === 'number' ? String(Math.round(v * 1000) / 1000) : v;
+}
+
+const keyCode = (k: Key) => (k.method === 'Rotate' ? 'Rotate(…)' : `.${k.method}(…)`);
 
 function MultiClipInspector({ ids }: { ids: string[] }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));

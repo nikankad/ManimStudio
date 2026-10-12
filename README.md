@@ -100,6 +100,21 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - In Effect Controls, **Easing** sets a clip's `rate_func` from presets (Linear, Ease in, Ease out, Ease in-out,
     There and back), and **Keyframes** lists where the object's animations start and end across the scene: ◀ ▶
     move the playhead from one to the next, and a diamond selects its animation.
+  - **Keyframes of** *object* (in Effect Controls and in an object's Properties) has a row per property at the
+    playhead: Position, Scale, Rotation, Opacity, Color (a `ValueTracker`: its value). A keyframe is the end of a
+    clip that changes the property, so every keyframe is plain manim code:
+    - Changing a keyframe's value rewrites only that method's argument, the way it was written:
+      `c.animate.shift(RIGHT * 2)` becomes `shift(RIGHT * 3)`, `Rotate(c, PI / 2)` stays in `PI`, and an unchanged
+      value leaves the code as it was.
+    - ◆ adds a keyframe at the playhead: an `.animate.move_to(…)` / `.scale(…)` / `.set_opacity(…)` /
+      `.set_color(…)` / `.set_value(…)` clip (`Rotate(c, angle=…)` for rotation) that ends there. In a pause it takes
+      up to a second of it; in a `self.play` it joins it; past the end it comes after a pause. Changing the value
+      right after is the same undo step. ◆ on a keyframe removes it (only that method, or the whole clip when that
+      was all it did).
+    - Changing a value off a keyframe adds one there; with no keyframes yet it changes the object as created.
+    - Where manim can't do it, it says why instead: at a time the object is already being animated (manim plays one
+      animation of an object at a time), or for keyframes written as expressions or placed relative to something
+      else (`next_to`, `to_edge`…), which are shown and edited in the code.
   - Click a group's shading to select it (Effect Controls show its animations and the settings it gives them all,
     such as `run_time`, which also appear in the corner of the shading). With it selected, drag any of its clips to
     move the whole group; drag the shading's right edge to retime it; right-click the shading for disable / delete.

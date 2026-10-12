@@ -588,6 +588,10 @@ def accessibility(b):
             rows.nth(i).click()
             pg.wait_for_timeout(400)
             found[f"object {i}"] = violations(pg)
+        pg.locator(".tl-lanes .clip.anim").first.click()  # Effect Controls, with its object's keyframe rows
+        pg.wait_for_timeout(400)
+        assert pg.locator(".kf-channels").count() == 1
+        found["clip"] = violations(pg)
         for view in ["Drawing order", "Markers"]:
             pg.get_by_role("button", name=view).click()
             pg.wait_for_timeout(300)
@@ -1231,7 +1235,90 @@ def try_this(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def keyframe_controls(b):
+    """Effect Controls show the object's keyframes per property at the playhead, and editing them writes plain manim:
+    the value of a keyframe is the argument of its method (written as it was), ◆ adds a clip that ends at the
+    playhead (taking a second of a pause), add-then-change is one undo step, and a keyframe where the object is
+    already animated is refused with why."""
+    code = ("from manim import *\n\nclass K(Scene):\n    def construct(self):\n        c = Square(color=BLUE)\n"
+            "        self.play(Create(c))\n        self.play(c.animate.shift(RIGHT * 2))\n        self.wait(2)\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "keys.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        measured = lambda: pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        measured()
+        pg.get_by_role("button", name="Program").click()
+        tc = pg.locator(".tl-header .timecode")
+
+        def seek(t):
+            tc.click()
+            pg.locator(".tl-header input.timecode").fill(t)
+            pg.keyboard.press("Enter")
+            pg.wait_for_timeout(300)
+
+        def saved():  # the scene's code, as the Code tab shows it
+            pg.wait_for_timeout(300)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        def toasts():
+            return " ".join(pg.locator(".toast").all_inner_texts())
+
+        row = lambda ch: pg.locator(f'.kf-channel[data-channel="{ch}"]')
+        pg.locator(".tl-lanes .clip.anim").nth(1).click()
+        assert pg.locator(".kf-channels h4", has_text="Keyframes of c").count() == 1
+        assert row("position").locator(".kf-dot").count() == 1 and row("scale").locator(".kf-dot").count() == 0
+
+        # on the shift's keyframe: its value is where it lands, and editing it rewrites the shift, in its own words
+        seek("00:00:02:00")
+        toggle = row("position").locator(".kf-toggle")
+        assert toggle.get_attribute("aria-pressed") == "true"
+        x = row("position").locator(".scrub").first
+        assert x.inner_text() == "2", x.inner_text()
+        x.click()
+        row("position").locator("input.scrub-edit").fill("3")
+        row("position").locator("input.scrub-edit").press("Enter")
+        src = saved()
+        assert "self.play(c.animate.shift(RIGHT * 3))" in src, src
+
+        # in the pause: ◆ then a value adds one .animate clip ending here; one undo removes both
+        seek("00:00:03:00")
+        row("scale").locator(".kf-toggle").click()
+        row("scale").locator(".scrub").first.click()
+        row("scale").locator("input.scrub-edit").fill("2")
+        row("scale").locator("input.scrub-edit").press("Enter")
+        src = saved()
+        assert "self.play(c.animate.scale(2))" in src and "self.wait(1)" in src, src
+        assert row("scale").locator(".kf-toggle").get_attribute("aria-pressed") == "true"
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+        src = saved()
+        assert ".scale(" not in src and "self.wait(2)" in src, src
+
+        # ◆ on a keyframe removes it: the shift clip goes, and its time stays as a pause
+        seek("00:00:02:00")
+        row("position").locator(".kf-toggle").click()
+        src = saved()
+        assert "shift" not in src, src
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+
+        # inside Create(c), c is already animated: refused, and nothing changes
+        seek("00:00:00:15")
+        row("rotation").locator(".kf-toggle").click()
+        pg.wait_for_timeout(300)
+        assert "already animated" in toasts(), toasts()
+        src = saved()
+        assert "Rotate" not in src and "self.play(c.animate.shift(RIGHT * 3))" in src, src
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

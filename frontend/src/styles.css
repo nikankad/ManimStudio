@@ -287,6 +287,17 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .kf-dot { position: absolute; top: 50%; width: 9px; height: 9px; margin: -5px 0 0 -5px; padding: 0; transform: rotate(45deg); border-radius: 1px; background: #8a8c96; border: 1px solid #111; }
 .kf-dot.mine { background: #ffd36b; z-index: 1; }
 .kf-dot:hover, .kf-dot:focus-visible { background: #fff; }
+.kf-dot.fixed { background: transparent; border-color: #8a8c96; }
+.kf-channel .fx-row { gap: 6px; }
+.kf-channels h4 .kf-name { text-transform: none; letter-spacing: 0; }
+.kf-value { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.kf-value .color-field { flex: 1; min-width: 0; }
+.kf-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kf-why em { font-style: normal; margin-left: 4px; }
+.kf-toggle { color: #8a8c96; }
+.kf-toggle.on { color: #ffd36b; }
+.kf-lane { flex: none; height: 12px; margin: 0 0 4px 78px; }
+.kf-lane .kf-dot { width: 7px; height: 7px; margin: -4px 0 0 -4px; }
 .code-peek { font: 10.5px var(--mono); color: rgba(255, 255, 255, 0.75); padding: 2px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .clip.sel { border-color: #fff; box-shadow: 0 0 0 1px #fff; z-index: 1; }
 .clip.err { border-color: var(--err); box-shadow: 0 0 0 1px var(--err); }
