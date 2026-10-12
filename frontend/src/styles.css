@@ -278,6 +278,7 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 /* ---------------------------------------------------------------- modals */
 .modal-back { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 10; }
 .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; width: 480px; max-width: 94vw; max-height: 90vh; overflow: auto; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
+.leave-back { z-index: 20; }
 .modal.wide { width: 1100px; }
 .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .modal .param { grid-template-columns: 110px 1fr; }

@@ -30,7 +30,7 @@ function size(bytes: number | null): string {
 const seconds = (s: number) => `0:${String(Math.round(s)).padStart(2, '0')}`;
 
 async function openSample(s: Sample) {
-  if (!discardOk()) return;
+  if (!(await discardOk())) return;
   try {
     const res = await api.openSample(s.id);
     loadDoc(res.doc, null);
@@ -42,7 +42,7 @@ async function openSample(s: Sample) {
 }
 
 async function restore(r: Recovery) {
-  if (!discardOk()) return;
+  if (!(await discardOk())) return;
   try {
     const res = await api.openRecovery(r.id);
     loadDoc(res.doc, res.path, r.id);
@@ -93,7 +93,7 @@ export function Home() {
             <button className="primary home-cta" onClick={() => setState({ panel: 'new-project' })}>New project…</button>
             <button className="home-cta" onClick={() => void openProject()}>Open project…</button>
             <button className="home-cta" title="A manim .py file: its scene becomes the timeline, and the code stays in sync both ways" onClick={() => void importManimFile()}>Open manim file…</button>
-            <button className="home-cta" title="A new project with the code open: paste a manim scene and the timeline follows" onClick={() => newFromCode()}>Paste manim code…</button>
+            <button className="home-cta" title="A new project with the code open: paste a manim scene and the timeline follows" onClick={() => void newFromCode()}>Paste manim code…</button>
           </div>
           <span className="spacer" />
           <button className="home-link small" title="Release notes and downloads" onClick={() => app && openReleases(app.releases)}>What’s new</button>
@@ -192,7 +192,7 @@ function Learn() {
           <b>Read the guide</b>
           <span className="muted small">Drawing, connecting objects, parameters, the timeline, exporting video and code, and shortcuts.</span>
         </button>
-        <button className="learn-card" onClick={() => newFromCode()}>
+        <button className="learn-card" onClick={() => void newFromCode()}>
           <b>Start from manim code</b>
           <span className="muted small">Paste a manim scene into the Code tab: every self.play becomes clips on the timeline, and editing either one updates the other.</span>
         </button>
@@ -207,8 +207,8 @@ function Learn() {
 }
 
 /** A new, empty project with the code open, ready for a pasted manim scene. */
-function newFromCode() {
-  if (!discardOk()) return;
+async function newFromCode() {
+  if (!(await discardOk())) return;
   loadDoc(emptyDoc(), null);
   setState({ centerTab: 'code' });
 }
@@ -226,8 +226,8 @@ export function NewProjectDialog() {
   const [fps, setFps] = useState(60);
   const [bg, setBg] = useState('#000000');
   const [w, h] = res.split('x').map(Number);
-  const create = () => {
-    if (!discardOk()) return;
+  const create = async () => {
+    if (!(await discardOk())) return;
     const doc = emptyDoc();
     doc.scene.name = toClassName(name) || 'MainScene';
     doc.config = { ...doc.config, pixel_width: w, pixel_height: h, frame_rate: fps, background_color: bg };
@@ -268,7 +268,7 @@ export function NewProjectDialog() {
       <div className="row actions">
         <span className="spacer" />
         <button onClick={() => setState({ panel: null, panelData: null })}>Cancel</button>
-        <button className="primary" onClick={create}>Create</button>
+        <button className="primary" onClick={() => void create()}>Create</button>
       </div>
     </Modal>
   );

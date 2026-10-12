@@ -47,6 +47,7 @@ export interface AppState {
   toast: string | null;
   home: boolean; // the Home screen (projects, samples) instead of the editor
   hasProject: boolean; // a project is open behind the Home screen (it can go back to it)
+  leave: { resolve: (choice: 'save' | 'discard' | 'cancel') => void } | null; // asking what to do with unsaved changes
 }
 
 export const emptyDoc = (): SceneDoc => ({
@@ -93,6 +94,7 @@ let state: AppState = {
   toast: null,
   home: false,
   hasProject: false,
+  leave: null,
 };
 
 const listeners = new Set<() => void>();

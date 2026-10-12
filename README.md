@@ -72,7 +72,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   an unsaved copy; select anything to see how it is built. Opening a project file directly skips Home.
   While a project has unsaved changes, a copy is kept every few seconds (in the app folder, under `recovery/`);
   if the app closes or crashes first, Home lists it under **Unsaved work** with *Restore* and *Discard*. Saving, or
-  discarding the changes, removes the copy.
+  discarding the changes, removes the copy. Starting or opening another project over unsaved changes asks
+  *Save*, *Don't save* or *Cancel*.
 
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline. Every
   statement is one manim statement, in order, and starts when the one before it ends, exactly as manim runs it.

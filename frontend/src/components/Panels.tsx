@@ -30,11 +30,55 @@ export async function saveProject(saveAs = false) {
   toast(`Saved ${path}`);
 }
 
-/** Leave the current project (asks first when it has unsaved changes). */
-export const discardOk = () => !getState().hasProject || !getState().dirty || confirm('Discard unsaved changes to the current project?');
+/** Leave the current project: when it has unsaved changes, asks to save them, drop them or stay. Resolves false to stay. */
+export async function discardOk(): Promise<boolean> {
+  if (!getState().hasProject || !getState().dirty) return true;
+  const choice = await new Promise<'save' | 'discard' | 'cancel'>((resolve) => setState({ leave: { resolve } }));
+  setState({ leave: null });
+  if (choice !== 'save') return choice === 'discard';
+  try {
+    await saveProject();
+  } catch (e) {
+    toast(`Couldn't save: ${e instanceof Error ? e.message : e}`);
+  }
+  return !getState().dirty; // still unsaved: the save was cancelled or failed, so stay
+}
+
+function LeaveDialog() {
+  const leave = useStore((s) => s.leave);
+  const path = useStore((s) => s.path);
+  useEffect(() => {
+    if (!leave) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') leave.resolve('cancel');
+      else if (e.key === 'Enter') leave.resolve('save');
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [leave]);
+  if (!leave) return null;
+  const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
+  return (
+    <div className="modal-back leave-back" onPointerDown={(e) => e.target === e.currentTarget && leave.resolve('cancel')}>
+      <div className="modal" role="alertdialog" aria-label="Unsaved changes">
+        <div className="modal-head"><h3>Save changes to {name}?</h3></div>
+        <p className="muted">Your changes will be lost if you don’t save them.</p>
+        <div className="row actions">
+          <button onClick={() => leave.resolve('discard')}>Don’t save</button>
+          <span className="spacer" />
+          <button onClick={() => leave.resolve('cancel')}>Cancel</button>
+          <button className="primary" autoFocus onClick={() => leave.resolve('save')}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export async function openPath(path: string) {
-  if (!discardOk()) return;
+  if (!(await discardOk())) return;
   try {
     const res = await api.openProject(path);
     loadDoc(res.doc, res.path);
@@ -142,6 +186,15 @@ function poll(id: string, onUpdate: (j: Job) => boolean) {
 }
 
 export function Panels() {
+  return (
+    <>
+      <PanelDialog />
+      <LeaveDialog />
+    </>
+  );
+}
+
+function PanelDialog() {
   const panel = useStore((s) => s.panel);
   if (panel === 'settings') return <SettingsPanel />;
   if (panel === 'export') return <ExportPanel />;
