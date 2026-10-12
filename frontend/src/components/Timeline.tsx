@@ -97,7 +97,7 @@ function dragNote(drag: Drag, doc: SceneDoc, lay: Layout, sdoc: SceneDoc, slay: 
     const hold = { shrunk: 'the pause after it gets shorter', removed: 'the pause after it is used up', grown: 'the pause after it gets longer', added: 'a pause fills the gap' }[rt.hold ?? 'shrunk'];
     parts.push(rt.hold ? `later beats keep their time: ${hold}` : later(rt.delta));
     if (rt.limit) parts.push(rt.limit);
-    else if (!keep && Math.abs(rt.delta) > 0.005 && sdoc.timeline.length > 1) parts.push('(Keep later timing takes it from a pause instead)');
+    else if (!keep && Math.abs(rt.delta) > 0.005 && !(drag.mode === 'trim-step' && findStep(doc, drag.id)?.kind === 'wait')) parts.push('(Keep later timing takes it from a pause instead)');
     return { text: parts.join(' · '), at: sp.end, warn: !!rt.limit };
   }
   if ((drag.mode !== 'anims' && drag.mode !== 'steps') || !moved.length) return null;

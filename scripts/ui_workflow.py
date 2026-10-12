@@ -949,6 +949,22 @@ def retiming(b):
         pg.wait_for_timeout(400)
         assert label("a").endswith("to 00:00:01:30") and label("b").startswith("Create b, intro, 00:00:03:00"), "one undo step"
 
+        # a pause is the hold itself: with Keep on, making it longer or shorter still moves what comes after
+        wait = pg.locator(".tl-lanes .clip.step.pause").first
+        wb = wait.bounding_box()
+        pg.mouse.move(wb["x"] + wb["width"] - 2, wb["y"] + 10)
+        pg.mouse.down()
+        pg.mouse.move(wb["x"] + wb["width"] - 2 + 0.5 * sec, wb["y"] + 10, steps=8)
+        text = note()
+        pg.mouse.up()
+        pg.wait_for_timeout(400)
+        assert "No pause" not in text and "later beats move by +0.5 s" in text, text
+        measured()
+        assert label("b").startswith("Create b, intro, 00:00:03:30"), label("b")
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(400)
+        assert label("b") == b0
+
         # Effect Controls do the same
         clip("a").click()
         row = pg.locator(".fx-row", has_text="Duration").first

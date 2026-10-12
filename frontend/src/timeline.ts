@@ -541,6 +541,7 @@ export function retime(d: SceneDoc, measured: RunResult | null, target: { anim: 
   const ref = 'anim' in target ? findAnim(d, target.anim) : undefined;
   const step = ref ? ref.step : 'step' in target ? findStep(d, target.step) : undefined;
   if (!step) return { delta: 0 };
+  if (!ref && step.kind === 'wait') keep = false; // a pause is the hold itself: changing it moves what comes after
   const sp = lay.steps.get(step.id)!;
   const oldLen = sp.end - sp.start;
   const apply = (v: number) => (ref ? setAnimDuration(d, ref.anim.id, v) : setStepDuration(d, step.id, v));
