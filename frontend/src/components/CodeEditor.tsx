@@ -29,6 +29,7 @@ export function CodeEditor() {
   const applied = useRef<{ doc: SceneDoc; text: string } | null>(null);
   const generated = useRef<{ doc: SceneDoc; text: string } | null>(null);
   const edited = generated.current !== null && text !== generated.current.text && text !== applied.current?.text;
+  const runFailed = status.kind === 'ok' && !edited && !!error; // the code reads fine, but running the scene fails
 
   // Show the document's code: when it changes elsewhere, and after typing here (then on leaving the editor, so the
   // text isn't rewritten under the cursor).
@@ -139,8 +140,8 @@ export function CodeEditor() {
         <button className="ghost small tab-btn" onClick={() => setState({ centerTab: 'program' })} title="Back to the canvas">Program</button>
         <span className="tab-btn on">Code: {doc.scene.name}.py</span>
         <span className="spacer" />
-        <span className={`code-status ${status.kind}`} title={status.message}>
-          {status.kind === 'pending' ? 'Reading…' : status.kind === 'error' ? `⚠ ${status.message}` : edited ? 'Edited' : 'In sync with the timeline'}
+        <span className={`code-status ${runFailed ? 'error' : status.kind}`} title={runFailed ? error!.message : status.message}>
+          {status.kind === 'pending' ? 'Reading…' : status.kind === 'error' ? `⚠ ${status.message}` : runFailed ? `⚠ ${error!.message}` : edited ? 'Edited' : 'In sync with the timeline'}
         </span>
         <label className="toggle" title="Read the code into the scene as you type (after a short pause)"><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> Live</label>
         {!live && <button className="primary small" disabled={!edited} onClick={() => void apply(text)} title={`Read the code into the scene (${keys('⌘')}Enter)`}>Apply</button>}

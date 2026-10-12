@@ -245,7 +245,8 @@ export function Viewport() {
   const selectedId = selection?.kind === 'object' ? selection.id : null;
   const selInfo = visible.find((o) => o.id === selectedId);
   const selObj = selectedId ? objOf(selectedId) : undefined;
-  const error = frame?.error;
+  const timelineError = useStore((s) => s.timeline?.error);
+  const error = frame?.error ?? timelineError; // a failure later in the scene shows even while the playhead is before it
 
   // ------------------------------------------------------------ creating shapes
 
