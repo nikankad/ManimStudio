@@ -110,7 +110,8 @@ def test_statements_become_steps_objects_and_code():
     doc = res.doc
     assert res.scenes == ["Intro", "Camera"]
     assert doc["scene"]["name"] == "Intro" and doc["config"]["background_color"] == "#101020"
-    assert "def helper(x)" in doc["header"] and "class Camera" in doc["header"] and "from manim import" not in doc["header"]
+    assert "def helper(x)" in doc["header"] and "from manim import" not in doc["header"]
+    assert "class Camera" in doc["footer"]  # module code after the scene stays after it
     assert "colors = [BLUE, RED]" in doc["scene"]["members"] and "def helper2" in doc["scene"]["members_after"]
     objs = {o["name"]: o for o in doc["objects"]}
     assert objs["title"]["ctor"] == "Text" and objs["title"]["args"] == {"*": '"Hello"', "font_size": "48"}

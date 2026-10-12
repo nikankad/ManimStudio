@@ -9,7 +9,9 @@ description = "Manim Studio: drag-and-drop visual editor for manim (Community Ed
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "manim>=0.22",  # term-split equations rely on MathTex's per-part \special groups (0.20+); tested on 0.22
+  # term-split equations rely on MathTex's per-part \special groups (0.20+); the preview runs manim's own frame
+  # loop in place of CairoRenderer.play (runtime.py), verified against 0.22 by tests/test_native_parity.py
+  "manim>=0.22,<0.23",
   "pywebview>=5.0",
 ]
 

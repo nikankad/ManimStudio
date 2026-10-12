@@ -338,6 +338,9 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
             emit(src.strip("\n"))
     emit("")
     emit("")
+    decorators = (scene.get("decorators") or "").strip("\n")
+    if decorators:
+        emit(decorators, ("header", "header"))
     emit(f"class {scene_name}({base}):")
     members = (scene.get("members") or "").strip("\n")
     if members:
@@ -366,6 +369,11 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     if after:
         emit("")
         emit(after, ("header", "members"), 4)
+    footer = (doc.get("footer") or "").rstrip()
+    if footer:
+        emit("")
+        emit("")
+        emit(footer, ("header", "header"))
     return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
 
 

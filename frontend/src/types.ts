@@ -136,9 +136,10 @@ export interface Marker {
 
 export interface SceneDoc {
   version: number;
-  scene: { name: string; base: string; members?: string; members_after?: string }; // members: other code of the class
+  scene: { name: string; base: string; members?: string; members_after?: string; decorators?: string }; // members: other code of the class
   config: { pixel_width: number; pixel_height: number; frame_rate: number; background_color: string };
   header: string;
+  footer?: string; // module code after the scene class
   objects: SceneObject[];
   timeline: Step[];
   markers?: Marker[];
@@ -241,7 +242,7 @@ export interface Diagnostic {
 export interface RunResult {
   duration: number;
   steps: { id: string; start: number; end: number }[]; // when each statement runs (measured by manim)
-  anims: { id: string; start: number; end: number }[]; // when manim runs each animation
+  anims: { id: string; start: number; end: number; curve?: number[] }[]; // when manim runs each animation; curve: its progress over that time
   objects: ObjInfo[];
   camera: { center: [number, number]; width: number; height: number } | null;
   plays: number;

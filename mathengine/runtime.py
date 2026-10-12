@@ -1,9 +1,12 @@
 """Run a scene document in-process with manim and render a single frame at time t.
 
-Seeking works by executing the generated ``construct()`` with a replacement
-``play`` that skips through animations without rendering, stopping mid-play
-when the requested time is reached. The frame is then drawn with the scene's
-own camera, so the preview is pixel-identical to the final render.
+Seeking works by executing the generated ``construct()`` with the renderer's
+``play`` replaced by one that runs manim's own frame loop (at the project's
+frame rate) without drawing, stopping at the frame shown at the requested
+time. The scene's ``play``/``wait`` run as written, so overrides, stop
+conditions, frozen waits and ``dt`` updaters behave as in ``manim render``.
+The frame is then drawn with the scene's own camera, so the preview is
+pixel-identical to the final render.
 
 The same run measures the timeline: when each statement starts and ends, and
 when manim runs each animation, including the ones inside AnimationGroup,
@@ -23,6 +26,8 @@ import time as _time
 import traceback
 from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
 
 from . import codegen, tex
 
@@ -50,6 +55,7 @@ class StepTiming:
     id: str
     start: float
     end: float
+    curve: list[float] | None = None  # an animation's progress at evenly spaced times from start to end
 
 
 @dataclass
@@ -70,7 +76,8 @@ class RunResult:
         return {
             "duration": float(self.duration),
             "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end)} for s in self.steps],
-            "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6)} for s in self.anims],
+            "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6),
+                       **({"curve": s.curve} if s.curve else {})} for s in self.anims],
             "objects": self.objects,
             "camera": self.camera,
             "plays": self.plays,
@@ -86,10 +93,10 @@ class PreviewMixin:
     """Mixed in front of the user's Scene class during preview."""
 
     _me_target: float | None = None
-    _me_step_fps: float = 30.0
 
     def _me_init(self, target: float | None) -> None:
         self._me_target = target
+        self.renderer.play = self._me_render_play
         self._me_registry: dict[str, tuple[Any, str]] = {}
         self._me_open: dict[str, float] = {}
         self._me_steps: list[StepTiming] = []
@@ -117,61 +124,127 @@ class PreviewMixin:
         anim._me_id = aid
         return anim
 
-    def _me_time(self, anim: Any, start: float, duration: float) -> None:
-        """Record when manim runs ``anim`` and, inside compositions, each child (scene seconds)."""
+    def _me_time(self, anim: Any, scene_at: Any) -> None:
+        """Record when manim runs ``anim`` and, inside compositions, each child (scene seconds).
+        ``scene_at(alpha)``: the scene time at which ``anim`` is interpolated to ``alpha``."""
         aid = getattr(anim, "_me_id", None)
         if aid:
-            self._me_anims.append(StepTiming(aid, start, start + duration))
+            start, end = scene_at(0.0), scene_at(1.0)
+            # Only for the timeline's measuring run (no target): seeking doesn't need it.
+            curve = _curve(anim.rate_func, scene_at, start, end) if self._me_target is None else None
+            self._me_anims.append(StepTiming(aid, start, end, curve))
         timings = getattr(anim, "anims_with_timings", None)
         total = float(getattr(anim, "max_end_time", 0) or 0)
         if timings is None or total <= 0:
             return
-        # AnimationGroup.interpolate: group time = rate_func(alpha) * max_end_time.
+        # AnimationGroup / Succession.interpolate: group time = rate_func(alpha) * max_end_time, and a child's
+        # alpha is linear in group time. The group's own alpha comes from its parent's, so easings compose.
         for row in timings:
-            a = _inverse(anim.rate_func, float(row["start"]) / total)
-            b = _inverse(anim.rate_func, float(row["end"]) / total)
-            self._me_time(row["anim"], start + a * duration, (b - a) * duration)
+            s, e = float(row["start"]), float(row["end"])
+
+            def child_at(c: float, s=s, e=e) -> float:
+                return scene_at(_inverse(anim.rate_func, (s + c * (e - s)) / total))
+
+            self._me_time(row["anim"], child_at)
 
     def _me_needs_stepping(self) -> bool:
         # Constructions (construct.Constraints) depend only on the current state, not on dt, so
         # updating once at the target time is exact; other updaters may integrate over time.
+        if self.stop_condition is not None:
+            return True
         if self.always_update_mobjects or any(not getattr(u, "mathengine_constraints", False) for u in self.updaters):
             return True
         return any(m.has_time_based_updater() for m in self.get_mobject_family_members())
 
-    def play(self, *args: Any, subcaption=None, subcaption_duration=None, subcaption_offset=0, **kwargs: Any) -> None:
-        self._me_plays += 1
+    def _me_render_play(self, scene: Any, *args: Any, **kwargs: Any) -> None:
+        """Stands in for ``CairoRenderer.play`` (Scene.play -> Manager.play -> renderer.play), so the scene's own
+        ``play``/``wait`` (and any override of them) run as written. Steps through manim's own frame loop
+        (``Scene.play_internal``) without drawing; the clock moves by whole frames, as in the video."""
+        m = manim()
+        r = self.renderer
+        r.skip_animations = r._original_skipping_status
+        r.update_skipping_status()
         self.compile_animation_data(*args, **kwargs)
-        animations = self.animations
+        self._me_plays += 1
+        t0 = r.time
         duration = self.duration
-        t0 = self.renderer.time
         self.begin_animations()
-        for anim in animations:
-            self._me_time(anim, t0, float(anim.run_time))
+        for anim in self.animations:
+            self._me_time(anim, lambda a, t0=t0, rt=float(anim.run_time): t0 + a * rt)
 
-        stop_at = None
-        if self._me_target is not None and self._me_target < t0 + duration - 1e-9:
-            stop_at = max(0.0, self._me_target - t0)
-        end = duration if stop_at is None else stop_at
-
-        if end > 0 and self._me_needs_stepping():
-            n = max(1, math.ceil(end * self._me_step_fps))
-            for i in range(1, n + 1):
-                self.update_to_time(end * i / n)
-                self.renderer.time = t0 + end * i / n
+        dt = 1 / m.config.frame_rate
+        target = self._me_target
+        if r.skip_animations:  # a skipped section: no frames, the clock still moves by the duration
+            if target is not None and target < t0 + duration - 1e-9:
+                r.time = target
+                raise _Stop()
+            if not self.is_current_animation_frozen_frame():
+                times = np.arange(0, duration, dt) if self.stop_condition is not None else [duration]
+                for t in times:
+                    self.update_to_time(t)
+                    if self.stop_condition is not None and self.stop_condition():
+                        break
+            frames_end = t0 + duration
+        elif self.is_current_animation_frozen_frame():  # a wait with nothing updating: one frame held
+            frames_end = t0 + int(duration / dt) * dt
+            if target is not None and target < frames_end - 1e-9:
+                r.time = target
+                raise _Stop()
         else:
-            self.update_to_time(end)
+            times = np.arange(0, duration, dt)
+            # The frame of this play shown at the target time.
+            stop = None
+            if target is not None and target < t0 + len(times) * dt - 1e-9:
+                stop = min(len(times) - 1, max(0, math.floor((target - t0) / dt + 1e-9)))
+            if self._me_needs_stepping():
+                played = len(times)
+                for i, t in enumerate(times):
+                    r.time = t0 + i * dt
+                    self.update_to_time(t)
+                    if i == stop:
+                        r.time = target
+                        raise _Stop()
+                    if self.stop_condition is not None and self.stop_condition():
+                        played = i + 1
+                        break
+            else:
+                # Nothing depends on the frames in between (no dt updaters or stop condition): go straight there.
+                played = len(times)
+                i = played - 1 if stop is None else stop
+                if i >= 0:
+                    r.time = t0 + i * dt
+                    self.update_to_time(times[i])
+                if stop is not None:
+                    r.time = target
+                    raise _Stop()
+            frames_end = t0 + played * dt
 
-        if stop_at is not None:
-            self.renderer.time = t0 + stop_at
-            raise _Stop()
-
-        for anim in animations:
+        for anim in self.animations:
             anim.finish()
             anim.clean_up_from_scene(self)
-        self.update_mobjects(0)
-        self.renderer.time = t0 + duration
-        self.animations = None
+        if not r.skip_animations:
+            self.update_mobjects(0)
+        r.static_image = None
+        r.time = frames_end
+        r.num_plays += 1
+
+
+_CURVE_SAMPLES = 21
+
+
+def _curve(rate_func: Any, scene_at: Any, start: float, end: float) -> list[float] | None:
+    """The progress manim gives an animation (its own rate function, after the easing of the groups it is in)
+    at evenly spaced scene times from ``start`` to ``end``: what its clip on the timeline draws."""
+    if end - start < 1e-9:
+        return None
+    try:
+        alphas = np.linspace(0, 1, 2 * _CURVE_SAMPLES - 1)
+        xs = np.array([(scene_at(a) - start) / (end - start) for a in alphas])
+        ys = np.array([float(rate_func(float(a))) for a in alphas])
+        out = np.interp(np.linspace(0, 1, _CURVE_SAMPLES), xs, ys)
+    except Exception:
+        return None
+    return [round(float(v), 4) for v in out]
 
 
 def _inverse(rate_func: Any, value: float) -> float:
@@ -250,8 +323,6 @@ def _sample_path(mob: Any, limit: int = 160) -> list[list[float]] | None:
     pts = [sm.points for sm in mob.family_members_with_points()]
     if not pts:
         return None
-    import numpy as np
-
     allp = np.concatenate(pts)
     step = max(1, len(allp) // limit)
     return [_pt(p) for p in allp[::step]]
@@ -349,7 +420,7 @@ def run(doc: dict, target: float | None = None, render: bool = True, preview_wid
     overrides = {
         "pixel_width": pw,
         "pixel_height": ph,
-        "frame_rate": 30,
+        "frame_rate": int(cfg.get("frame_rate", 60)),  # updaters step once per frame, as in the video
         "background_color": cfg.get("background_color", "#000000"),
         "disable_caching": True,
         "write_to_movie": False,

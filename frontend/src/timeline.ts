@@ -14,6 +14,7 @@ export interface Span {
   start: number;
   end: number;
   estimated?: boolean;
+  curve?: number[]; // progress at evenly spaced times (measured by manim)
 }
 
 export interface Layout {
@@ -101,7 +102,7 @@ export function layout(doc: SceneDoc, measured: RunResult | null): Layout {
         for (const a of list) {
           const am = !a.disabled && m ? ma.get(a.id) : undefined;
           let span: Span;
-          if (am && m) span = { start: t + (am.start - m.start), end: t + (am.end - m.start) };
+          if (am && m) span = { start: t + (am.start - m.start), end: t + (am.end - m.start), curve: am.curve };
           else {
             const d = top && playRt !== undefined && !a.disabled ? playRt : animEstimate(a);
             span = { start: cursor, end: cursor + d, estimated: true };

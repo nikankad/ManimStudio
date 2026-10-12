@@ -1,4 +1,4 @@
-// JS versions of manim's rate functions, only used to draw the curve inside timeline clips.
+// JS versions of manim's rate functions, used to draw a curve until manim has measured the real one.
 
 const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 const smooth = (t: number) => {
@@ -71,9 +71,18 @@ export function rateFn(name: string | undefined): (t: number) => number {
   return smooth;
 }
 
-/** SVG path of the curve over a w×h box (y up). */
-export function ratePath(name: string | undefined, w: number, h: number): string {
-  const f = rateFn(name);
+/** Progress sampled at evenly spaced times, as a function. */
+function sampled(curve: number[]): (t: number) => number {
+  const n = curve.length - 1;
+  return (t) => {
+    const x = Math.max(0, Math.min(1, t)) * n, i = Math.min(n - 1, Math.floor(x));
+    return curve[i] + (curve[i + 1] - curve[i]) * (x - i);
+  };
+}
+
+/** SVG path of the curve over a w×h box (y up): a rate function's name, or progress samples measured by manim. */
+export function ratePath(rate: string | number[] | undefined, w: number, h: number): string {
+  const f = Array.isArray(rate) ? (rate.length > 1 ? sampled(rate) : rateFn('linear')) : rateFn(rate);
   const n = Math.max(8, Math.min(64, Math.round(w / 4)));
   let d = '';
   for (let i = 0; i <= n; i++) {

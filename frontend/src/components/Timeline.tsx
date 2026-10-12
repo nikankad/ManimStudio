@@ -334,7 +334,7 @@ export function Timeline() {
             })}
           </div>
         ) : (
-          w > 24 && <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none"><path d={ratePath(a.args?.rate_func ?? step.args?.rate_func, w, ROW - 28)} /></svg>
+          w > 24 && <svg className="rate" width={w} height={ROW - 26} preserveAspectRatio="none"><path d={ratePath(sp.curve ?? (step.args?.rate_func || a.args?.rate_func), w, ROW - 28)} /></svg>
         )}
       </div>
     );

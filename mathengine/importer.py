@@ -10,8 +10,8 @@ Each statement of ``construct()`` becomes the document element that codegen comp
 * anything else (loops, updaters, helper variables…): a code step, kept as written. Consecutive
   statements of this kind form one code step.
 
-Module-level code other than the scene (imports, helpers, custom Mobject classes) becomes the header, other
-members of the scene class are kept as written, and the comments above statements stay with them. So the
+Module-level code other than the scene (imports, helpers, custom Mobject classes) becomes the header (the
+footer: what comes after the scene class), the scene's decorators and other members are kept as written, and the comments above statements stay with them. So the
 code generated from the imported document runs exactly like the original.
 
 With ``base`` (the document the code was generated from), statements that are unchanged keep their document
@@ -646,8 +646,9 @@ def _restore_disabled(base: dict, steps: list[dict], reused: set[str]) -> list[d
     return out
 
 
-def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict) -> str:
-    """Module-level code other than the scene and what codegen writes itself; reads ``config.x = …`` into ``config``."""
+def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict) -> tuple[str, str]:
+    """Module-level code other than the scene and what codegen writes itself, before and after the scene class
+    (code after it can use it, so it stays after it); reads ``config.x = …`` into ``config``."""
     drop: set[int] = set()
 
     def skip(node: ast.AST) -> None:
@@ -671,9 +672,14 @@ def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict) -
             elif key in _CONFIG_NUMBERS and (v := _numeric(node.value)) is not None and v > 0:
                 config[key] = int(v)
                 skip(node)
-    lines = [ln for i, ln in enumerate(src.lines, 1) if i not in drop]
-    text = re.sub(r"\n{3,}", "\n\n\n", "\n".join(lines)).strip("\n")
-    return text + "\n" if text else ""
+    split = _first_line(scene)
+
+    def text(lines: list[str]) -> str:
+        out = re.sub(r"\n{3,}", "\n\n\n", "\n".join(lines)).strip("\n")
+        return out + "\n" if out else ""
+
+    keep = [(i, ln) for i, ln in enumerate(src.lines, 1) if i not in drop]
+    return text([ln for i, ln in keep if i < split]), text([ln for i, ln in keep if i > split])
 
 
 def _members(src: _Source, scene: ast.ClassDef, construct_fn: ast.FunctionDef) -> tuple[str, str]:
@@ -714,12 +720,16 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
     if base:
         doc.update({k: copy.deepcopy(v) for k, v in base.items() if k in ("config", "markers", "constructions")})
     doc["scene"] = {"name": node.name, "base": ", ".join(ast.unparse(b) for b in node.bases) or "Scene"}
+    if node.decorator_list:  # they can change the class (its attributes, its methods), so they stay
+        doc["scene"]["decorators"] = "\n".join("@" + src.seg(d) for d in node.decorator_list)
     before, after = _members(src, node, construct_fn)
     if before:
         doc["scene"]["members"] = before
     if after:
         doc["scene"]["members_after"] = after
-    doc["header"] = _header(src, tree, node, doc["config"])
+    doc["header"], footer = _header(src, tree, node, doc["config"])
+    if footer:
+        doc["footer"] = footer
 
     ns = dict(vars(catalog.manim()))
     from manim.utils import rate_functions
