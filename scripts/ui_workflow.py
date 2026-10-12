@@ -588,6 +588,15 @@ def accessibility(b):
             rows.nth(i).click()
             pg.wait_for_timeout(400)
             found[f"object {i}"] = violations(pg)
+        for view in ["Drawing order", "Markers"]:
+            pg.get_by_role("button", name=view).click()
+            pg.wait_for_timeout(300)
+            found[view] = violations(pg)
+        pg.keyboard.press("m")
+        pg.locator(".ruler .marker").first.click()
+        pg.get_by_role("group", name="Marker kind").get_by_role("button", name="Review").click()
+        pg.wait_for_timeout(300)
+        found["marker"] = violations(pg)
         pg.get_by_role("button", name="</> Code").click()
         pg.wait_for_timeout(1500)
         found["Code tab"] = violations(pg)
@@ -949,7 +958,75 @@ def retiming(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def markers(b):
+    """M with a clip selected adds a marker attached to it: it moves when the clip moves (undo too). Double-click
+    edits it (name, kind, notes); the cue list finds it; deleting its clip leaves it where it was, and says so."""
+    code = ("from manim import *\n\nclass K(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+            "        self.play(Create(a))\n        self.wait(2)\n        self.play(Create(b))\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "cues.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="Create {n},"]')
+        marker = pg.locator(".ruler .marker")
+        clip("b").click()
+        tc = pg.locator(".tl-header .timecode")
+        tc.click()
+        pg.locator(".tl-header input.timecode").fill("00:00:03:30")
+        pg.keyboard.press("Enter")
+        clip("b").click()
+        pg.keyboard.press("m")
+        assert marker.count() == 1 and marker.get_attribute("aria-label") == "Marker at 00:00:03:30, attached", marker.get_attribute("aria-label")
+
+        # double-click: its settings, the name ready to type
+        marker.dblclick()
+        name = pg.get_by_label("Marker name")
+        pg.wait_for_function("document.activeElement?.getAttribute('aria-label') === 'Marker name'")
+        name.fill("Reveal square")
+        name.press("Enter")
+        pg.get_by_role("group", name="Marker kind").get_by_role("button", name="Visual event").click()
+        pg.get_by_label("Marker notes").fill("say: and here is the square")
+        assert "Attached to the start of Create b + 0.5 s" in pg.locator(".marker-insp").inner_text()
+        assert marker.get_attribute("aria-label") == "Marker Reveal square at 00:00:03:30, attached"
+
+        # the clip moves (a gets 1 s longer): the marker moves with it; undo puts both back
+        ab = clip("a").bounding_box()
+        pg.mouse.move(ab["x"] + ab["width"] - 2, ab["y"] + ab["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(ab["x"] + 2 * ab["width"] - 2, ab["y"] + ab["height"] / 2, steps=8)
+        assert marker.get_attribute("aria-label").startswith("Marker Reveal square at 00:00:04:30"), "it follows while dragging"
+        pg.mouse.up()
+        pg.wait_for_timeout(400)
+        assert marker.get_attribute("aria-label").startswith("Marker Reveal square at 00:00:04:30")
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+        assert marker.get_attribute("aria-label").startswith("Marker Reveal square at 00:00:03:30")
+
+        # the cue list: search and filter
+        pg.get_by_role("button", name="Scene", exact=True).first.click()
+        pg.get_by_role("button", name="Markers (1)").click()
+        row = pg.locator(".cue-list .outline-row")
+        assert row.get_attribute("aria-label") == "Reveal square at 00:00:03:30, Visual event", row.get_attribute("aria-label")
+        pg.get_by_label("Search markers").fill("square")
+        assert row.count() == 1
+        pg.get_by_role("group", name="Show markers of kind").get_by_role("button", name="Chapter").click()
+        assert row.count() == 0 and "No marker matches" in pg.locator(".cue-list").inner_text()
+        pg.get_by_role("group", name="Show markers of kind").get_by_role("button", name="All").click()
+        pg.keyboard.press("Home")
+        row.click()
+        assert pg.locator(".tl-header .timecode").inner_text() == "00:00:03:30"
+
+        # deleting the clip it is attached to: it stays where it was, and a note says so
+        clip("b").click()
+        pg.keyboard.press("Delete")
+        pg.wait_for_timeout(300)
+        assert "stays at 00:00:03:30" in " ".join(pg.locator(".toast").all_inner_texts())
+        assert marker.get_attribute("aria-label") == "Marker Reveal square at 00:00:03:30"
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

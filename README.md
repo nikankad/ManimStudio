@@ -114,6 +114,13 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     later beats keep their time; it never takes more than the pause holds, and the note says when it stops there.
     The Duration fields in Effect Controls follow the same setting.
   - Delete leaves the time as a pause (`self.wait`), like Premiere; Shift+Delete (ripple delete) closes the gap.
+  - **Markers** (M, or the ruler's marker button) mark a moment: with a clip selected under the playhead, the
+    marker is attached to that clip's start or end and moves with it (through moves, retiming, undo, save and code
+    edits). Click one to jump there and edit it, double-click to name it, drag it along the ruler to move it,
+    Alt-click to delete it. Each has a name (shown on the ruler), a kind (Chapter, Narration, Visual event,
+    Review, each with its colour), notes, and what it is attached to. **Scene › Markers** lists them in time
+    order, with search and a filter by kind. Deleting the clip a marker is attached to leaves the marker where it
+    was, and a note says so.
   - It snaps to the playhead, markers and clip edges (toggle with **S**). Shift-click or drag a box to select
     several clips, and right-click for more (enable/disable, ripple delete, show in code…). Ctrl/⌘ + wheel
     zooms, the scroll bar's ends zoom too, and `\` zooms to fit.

@@ -324,3 +324,23 @@ class S(ThreeDScene):
     assert run_source(out, "S")[:2] == run_source(src, "S")[:2]
     r = runtime.run(doc, None, render=False)
     assert r.error is None and r.duration == pytest.approx(3.5)
+
+
+def test_markers_keep_their_attachment_through_code_edits(tmp_path):
+    """A marker attached to a clip keeps pointing at it when the code is edited elsewhere, and survives save/reopen
+    with its name, kind, notes and attachment."""
+    from mathengine import project
+
+    src = ("from manim import *\n\nclass M(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+           "        self.play(Create(a))\n        self.wait(2)\n        self.play(Create(b))\n")
+    d = import_code(src).doc
+    anim = d["timeline"][-1]["anims"][0]["id"]
+    d["markers"] = [{"id": "m1", "time": 3.5, "label": "Reveal", "notes": "say it", "category": "visual",
+                     "anchor": {"id": anim, "edge": "start", "offset": 0.5}}]
+    edited = codegen.generate(d, latex=True).source.replace("self.wait(2)", "self.wait(3)")
+    new = import_code(edited, base=d).doc
+    assert new["markers"] == d["markers"]
+    assert any(a["id"] == anim for s in new["timeline"] for a in s.get("anims") or [])
+    path = tmp_path / "m.manimstudio"
+    project.save_project(path, new)
+    assert project.load_project(path)["markers"] == d["markers"]

@@ -704,3 +704,15 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .lanes-label { cursor: help; }
 .drag-note { position: absolute; z-index: 6; max-width: 360px; padding: 4px 8px; border-radius: 4px; background: #101820; color: #e8eef5; border: 1px solid #3d9bff; font-size: 11px; line-height: 1.35; pointer-events: none; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5); }
 .drag-note.warn { border-color: #f0ac5f; background: #2e1e0c; color: #ffe4c4; }
+.marker.sel { outline: 2px solid #fff; outline-offset: 1px; }
+.marker.chapter, .cue-dot.chapter { background: #3d9bff; }
+.marker.narration, .cue-dot.narration { background: #e0b84a; }
+.marker.visual, .cue-dot.visual { background: #c06ad6; }
+.marker.review, .cue-dot.review { background: #f0605a; }
+.marker-label { position: absolute; bottom: 0; font-size: 10px; line-height: 12px; color: #e8eef5; white-space: nowrap; pointer-events: none; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+.cue-tools { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
+.cue-kinds { flex-wrap: wrap; }
+.cue-dot { width: 8px; height: 8px; border-radius: 2px; background: #5cb85c; flex: none; }
+.outline-row.cue .cue-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.marker-kind { flex-wrap: wrap; }
+.marker-insp select { flex: 1; min-width: 0; }

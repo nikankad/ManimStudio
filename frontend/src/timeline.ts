@@ -6,7 +6,7 @@
 // yet (just added) is estimated from its arguments until the next measurement arrives.
 
 import { renameIdentifiers } from './pyparse';
-import type { Anim, Args, RunResult, SceneDoc, Step } from './types';
+import type { Anim, Args, Marker, MarkerCategory, RunResult, SceneDoc, Step } from './types';
 
 export const EPS = 1e-6;
 
@@ -131,6 +131,49 @@ export function layout(doc: SceneDoc, measured: RunResult | null): Layout {
     t += dur;
   }
   return { steps, anims, end: t, rows };
+}
+
+// ---------------------------------------------------------------------------- markers
+
+export const MARKER_CATEGORIES: { id: MarkerCategory; label: string }[] = [
+  { id: 'chapter', label: 'Chapter' },
+  { id: 'narration', label: 'Narration' },
+  { id: 'visual', label: 'Visual event' },
+  { id: 'review', label: 'Review' },
+];
+
+
+/** Where a marker is: at its time, or (attached) at the start or end of its step or animation plus its offset. */
+export function markerTime(m: Marker, lay: Layout): number {
+  const sp = m.anchor && (lay.anims.get(m.anchor.id) ?? lay.steps.get(m.anchor.id));
+  if (!m.anchor || !sp) return m.time;
+  return Math.max(0, (m.anchor.edge === 'end' ? sp.end : sp.start) + m.anchor.offset);
+}
+
+/** Attach to the nearer edge of this step or animation, keeping the time `t`. */
+export function anchorTo(lay: Layout, id: string, t: number): Marker['anchor'] {
+  const sp = lay.anims.get(id) ?? lay.steps.get(id);
+  if (!sp) return undefined;
+  const edge = Math.abs(t - sp.end) < Math.abs(t - sp.start) ? 'end' : 'start';
+  return { id, edge, offset: round(t - sp[edge]) };
+}
+
+/**
+ * After an edit: attached markers remember where they are now, and one whose step or animation is gone stays where it
+ * was (`prev` is the layout before the edit). Returns the markers that were let go.
+ */
+export function settleMarkers(d: SceneDoc, prevLay: Layout, lay: Layout): Marker[] {
+  const gone: Marker[] = [];
+  for (const m of d.markers ?? []) {
+    if (!m.anchor) continue;
+    if (lay.anims.has(m.anchor.id) || lay.steps.has(m.anchor.id)) m.time = round(markerTime(m, lay));
+    else {
+      m.time = round(markerTime(m, prevLay));
+      delete m.anchor;
+      gone.push(m);
+    }
+  }
+  return gone;
 }
 
 // ---------------------------------------------------------------------------- finding things

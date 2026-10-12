@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  addAnimation, addMarker, addObject, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
+  addAnimation, addMarker, addObject, deleteMarker, selectMarker, setMarker, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
   previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
-  canTrimStep, EPS, findAnim, findStep, landing, layout, moveAnims, moveSteps, retime,
+  canTrimStep, EPS, findAnim, findStep, landing, layout, markerTime, moveAnims, moveSteps, retime,
   type Layout, type Retime,
 } from '../timeline';
-import type { Anim, RunResult, SceneDoc, Step } from '../types';
+import type { Anim, Marker, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
 import { rampPath, ratePath } from './rates';
 import { clipRoles, type ClipRole } from '../clipRole';
@@ -58,6 +58,7 @@ type Drag =
   | { mode: 'steps'; ids: string[]; x0: number; t0: number; t: number; copy: boolean; moved: boolean; pick?: string }
   | { mode: 'trim-anim' | 'trim-step'; id: string; x0: number; dur0: number; dur: number }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: string[]; band?: string }
+  | { mode: 'marker'; id: string; x0: number; t0: number; t: number; moved: boolean }
   | { mode: 'scrub' };
 
 /**
@@ -251,7 +252,7 @@ export function Timeline() {
 
   // ------------------------------------------------------------ snapping
   const snapPoints = (exclude: Set<string>) => {
-    const pts = [0, time, ...(doc.markers ?? []).map((m) => m.time)];
+    const pts = [0, time, ...(doc.markers ?? []).filter((m) => !exclude.has(m.id) && !(m.anchor && exclude.has(m.anchor.id))).map((m) => markerTime(m, lay))];
     for (const [id, sp] of [...lay.steps, ...lay.anims]) if (!exclude.has(id)) pts.push(sp.start, sp.end);
     return pts;
   };
@@ -290,6 +291,11 @@ export function Timeline() {
         return setDrag({ ...d, x1: nx, y1: ny });
       }
       const dx = (e.clientX - d.x0) / pps;
+      if (d.mode === 'marker') {
+        const { v, guide: g } = snapTo(d.t0 + dx, new Set([d.id]));
+        setGuide(g);
+        return setDrag({ ...d, t: frameSnap(v), moved: d.moved || Math.abs(e.clientX - d.x0) > 3 });
+      }
       if (d.mode === 'anims' || d.mode === 'steps') {
         const { v, guide: g } = snapTo(d.t0 + dx, new Set(d.ids));
         setGuide(g);
@@ -323,6 +329,17 @@ export function Timeline() {
       // a click (no drag) on the shading of an animation group selects the group; on a clip of a selected group, the clip
       if (d.mode === 'marquee' && d.band && Math.abs(d.x1 - d.x0) < 3 && Math.abs(d.y1 - d.y0) < 3) return selectClips([d.band]);
       if (d.mode === 'steps' && d.pick && !d.moved) return selectClips([d.pick]);
+      if (d.mode === 'marker') {
+        if (!d.moved) return selectMarker(d.id);
+        // an attached marker keeps its attachment: the drag changes how far from it it is
+        const l = docLayout();
+        setMarker(d.id, (m) => {
+          const sp = m.anchor && (l.anims.get(m.anchor.id) ?? l.steps.get(m.anchor.id));
+          if (m.anchor && sp) m.anchor.offset = Math.round((d.t - (m.anchor.edge === 'end' ? sp.end : sp.start)) * 1000) / 1000;
+          m.time = d.t;
+        });
+        return selectMarker(d.id, false);
+      }
       if (!changes(d)) return;
       let ids: string[] = [];
       const { timeline: measured, keepTiming } = getState();
@@ -628,14 +645,22 @@ export function Timeline() {
                   {mj && <span>{timecode(t)}</span>}
                 </div>
               ))}
-              {(doc.markers ?? []).map((m) => (
-                <div key={m.id} className="marker" style={{ left: x(m.time) }} title="Marker: click to jump, Alt-click to delete"
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    if (e.altKey) updateDoc((d) => void (d.markers = (d.markers ?? []).filter((k) => k.id !== m.id)));
-                    else setState({ time: m.time, showVideo: false });
-                  }} />
-              ))}
+              {(sdoc.markers ?? []).map((m) => {
+                const t = drag?.mode === 'marker' && drag.id === m.id ? drag.t : markerTime(m, slay);
+                return [
+                  m.label && <span key={m.id + 'l'} className="marker-label" style={{ left: x(t) + 7 }}>{m.label}</span>,
+                  <div key={m.id} className={`marker ${m.category ?? ''} ${selection?.kind === 'marker' && selection.id === m.id ? 'sel' : ''}`} style={{ left: x(t) }}
+                    role="button" tabIndex={-1} aria-label={`Marker${m.label ? ` ${m.label}` : ''} at ${timecode(t)}${m.anchor ? ', attached' : ''}`}
+                    title={`${m.label || 'Marker'}${m.notes ? `\n${m.notes}` : ''}\n${markerWhere(m, sdoc)}\nClick to jump and edit it, drag to move it, Alt-click to delete`}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      if (e.button !== 0) return;
+                      if (e.altKey) return deleteMarker(m.id);
+                      setDrag({ mode: 'marker', id: m.id, x0: e.clientX, t0: t, t, moved: false });
+                    }}
+                    onDoubleClick={() => { selectMarker(m.id); setTimeout(() => document.querySelector<HTMLInputElement>('[aria-label="Marker name"]')?.focus(), 0); }} />,
+                ];
+              })}
               <div className="end-mark" style={{ left: x(end) }} title="Sequence end" />
               <RenderBar left={x(0)} width={end * pps} />
             </div>
@@ -904,6 +929,16 @@ const ROLE: Record<ClipRole, { badge: string; word: string; title: string }> = {
   swap: { badge: '⇄', word: 'swap', title: 'Swap: one object goes as another comes in (like a cross dissolve)' },
   effect: { badge: 'fx', word: 'effect', title: 'Effect: changes an object on screen, from the keyframe at its start ◆ to the one at its end ◆. The line is its easing' },
 };
+
+/** What a marker is attached to, in words. */
+export function markerWhere(m: Marker, doc: SceneDoc): string {
+  if (!m.anchor) return 'Stays at its time';
+  const ref = findAnim(doc, m.anchor.id);
+  const step = ref ? undefined : findStep(doc, m.anchor.id);
+  const what = ref ? [animLabel(ref.anim).name, animLabel(ref.anim).sub].filter(Boolean).join(' ') : step ? stepLabel(step).name : 'a removed clip';
+  const off = Math.abs(m.anchor.offset) < 1e-6 ? '' : ` ${m.anchor.offset > 0 ? '+' : '−'} ${Math.abs(m.anchor.offset)} s`;
+  return `Attached to the ${m.anchor.edge} of ${what}${off}`;
+}
 
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
 

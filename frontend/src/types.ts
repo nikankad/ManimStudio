@@ -128,10 +128,16 @@ export interface Anim {
   terms?: { to: string; pairs: [string, string][] };
 }
 
+export type MarkerCategory = 'chapter' | 'narration' | 'visual' | 'review';
+
 export interface Marker {
   id: string;
-  time: number;
+  time: number; // where it is (for an attached marker: where it was last, used if what it is attached to goes away)
   label?: string;
+  notes?: string;
+  category?: MarkerCategory;
+  // attached to the start or end of a step or an animation (by id), `offset` seconds from it: it moves along with it
+  anchor?: { id: string; edge: 'start' | 'end'; offset: number };
 }
 
 export interface SceneDoc {
@@ -270,6 +276,7 @@ export type Selection =
   | { kind: 'object'; id: string; terms?: string[] } // terms: selected equation parts
   | { kind: 'objects'; ids: string[] }
   | { kind: 'clips'; ids: string[] } // timeline steps and animations (by id)
+  | { kind: 'marker'; id: string }
   | null;
 
 /** Canvas tool. */

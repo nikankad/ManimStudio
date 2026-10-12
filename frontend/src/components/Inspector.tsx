@@ -2,14 +2,14 @@ import { useState } from 'react';
 import { api } from '../api';
 import {
   addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
-  timecode, toast, toggleDisabled, updateDoc, useSignature, useStore,
+  timecode, toast, toggleDisabled, updateDoc, useSignature, useStore, setMarker, deleteMarker,
 } from '../store';
-import { addChild, EPS, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { addChild, anchorTo, EPS, findAnim, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
 import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
-import { animLabel, stepLabel } from './Timeline';
+import { animLabel, markerWhere, stepLabel } from './Timeline';
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
-import type { Anim, Args, Param, SceneDoc, SceneObject, Step } from '../types';
+import type { Anim, Args, Marker, Param, SceneDoc, SceneObject, Step } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
@@ -39,12 +39,99 @@ export function Inspector() {
     if (step) body = <StepInspector key={step.id} step={step} />;
     else if (ref) body = <AnimInspector key={ref.anim.id} r={ref} />;
     else if (ids.length > 1) body = <MultiClipInspector ids={ids} />;
+  } else if (selection?.kind === 'marker') {
+    const m = doc.markers?.find((x) => x.id === selection.id);
+    body = m ? <MarkerInspector key={m.id} m={m} /> : null;
   }
   return (
     <aside className="panel inspector" data-tour="inspector">
-      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : 'Scene'}</div>
+      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : selection?.kind === 'marker' ? 'Marker' : 'Scene'}</div>
       <div className="scroll" tabIndex={-1}>{body ?? <SceneInfo />}</div>
     </aside>
+  );
+}
+
+/**
+ * A marker: its name, kind and notes, and what it is attached to. Attached to a clip's start or end (plus an offset),
+ * it moves with the clip; otherwise it stays at its time.
+ */
+function MarkerInspector({ m }: { m: Marker }) {
+  const doc = useStore((s) => s.doc);
+  const timeline = useStore((s) => s.timeline);
+  const time = useStore((s) => s.time);
+  const lay = docLayout(doc, timeline);
+  const at = markerTime(m, lay);
+  // what it can be attached to: the steps and animations around it (and what it is attached to now)
+  const near = (id: string) => {
+    const sp = lay.anims.get(id) ?? lay.steps.get(id);
+    return !!sp && at >= sp.start - 0.5 && at <= sp.end + 0.5;
+  };
+  const options: { id: string; label: string }[] = [];
+  for (const s of doc.timeline) {
+    if (s.disabled) continue;
+    if (s.kind !== 'play' && (near(s.id) || m.anchor?.id === s.id)) options.push({ id: s.id, label: `${stepLabel(s).name} ${stepLabel(s).sub}`.trim() });
+    if (s.kind === 'play') {
+      if (near(s.id) || m.anchor?.id === s.id) options.push({ id: s.id, label: `Play together (${(s.anims ?? []).length})` });
+      for (const a of walk(s.anims)) if (!a.disabled && (near(a.id) || m.anchor?.id === a.id)) options.push({ id: a.id, label: [animLabel(a).name, animLabel(a).sub].filter(Boolean).join(' ') });
+    }
+  }
+  const attach = (id: string) => setMarker(m.id, (x) => {
+    const anchor = id ? anchorTo(lay, id, at) : undefined;
+    if (anchor) x.anchor = anchor;
+    else delete x.anchor;
+    x.time = Math.round(at * 1000) / 1000;
+  });
+  const setEdge = (edge: 'start' | 'end') => setMarker(m.id, (x) => {
+    const sp = x.anchor && (lay.anims.get(x.anchor.id) ?? lay.steps.get(x.anchor.id));
+    if (x.anchor && sp) x.anchor = { ...x.anchor, edge, offset: Math.round((at - sp[edge]) * 1000) / 1000 };
+  });
+  const moveTo = (t: number) => setMarker(m.id, (x) => {
+    t = Math.max(0, frameSnap(t));
+    const sp = x.anchor && (lay.anims.get(x.anchor.id) ?? lay.steps.get(x.anchor.id));
+    if (x.anchor && sp) x.anchor.offset = Math.round((t - sp[x.anchor.edge]) * 1000) / 1000;
+    x.time = t;
+  }, 'time');
+  return (
+    <div className="pad marker-insp">
+      <h3>Marker</h3>
+      <section className="fx-section">
+        <div className="fx-row"><span>Name</span><Field ariaLabel="Marker name" value={m.label ?? ''} placeholder="Name it (it shows on the ruler)"
+          onChange={() => {}} onBlur={(v) => v.trim() !== (m.label ?? '') && setMarker(m.id, (x) => { if (v.trim()) x.label = v.trim(); else delete x.label; })} /></div>
+        <div className="fx-row"><span>Kind</span>
+          <div className="seg marker-kind" role="group" aria-label="Marker kind">
+            <button className={!m.category ? 'on' : ''} aria-pressed={!m.category} onClick={() => setMarker(m.id, (x) => void delete x.category)}>None</button>
+            {MARKER_CATEGORIES.map((c) => (
+              <button key={c.id} className={m.category === c.id ? 'on' : ''} aria-pressed={m.category === c.id} onClick={() => setMarker(m.id, (x) => void (x.category = c.id))}>{c.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="fx-row"><span>Notes</span><Field ariaLabel="Marker notes" multiline value={m.notes ?? ''} placeholder="What happens here, what to say, what to check…"
+          onChange={(v) => setMarker(m.id, (x) => { if (v) x.notes = v; else delete x.notes; }, 'notes')} /></div>
+      </section>
+      <section className="fx-section">
+        <h4>Time</h4>
+        <div className="fx-row"><span>At</span><ScrubNumber value={at} min={0} step={1 / fps()} precision={3} suffix="s" onChange={moveTo} />
+          <span className="muted small mono">{timecode(at)}</span></div>
+        <div className="fx-row"><span /><button className="ghost small" disabled={Math.abs(time - at) < 1e-6} onClick={() => moveTo(time)}>Move to playhead</button></div>
+        <div className="fx-row"><span>Attached to</span>
+          <select aria-label="Attached to" value={m.anchor?.id ?? ''} onChange={(e) => attach(e.target.value)}>
+            <option value="">Nothing: stays at its time</option>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </div>
+        {m.anchor && (
+          <div className="fx-row"><span>From its</span>
+            <div className="seg" role="group" aria-label="Attached at">
+              <button className={m.anchor.edge === 'start' ? 'on' : ''} aria-pressed={m.anchor.edge === 'start'} onClick={() => setEdge('start')}>Start</button>
+              <button className={m.anchor.edge === 'end' ? 'on' : ''} aria-pressed={m.anchor.edge === 'end'} onClick={() => setEdge('end')}>End</button>
+            </div>
+            <span className="muted small">{m.anchor.offset ? `${m.anchor.offset > 0 ? '+' : '−'}${Math.abs(m.anchor.offset)} s` : ''}</span>
+          </div>
+        )}
+        <p className="muted small">{markerWhere(m, doc)}{m.anchor ? ': it moves when that clip moves or changes length.' : '. Attach it to a clip to move it with the clip.'}</p>
+      </section>
+      <div className="row"><button className="ghost small danger" onClick={() => deleteMarker(m.id)}>Delete marker</button></div>
+    </div>
   );
 }
 

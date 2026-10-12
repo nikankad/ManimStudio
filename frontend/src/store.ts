@@ -3,8 +3,8 @@ import { api, type AppInfo, type Recovery } from './api';
 import { pref, setPref } from './prefs';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
-import { cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, newAnim, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
-import type { Anim, Args, Catalog, CatalogEntry, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
+import { anchorTo, cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
+import type { Anim, Args, Catalog, CatalogEntry, Job, Link, Marker, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
 
 export interface VideoState {
   jobId: string | null;
@@ -155,6 +155,12 @@ let lastCoalesce: { key: string; at: number } | null = null;
 export function updateDoc(fn: (d: SceneDoc) => void, coalesce?: string) {
   const next = structuredClone(state.doc);
   fn(next);
+  // markers attached to a step or animation move along; one whose step or animation is gone stays where it was
+  const gone = next.markers?.some((m) => m.anchor) ? settleMarkers(next, docLayout(state.doc), layout(next, state.timeline)) : [];
+  if (gone.length) {
+    const names = gone.map((m) => (m.label ? `“${m.label}”` : 'a marker')).join(', ');
+    queueMicrotask(() => toast(`${names[0].toUpperCase()}${names.slice(1)} ${gone.length === 1 ? 'was' : 'were'} attached to what was removed: ${gone.length === 1 ? 'it stays' : 'they stay'} at ${gone.map((m) => timecode(m.time)).join(', ')}`));
+  }
   const now = Date.now();
   const merge = coalesce && lastCoalesce?.key === coalesce && now - lastCoalesce.at < 1200;
   lastCoalesce = coalesce ? { key: coalesce, at: now } : null;
@@ -627,11 +633,41 @@ export function toggleDisabled(ids: string[]) {
   });
 }
 
+/**
+ * Add a marker at `time`. With one clip selected under it, the marker is attached to that clip (its start or end,
+ * whichever is nearer) and moves with it, like a clip marker in Premiere.
+ */
 export function addMarker(time = state.time) {
+  const t = frameSnap(time);
+  const lay = docLayout();
+  const sel = state.selection?.kind === 'clips' && state.selection.ids.length === 1 ? state.selection.ids[0] : undefined;
+  const sp = sel && (lay.anims.get(sel) ?? lay.steps.get(sel));
+  const anchor = sp && t >= sp.start - 1e-6 && t <= sp.end + 1e-6 ? anchorTo(lay, sel!, t) : undefined;
+  const m: Marker = { id: uid('m'), time: t, ...(anchor ? { anchor } : {}) };
   updateDoc((d) => {
     d.markers ??= [];
-    d.markers.push({ id: uid('m'), time: frameSnap(time) });
+    d.markers.push(m);
   });
+  return m.id;
+}
+
+export function setMarker(id: string, fn: (m: Marker) => void, coalesce?: string) {
+  updateDoc((d) => {
+    const m = d.markers?.find((x) => x.id === id);
+    if (m) fn(m);
+  }, coalesce && `marker:${id}:${coalesce}`);
+}
+
+export function deleteMarker(id: string) {
+  updateDoc((d) => void (d.markers = (d.markers ?? []).filter((k) => k.id !== id)));
+  if (state.selection?.kind === 'marker' && state.selection.id === id) setState({ selection: null });
+}
+
+/** Select a marker (its settings show in the inspector) and move the playhead to it. */
+export function selectMarker(id: string, seek = true) {
+  const m = state.doc.markers?.find((x) => x.id === id);
+  if (!m) return;
+  setState({ selection: { kind: 'marker', id }, ...(seek ? { time: frameSnap(markerTime(m, docLayout())), showVideo: false } : {}) });
 }
 
 /** All edit points (step and animation starts and ends, markers), for ↑/↓ navigation and snapping. */
@@ -642,7 +678,7 @@ export function editPoints(doc: SceneDoc, timeline: RunResult | null): number[] 
     pts.add(Math.round(sp.start * 1e4) / 1e4);
     pts.add(Math.round(sp.end * 1e4) / 1e4);
   }
-  for (const m of doc.markers ?? []) pts.add(m.time);
+  for (const m of doc.markers ?? []) pts.add(Math.round(markerTime(m, lay) * 1e4) / 1e4);
   return [...pts].sort((a, b) => a - b);
 }
 
@@ -664,6 +700,7 @@ export function renameObject(id: string, newName: string) {
 export function deleteSelection(ripple = false) {
   const sel = state.selection;
   if (!sel) return;
+  if (sel.kind === 'marker') return deleteMarker(sel.id);
   if (sel.kind === 'object' || sel.kind === 'objects') {
     const ids = selectedObjectIds(sel);
     const deps = dependentsOf(state.doc, ids, false);

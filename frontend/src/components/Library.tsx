@@ -3,8 +3,11 @@ import { api } from '../api';
 import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
 import {
   addAnimation, addObject, addStep, newObjectPos, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
-  uncoupleObjects, updateDoc, useStore,
+  uncoupleObjects, updateDoc, useStore, addMarker, selectMarker,
 } from '../store';
+import { MARKER_CATEGORIES, markerTime } from '../timeline';
+import { markerWhere } from './Timeline';
+import type { MarkerCategory } from '../types';
 import { syncInstances } from '../templates';
 import type { Template } from '../types';
 import type { CatalogEntry } from '../types';
@@ -171,17 +174,20 @@ function Outline() {
   const selection = useStore((s) => s.selection);
   const frame = useStore((s) => s.frame);
   const error = frame?.error;
-  const [view, setView] = useState<'objects' | 'order' | 'relationships'>('objects');
+  const [view, setView] = useState<'objects' | 'order' | 'relationships' | 'markers'>('objects');
+  const markers = useStore((s) => s.doc.markers?.length ?? 0);
   const count = objects.filter((o) => o.link).length;
   const toggle = (
     <div className="seg outline-view">
       <button className={view === 'objects' ? 'on' : ''} onClick={() => setView('objects')}>Objects</button>
       <button className={view === 'order' ? 'on' : ''} onClick={() => setView('order')} title="What is drawn on top of what at the playhead">Drawing order</button>
       <button className={view === 'relationships' ? 'on' : ''} onClick={() => setView('relationships')} title="Every relationship in the scene: what is coupled to what, and whether it is in effect">Relationships{count ? ` (${count})` : ''}</button>
+      <button className={view === 'markers' ? 'on' : ''} onClick={() => setView('markers')} title="Every marker: search them, filter by kind, jump to one">Markers{markers ? ` (${markers})` : ''}</button>
     </div>
   );
   if (view === 'relationships') return <div className="outline-wrap">{toggle}<Relationships /></div>;
   if (view === 'order') return <div className="outline-wrap">{toggle}<DrawingOrder /></div>;
+  if (view === 'markers') return <div className="outline-wrap">{toggle}<CueList /></div>;
   return (
     <div className="outline-wrap">
     {toggle}
@@ -259,6 +265,48 @@ function DrawingOrder() {
 const STATE_LABEL: Record<LinkState, string> = { coupled: 'coupled', uncoupled: 'paused', frozen: 'frozen' };
 
 /** Overview of every relationship: state, sources, timeline switches; couple, uncouple and forget from here. */
+/** Every marker in time order: search names and notes, filter by kind; a click jumps to it and shows its settings. */
+function CueList() {
+  const doc = useStore((s) => s.doc);
+  const timeline = useStore((s) => s.timeline);
+  const selection = useStore((s) => s.selection);
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<MarkerCategory | 'all'>('all');
+  const lay = docLayout(doc, timeline);
+  const all = (doc.markers ?? []).map((m) => ({ m, t: markerTime(m, lay) })).sort((a, b) => a.t - b.t);
+  const q = query.trim().toLowerCase();
+  const shown = all.filter(({ m }) => (kind === 'all' || m.category === kind) && (!q || `${m.label ?? ''} ${m.notes ?? ''}`.toLowerCase().includes(q)));
+  const kindLabel = (c?: MarkerCategory) => MARKER_CATEGORIES.find((k) => k.id === c)?.label;
+  return (
+    <div className="scroll outline cue-list">
+      <div className="cue-tools">
+        <input className="field" type="search" placeholder="Search markers" aria-label="Search markers" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="seg cue-kinds" role="group" aria-label="Show markers of kind">
+          {[{ id: 'all' as const, label: 'All' }, ...MARKER_CATEGORIES].map((c) => (
+            <button key={c.id} className={kind === c.id ? 'on' : ''} aria-pressed={kind === c.id} onClick={() => setKind(c.id)}>{c.label}</button>
+          ))}
+        </div>
+      </div>
+      {all.length === 0 && (
+        <div className="muted pad">No markers yet. Press <kbd>M</kbd> or <button className="ghost small" onClick={() => selectMarker(addMarker())}>add one at the playhead</button>; with a clip selected, it is attached to the clip and moves with it.</div>
+      )}
+      {all.length > 0 && shown.length === 0 && <div className="muted pad">No marker matches.</div>}
+      {shown.map(({ m, t }) => (
+        <div key={m.id} className={`outline-row cue ${selection?.kind === 'marker' && selection.id === m.id ? 'sel' : ''}`} tabIndex={0} role="button"
+          aria-pressed={selection?.kind === 'marker' && selection.id === m.id} aria-label={`${m.label || 'Marker'} at ${timecode(t)}${m.category ? `, ${kindLabel(m.category)}` : ''}`}
+          title={`${markerWhere(m, doc)}${m.notes ? `\n${m.notes}` : ''}`}
+          onClick={(e) => { selectMarker(m.id); e.currentTarget.blur(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectMarker(m.id); } }}>
+          <span className={`cue-dot ${m.category ?? ''}`} />
+          <span className="mono small">{timecode(t)}</span>
+          <span className="cue-name">{m.label || <i className="muted">Marker</i>}{m.anchor && <span className="muted" title={markerWhere(m, doc)}> ⛓</span>}</span>
+          {m.category && <span className="muted">{kindLabel(m.category)}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Relationships() {
   const doc = useStore((s) => s.doc);
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
