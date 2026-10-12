@@ -373,6 +373,12 @@ export function useShortcuts() {
           if (k === 'o') void openProject().catch((err) => toast(String(err)));
           else setState({ panel: 'new-project' });
         } else if (e.key === 'F1') setState({ panel: 'help', panelData: null });
+        else if (e.key === 'Escape') {
+          // Close the open dialog; with none open, go back to the project behind Home.
+          const s = getState();
+          if (s.panel) setState({ panel: null, panelData: null });
+          else if (!typing && s.hasProject) setState({ home: false });
+        }
         return;
       }
       if (mod && k === 's') {
@@ -395,6 +401,7 @@ export function useShortcuts() {
         setState({ panel: 'help', panelData: null });
         return;
       }
+      if (e.key === 'Escape' && typing && getState().panel === 'help') return setState({ panel: null, panelData: null }); // from its search box
       if (typing) return;
       const s = getState();
       if (e.key === '?' && !mod) {
