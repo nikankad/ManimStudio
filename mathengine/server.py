@@ -292,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
             recent.add(path)
             if path.endswith(".py"):
                 return {**self._import_file(path), "home": False}
-            return {"doc": load_project(path), "path": path, "home": False}
+            return {"doc": load_project(path), "path": path, "home": False, "recovery": recovery.for_path(path)}
         # No project given, or the file given doesn't exist (moved, renamed): start at Home.
         self.app.project_path = None
         return {"doc": new_project(), "path": None, "home": True, "missing": path}
@@ -316,7 +316,7 @@ class Handler(BaseHTTPRequestHandler):
         doc = load_project(path)
         self.app.project_path = path
         recent.add(path)
-        return {"doc": doc, "path": path}
+        return {"doc": doc, "path": path, "recovery": recovery.for_path(path)}
 
     def api_project_save(self, _q: dict, body: dict) -> dict:
         save_project(body["path"], body["doc"])

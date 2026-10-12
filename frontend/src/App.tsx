@@ -51,6 +51,7 @@ export function App() {
         if (r.missing) toast(`Couldn't find ${r.missing}: it may have been moved or renamed. Open it from here.`);
         if (r.home) return setState({ home: true });
         loadDoc(r.doc, r.path);
+        if (r.recovery?.length) setState({ restore: r.recovery[0] });
         if (r.imported) setState({ centerTab: 'code', dirty: true });
       })
       .then(loadCatalog)

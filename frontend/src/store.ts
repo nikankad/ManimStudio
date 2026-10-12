@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { api, type AppInfo } from './api';
+import { api, type AppInfo, type Recovery } from './api';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, newAnim, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
@@ -47,6 +47,7 @@ export interface AppState {
   toast: string | null;
   home: boolean; // the Home screen (projects, samples) instead of the editor
   hasProject: boolean; // a project is open behind the Home screen (it can go back to it)
+  restore: Recovery | null; // unsaved changes found for the project just opened: restore them or keep the saved file?
   leave: { resolve: (choice: 'save' | 'discard' | 'cancel') => void } | null; // asking what to do with unsaved changes
 }
 
@@ -94,6 +95,7 @@ let state: AppState = {
   toast: null,
   home: false,
   hasProject: false,
+  restore: null,
   leave: null,
 };
 
@@ -174,6 +176,8 @@ export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) 
 const RECOVERY_DELAY = 2500; // ms
 const newRecoveryId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
 let recoveryId = newRecoveryId();
+/** The recovery copy of the project being edited now (Home must not offer it back as lost work). */
+export const currentRecoveryId = () => recoveryId;
 let recoveryTouched = false; // a copy under this id may exist on the backend
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let recoveryChain: Promise<unknown> = Promise.resolve(); // requests go in order, so a late write can't undo a clear

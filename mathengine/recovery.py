@@ -73,6 +73,19 @@ def listing() -> list[dict]:
     return sorted(out, key=lambda e: e["saved"], reverse=True)
 
 
+def for_path(path: str | Path) -> list[dict]:
+    """The saved sessions of the project at ``path``, newest first (offered when that file is opened directly)."""
+    want = _same(path)
+    return [e for e in listing() if e["path"] and _same(e["path"]) == want]
+
+
+def _same(path: str | Path) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return str(path)
+
+
 def _prune() -> None:
     now = time.time()
     entries = listing()

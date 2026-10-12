@@ -117,15 +117,28 @@ def test_recovery_keeps_unsaved_work_until_cleared(tmp_path):
     assert recovery.load("abc123456") is None
 
 
-def test_recovery_ids_cannot_leave_the_folder_and_old_copies_go():
+def test_recovery_is_found_by_project_path(tmp_path):
     from mathengine import recovery
 
+    a, b = tmp_path / "a.manimstudio", tmp_path / "b.manimstudio"
+    recovery.save("aaaa11111", str(a), {"scene": {"name": "A"}})
+    recovery.save("bbbb11111", str(b), {"scene": {"name": "B"}})
+    recovery.save("cccc11111", None, {"scene": {"name": "C"}})
+    assert [e["id"] for e in recovery.for_path(a)] == ["aaaa11111"]
+    assert [e["id"] for e in recovery.for_path(tmp_path / "sub" / ".." / "b.manimstudio")] == ["bbbb11111"]
+    assert recovery.for_path(tmp_path / "other.manimstudio") == []
+
+
+def test_recovery_ids_cannot_leave_the_folder_and_old_copies_go(monkeypatch):
+    from mathengine import recovery
+
+    clock = iter(range(1_000_000, 2_000_000))  # a clock that always moves on (Windows' can tick coarsely)
+    monkeypatch.setattr(recovery.time, "time", lambda: next(clock))
     for bad in ("../x", "a/b", "", "short"):
         with pytest.raises(ValueError):
             recovery.save(bad, None, {})
     for i in range(recovery.LIMIT + 3):
         recovery.save(f"session{i:04d}", None, {"scene": {"name": str(i)}})
-        time.sleep(0.01)
     kept = recovery.listing()
     assert len(kept) == recovery.LIMIT
     assert kept[0]["scene"] == str(recovery.LIMIT + 2)  # the newest survives

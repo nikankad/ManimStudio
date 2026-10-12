@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api, type Recovery, type RecentProject, type Sample } from '../api';
-import { emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
+import { currentRecoveryId, emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
 import { discardOk, importManimFile, openPath, openProject, RESOLUTIONS } from './Panels';
@@ -63,7 +63,7 @@ export function Home() {
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); setRecovery(h.recovery ?? []); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); setRecovery((h.recovery ?? []).filter((r) => r.id !== currentRecoveryId())); }).catch((e) => { setRecent([]); toast(String(e)); });
     if (!getState().app) api.version().then((a) => setState({ app: a })).catch(() => undefined);
   }, []);
 

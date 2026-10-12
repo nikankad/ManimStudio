@@ -71,8 +71,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   derivative is a slope*, *Riemann sums*, *Altitudes of a triangle* and *Couple and uncouple*. A sample opens as
   an unsaved copy; select anything to see how it is built. Opening a project file directly skips Home.
   While a project has unsaved changes, a copy is kept every few seconds (in the app folder, under `recovery/`);
-  if the app closes or crashes first, Home lists it under **Unsaved work** with *Restore* and *Discard*. Saving, or
-  discarding the changes, removes the copy. Starting or opening another project over unsaved changes asks
+  if the app closes or crashes first, Home lists it under **Unsaved work** with *Restore* and *Discard*, and opening
+  that project's file offers to restore the changes. Saving, or discarding the changes, removes the copy. Starting or opening another project over unsaved changes asks
   *Save*, *Don't save* or *Cancel*.
 
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline. Every

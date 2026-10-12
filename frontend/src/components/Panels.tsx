@@ -82,6 +82,7 @@ export async function openPath(path: string) {
   try {
     const res = await api.openProject(path);
     loadDoc(res.doc, res.path);
+    if (res.recovery?.length) setState({ restore: res.recovery[0] });
     if (res.imported) {
       setState({ centerTab: 'code', dirty: true });
       toast(`Opened ${res.imported.split(/[\\/]/).pop()} as a new project${res.notes?.length ? `. ${res.notes.length} statement${res.notes.length === 1 ? ' is' : 's are'} kept as code` : ''}`);
@@ -185,10 +186,45 @@ function poll(id: string, onUpdate: (j: Job) => boolean) {
   setTimeout(tick, 300);
 }
 
+/** A project was opened that has unsaved changes from an earlier session: restore them or keep the saved file. */
+function RestoreDialog() {
+  const r = useStore((s) => s.restore);
+  if (!r) return null;
+  const close = () => setState({ restore: null });
+  const restore = async () => {
+    close();
+    try {
+      const res = await api.openRecovery(r.id);
+      loadDoc(res.doc, res.path, r.id);
+      toast(`Restored the unsaved changes to ${r.name}. Save to keep them.`);
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  const keepSaved = () => {
+    close();
+    api.clearRecovery(r.id).catch(() => undefined);
+  };
+  return (
+    <div className="modal-back leave-back">
+      <div className="modal" role="alertdialog" aria-label="Unsaved changes found">
+        <div className="modal-head"><h3>Restore unsaved changes to {r.name}?</h3></div>
+        <p className="muted">The app closed before these changes were saved. The file on disk is the version you last saved.</p>
+        <div className="row actions">
+          <span className="spacer" />
+          <button onClick={keepSaved}>Keep the saved file</button>
+          <button className="primary" autoFocus onClick={() => void restore()}>Restore changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Panels() {
   return (
     <>
       <PanelDialog />
+      <RestoreDialog />
       <LeaveDialog />
     </>
   );
