@@ -22,7 +22,8 @@ Python, manim and ffmpeg, but not LaTeX, which equations need (see below; everyt
 
 - **Stable** releases (`v0.2.0`, …) are the ones to use. The app tells you when a newer one is out (it checks
   GitHub once per launch; turn it off in Settings, or set `MATHENGINE_NO_UPDATE_CHECK=1`). That choice, a dismissed
-  update notice, the welcome card, the timeline's height and the Snap / Auto-intro / Auto-render switches are remembered in `prefs.json` in the app folder.
+  update notice, the welcome card, the timeline's height and the Snap / Auto-intro / Auto-render switches are
+  remembered in `prefs.json` in the app folder.
 - **Nightly** is a single pre-release rebuilt from every push to `main`. It can be unfinished; nightly builds
   tell you when a newer nightly is out.
 
@@ -73,8 +74,10 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   an unsaved copy; select anything to see how it is built. Opening a project file directly skips Home.
   While a project has unsaved changes, a copy is kept every few seconds (in the app folder, under `recovery/`);
   if the app closes or crashes first, Home lists it under **Unsaved work** with *Restore* and *Discard*, and opening
-  that project's file offers to restore the changes. Saving, or discarding the changes, removes the copy. Starting or opening another project over unsaved changes asks
-  *Save*, *Don't save* or *Cancel*. Closing the app's window with unsaved changes asks whether to close anyway.
+  that project's file offers to restore the changes. Saving, or discarding the changes, removes the copy. Starting
+  or opening another project over unsaved changes asks *Save*, *Don't save* or *Cancel*, and closing the app's
+  window with unsaved changes asks whether to close anyway. A file that isn't a project (empty, damaged, or some
+  other kind) is refused with a sentence saying so; launched with one, the editor starts at Home and says why.
 
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline. Every
   statement is one manim statement, in order, and starts when the one before it ends, exactly as manim runs it.
@@ -277,8 +280,10 @@ buttons that take you to the right place, and a guided tour that spotlights each
 users are offered the tour once.
 
 Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
-S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘X/⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S save · ⌘N new project · ⌘D duplicate object(s) ·
-1–7 drawing tools · Enter finish polygon · Esc cancel drawing, close a dialog, or go back from Home · / search the library · ? or F1 help.
+S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘X/⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S save · ⌘N new project ·
+⌘D duplicate object(s) · 1–7 drawing tools · Enter finish polygon · Esc cancel drawing, close a dialog, or go
+back from Home · / search the library · ? or F1 help. (⌘ is Ctrl on Windows and Linux; other Ctrl, ⌘ and Alt
+combinations are left to the system.)
 
 ## How it works
 
