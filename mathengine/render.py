@@ -72,6 +72,38 @@ def purge_broken_partials(media: Path) -> int:
     return gone
 
 
+CACHE_MAX_AGE = 14 * 86400  # seconds: a cached piece nobody has rendered for two weeks is not worth keeping
+CACHE_MAX_BYTES = 2 * 1024**3  # per project; 4K renders cache pieces of tens of megabytes
+
+
+def prune_cache(media: Path, max_age: float = CACHE_MAX_AGE, max_bytes: int = CACHE_MAX_BYTES, now: float | None = None) -> int:
+    """Keep a project's cache of partial movies from growing for ever: delete the pieces older than ``max_age``, then
+    the oldest of the rest while the total is over ``max_bytes``. Returns how many went. (Only partial movies and the
+    videos assembled from them; the next render makes whatever it needs again.)"""
+    import time
+
+    now = time.time() if now is None else now
+    pieces = []
+    for movie in media.glob("videos/**/*.mp4"):
+        try:
+            st = movie.stat()
+        except OSError:
+            continue
+        pieces.append((st.st_mtime, st.st_size, movie))
+    pieces.sort()  # oldest first
+    total = sum(size for _, size, _ in pieces)
+    gone = 0
+    for mtime, size, movie in pieces:
+        if now - mtime > max_age or total > max_bytes:
+            try:
+                movie.unlink()
+            except OSError:
+                continue
+            total -= size
+            gone += 1
+    return gone
+
+
 class RenderJob:
     def __init__(self, doc: dict, quality: str, output: str | None, project_key: str, plays: int = 1):
         self.id = uuid.uuid4().hex[:12]
@@ -125,6 +157,7 @@ class RenderJob:
             for old in media.glob(f"videos/**/{out_name}.mp4"):
                 old.unlink(missing_ok=True)
             purge_broken_partials(media)  # left by a render that was cancelled or killed
+            prune_cache(media)
             cmd = [
                 *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,

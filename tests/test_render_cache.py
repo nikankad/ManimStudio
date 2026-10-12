@@ -47,6 +47,27 @@ def test_only_the_broken_partials_are_purged(tmp_path):
     assert render.purge_broken_partials(tmp_path / "media") == 0
 
 
+def test_the_cache_does_not_grow_for_ever(tmp_path):
+    import os
+
+    folder = tmp_path / "media" / "videos" / "scene" / "480p30" / "partial_movie_files" / "S"
+    folder.mkdir(parents=True)
+    now = 1_000_000_000.0
+    files = {}
+    for name, age_days, size in [("old", 20, 100), ("a", 5, 400), ("b", 3, 400), ("c", 1, 400)]:
+        f = folder / f"{name}.mp4"
+        f.write_bytes(b"x" * size)
+        os.utime(f, (now - age_days * 86400, now - age_days * 86400))
+        files[name] = f
+    # by age: only the one nobody has rendered for two weeks goes
+    assert render.prune_cache(tmp_path / "media", max_age=14 * 86400, max_bytes=10_000, now=now) == 1
+    assert not files["old"].exists() and all(files[n].exists() for n in "abc")
+    # by size: the oldest go until the rest fits
+    assert render.prune_cache(tmp_path / "media", max_age=14 * 86400, max_bytes=900, now=now) == 1
+    assert not files["a"].exists() and files["b"].exists() and files["c"].exists()
+    assert render.prune_cache(tmp_path / "media", max_age=14 * 86400, max_bytes=900, now=now) == 0
+
+
 def test_a_render_recovers_from_a_damaged_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(render, "cache_root", lambda: tmp_path / "cache")
     d = doc([obj("o1", "square", "Square")], [play(anim("a1", "FadeIn", "square"))])
