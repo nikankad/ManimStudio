@@ -151,6 +151,10 @@ export function Home() {
                     <tbody>
                       {shown.map((r) => (
                         <tr key={r.path} className={r.exists ? '' : 'missing'} title={r.exists ? r.path : `${r.path}: moved or deleted`}
+                          tabIndex={0} aria-label={`Open ${r.name}`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && e.target === e.currentTarget) (r.exists ? void openPath(r.path) : toast('That file was moved or deleted'));
+                          }}
                           onClick={() => (r.exists ? void openPath(r.path) : toast('That file was moved or deleted'))}>
                           <td className="recent-thumb">{r.thumbnail ? <img src={r.thumbnail} alt="" /> : <span />}</td>
                           <td className="recent-name">{r.name}{!r.exists && <span className="muted small"> · missing</span>}</td>
