@@ -59,6 +59,9 @@ class StepTiming:
     # a step's objects on screen (ids) just before and just after it: the timeline's object view (measuring run only)
     shown_before: list[str] | None = None
     shown_after: list[str] | None = None
+    # an animation's object as it is when the animation starts and when it ends (measuring run, top-level only)
+    state0: dict | None = None
+    state1: dict | None = None
 
 
 @dataclass
@@ -82,7 +85,8 @@ class RunResult:
                        **({"before": s.shown_before, "after": s.shown_after} if s.shown_after is not None else {})}
                       for s in self.steps],
             "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6),
-                       **({"curve": s.curve} if s.curve else {})} for s in self.anims],
+                       **({"curve": s.curve} if s.curve else {}),
+                       **({"from": s.state0, "to": s.state1} if s.state1 is not None else {})} for s in self.anims],
             "objects": self.objects,
             "camera": self.camera,
             "plays": self.plays,
@@ -186,6 +190,11 @@ class PreviewMixin:
         self.begin_animations()
         for anim in self.animations:
             self._me_time(anim, lambda a, t0=t0, rt=float(anim.run_time): t0 + a * rt)
+        # keyframe values: what each animation's object is like at its start (and, below, at its end)
+        measuring = self._me_target is None
+        tagged = {getattr(a, "_me_id", None): a for a in self.animations} if measuring else {}
+        tagged.pop(None, None)
+        start_states = {aid: _state(a.mobject) for aid, a in tagged.items()}
 
         dt = 1 / m.config.frame_rate
         target = self._me_target
@@ -237,6 +246,11 @@ class PreviewMixin:
         for anim in self.animations:
             anim.finish()
             anim.clean_up_from_scene(self)
+        if tagged:
+            timing = {t.id: t for t in self._me_anims if t.id in tagged}
+            for aid, anim in tagged.items():
+                if aid in timing:
+                    timing[aid].state0, timing[aid].state1 = start_states[aid], _state(anim.mobject)
         if not r.skip_animations:
             self.update_mobjects(0)
         r.static_image = None
@@ -408,6 +422,27 @@ def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = Non
         info.update(_geometry(mob, oid, part_index or {}))
         out.append(info)
     return out
+
+
+def _state(mob: Any) -> dict | None:
+    """What the keyframe editor shows of an object: where it is, its size, opacity and colour (a ValueTracker: its
+    value)."""
+    m = manim()
+    try:
+        if isinstance(mob, m.ValueTracker):
+            return {"value": round(float(mob.get_value()), 6)}
+        c = mob.get_center()
+        out: dict = {"center": [round(float(c[0]), 4), round(float(c[1]), 4)], "width": round(float(mob.width), 4),
+                     "height": round(float(mob.height), 4)}
+        if isinstance(mob, m.VMobject):
+            out["opacity"] = round(max(float(mob.get_fill_opacity()), float(mob.get_stroke_opacity())), 4)
+        elif hasattr(mob, "get_opacity"):
+            out["opacity"] = round(float(mob.get_opacity()), 4)
+        color = mob.get_color()
+        out["color"] = color.to_hex().upper() if hasattr(color, "to_hex") else str(color)
+        return out
+    except Exception:  # an unusual mobject (no points yet, a custom class): no values, the times still show
+        return None
 
 
 def _tracker_values(scene: Any) -> dict[str, float]:

@@ -239,6 +239,16 @@ export interface ObjInfo {
   layer?: number | null; // drawing order at this time: higher is drawn later (on top); null when nothing of it is on screen
 }
 
+/** An object as an animation takes it from / to it (a ValueTracker: just its value). */
+export interface ObjState {
+  center?: [number, number];
+  width?: number;
+  height?: number;
+  opacity?: number;
+  color?: string; // #RRGGBB
+  value?: number;
+}
+
 export interface Diagnostic {
   id: string;
   level: 'error' | 'warning';
@@ -250,7 +260,8 @@ export interface RunResult {
   duration: number;
   // when each statement runs (measured by manim), and which objects (ids) were on screen just before and after it
   steps: { id: string; start: number; end: number; before?: string[]; after?: string[] }[];
-  anims: { id: string; start: number; end: number; curve?: number[] }[]; // when manim runs each animation; curve: its progress over that time
+  // when manim runs each animation; curve: its progress over that time; from / to: its object then (measuring run, top-level)
+  anims: { id: string; start: number; end: number; curve?: number[]; from?: ObjState; to?: ObjState }[];
   objects: ObjInfo[];
   camera: { center: [number, number]; width: number; height: number } | null;
   plays: number;
