@@ -302,7 +302,12 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     names and inputs.
   - Starters: a labeled triangle, a unit circle, a number line, and a secant-to-tangent demonstration.
 - **</> Code**: the whole scene as manim code, editable (see *Code* above).
-- **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). **Export video**
+- **▶ Smooth preview** renders a 480p30 video with manim (cached per animation). Its button says where it
+  stands: *Preview ready*, *Rendering N%*, *Preview out of date* (the scene changed since; click to render it
+  again) or *Render failed · Retry*. The program monitor says *Updating this frame…* while the picture isn't
+  yet the one at the playhead, and, when the backend didn't draw it, *This frame couldn't be drawn* with
+  **Retry**. A frame, timeline or preview asked for a project that has since been closed never shows in the
+  one open now. **Export video**
   renders at full quality; when it finishes, *Show in folder* and *Play* open the file manager at the video and
   play it with your default app.
 

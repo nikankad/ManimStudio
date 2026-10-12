@@ -23,6 +23,8 @@ export interface AppState {
   selection: Selection;
   time: number;
   frame: RunResult | null;
+  frameAt: { doc: SceneDoc; time: number } | null; // what the frame shown was drawn for
+  frameFailed: string | null; // the last frame couldn't be drawn (the backend didn't answer): why
   timeline: RunResult | null;
   catalog: Catalog | null;
   signatures: Record<string, Signature>;
@@ -76,6 +78,8 @@ let state: AppState = {
   selection: null,
   time: 0,
   frame: null,
+  frameAt: null,
+  frameFailed: null,
   timeline: null,
   catalog: null,
   signatures: {},
@@ -198,7 +202,8 @@ export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) 
     recoveryId = recoverId;
     recoveryTouched = true;
   }
-  setState({ range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
+  epoch++; // answers still on their way for the project open before are dropped
+  setState({ range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, frameAt: null, frameFailed: null, home: false, hasProject: true });
 }
 
 // ---------------------------------------------------------------- unsaved-work recovery
@@ -248,6 +253,8 @@ export function toast(msg: string) {
 
 // ---------------------------------------------------------------- backend sync
 
+// Each opened project is a new epoch: a frame, timeline or render asked for an earlier one never shows in this one.
+let epoch = 0;
 let frameBusy = false;
 let frameWanted = false;
 export let previewWidth = 960;
@@ -266,24 +273,29 @@ async function pumpFrames() {
   frameBusy = true;
   const doc = state.previewDoc ?? state.doc;
   const time = state.time;
+  const ep = epoch;
   // Like Premiere's playback resolution: half-res while playing live so frames keep up.
   const width = state.playing ? Math.max(320, Math.round(previewWidth / 2)) : previewWidth;
   try {
     const frame = await api.run(doc, time, true, width);
+    if (ep !== epoch) throw new Stale();
     // While the scene is broken, keep showing the last good picture (dimmed by the viewport).
     if (frame.error && state.frame?.image) frame.image = state.frame.image;
     // Requests are sequential, so this is always the newest frame we have: show it even if
     // another one is already wanted (during playback one always is).
-    const patch: Partial<AppState> = { frame };
+    const patch: Partial<AppState> = { frame, frameAt: { doc, time }, frameFailed: null };
     // After pausing a preview video, switch back to live frames once the exact frame is here.
     if (state.showVideo && !state.playing && time === state.time && doc === state.doc) patch.showVideo = false;
     setState(patch);
   } catch (e) {
-    toast(String(e));
+    // the backend didn't answer: say so where the picture is, with Retry (requestFrame)
+    if (!(e instanceof Stale) && ep === epoch) setState({ frameFailed: String(e).replace(/^Error: /, '') });
   }
   frameBusy = false;
   void pumpFrames();
 }
+
+class Stale extends Error {}
 
 let timelineTimer: number | undefined;
 let timelineBusy = false;
@@ -323,11 +335,12 @@ async function runTimeline() {
   timelineBusy = true;
   timelineWanted = false;
   const doc = state.doc;
+  const ep = epoch;
   try {
     const timeline = await api.run(doc, null, false);
-    if (state.doc === doc) setState({ timeline: { ...timeline, doc } });
+    if (state.doc === doc && ep === epoch) setState({ timeline: { ...timeline, doc } });
   } catch (e) {
-    toast(String(e));
+    if (ep === epoch) toast(String(e));
   }
   timelineBusy = false;
   if (timelineWanted || state.doc !== doc) void runTimeline();
@@ -500,14 +513,17 @@ export function previewFresh(s: AppState = state): boolean {
 }
 
 /** Render a smooth 480p preview with the manim CLI (cached per animation by manim). */
-export async function renderPreview() {
+/** `retry`: render again even though rendering this exact document failed. */
+export async function renderPreview(retry = false) {
   const doc = state.doc;
   const key = docKey(doc);
   const v = state.video;
-  if (v && v.key === key && v.state !== 'cancelled') return; // already rendered, rendering, or failed for this exact doc
+  if (v && v.key === key && v.state !== 'cancelled' && !(retry && v.state === 'error')) return; // already rendered, rendering, or failed for this exact doc
+  const ep = epoch;
   if (!doc.timeline.length || sequenceEnd(doc, state.timeline) <= 0) return; // nothing plays: no video to make
   try {
     const job = await api.render(doc, 'preview');
+    if (ep !== epoch || docKey(state.doc) !== key) return; // another project (or another edit) by now
     if (job.state === 'error' || !job.id) {
       setState({ video: { jobId: null, key, state: 'error', progress: 0, message: job.message, url: null } });
       return;

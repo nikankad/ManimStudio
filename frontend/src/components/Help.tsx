@@ -317,7 +317,7 @@ const TOPICS: Topic[] = [
           <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>
           <li><b>In / Out</b>: <kbd>I</kbd> and <kbd>O</kbd> (or <code>{'{'}</code> <code>{'}'}</code> by the transport) mark a range; it shows as a bar on the ruler that you can drag. <kbd>{keys('⇧Space')}</kbd> plays In to Out and stops at Out; <b>Loop</b> ⟲ starts playback over at In. The readout by the transport gives the range’s length in seconds and frames (the frame at Out is not included). The range is for playback only: export still renders the whole scene. <kbd>{keys('⇧⌘X')}</kbd> clears it.</li>
           <li><b>Markers</b>: with a clip selected under the playhead, <kbd>M</kbd> attaches the new marker to that clip’s start or end, so it moves with the clip. Click a marker to jump there and edit it (name, kind, notes, what it is attached to); double-click to name it; drag it along the ruler; <kbd>Alt</kbd>-click deletes it. <i>Scene › Markers</i> lists them all, with search and a filter by kind (Chapter, Narration, Visual event, Review).</li>
-          <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it.</li>
+          <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it. The preview button says <i>Preview ready</i>, <i>Rendering</i>, <i>Preview out of date</i> (click to render again) or <i>Render failed · Retry</i>. The monitor says <i>Updating this frame…</i> while the picture catches up with the playhead, and offers <b>Retry</b> when a frame couldn’t be drawn.</li>
         </ul>
       </>
     ),

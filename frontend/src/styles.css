@@ -724,3 +724,8 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .transport .sep { width: 1px; height: 16px; background: var(--line); margin: 0 6px; align-self: center; }
 .transport-btns button.on { color: #3d9bff; }
 .range-readout { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame-status { position: absolute; left: 8px; top: 8px; z-index: 3; padding: 4px 8px; border-radius: 4px; font-size: 11px; background: #101820; color: #e8eef5; border: 1px solid var(--line); display: flex; gap: 8px; align-items: center; max-width: calc(100% - 16px); }
+.frame-status.updating { pointer-events: none; opacity: 0; animation: frame-status-in 0.15s 0.5s forwards; }
+.frame-status.failed { border-color: #f0605a; background: #2e1414; color: #ffd9d6; }
+@keyframes frame-status-in { to { opacity: 1; } }
+.render-status.failed { color: #ff8a80; }

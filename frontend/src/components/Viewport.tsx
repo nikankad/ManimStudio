@@ -764,6 +764,7 @@ export function Viewport() {
           }}
         >
           {frame?.image && <img className={`frame ${error ? 'stale' : ''}`} src={frame.image} draggable={false} alt="" />}
+          <FrameStatus />
           {video?.url && <video ref={videoRef} className={`frame ${showVideo ? '' : 'hidden'}`} src={video.url} preload="auto" muted playsInline />}
           <svg className="overlay" width={size.w} height={size.h} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
             onPointerLeave={() => setCursor(null)}
@@ -1015,6 +1016,24 @@ function Handles({ name, box, rotation, toPx, onDown, moveOnly, point }: {
       )}
     </g>
   );
+}
+
+/**
+ * Whether the picture is the frame at the playhead: a note while a new one is on its way (after a moment, so quick
+ * answers don't flash it), and Retry when the backend didn't answer.
+ */
+function FrameStatus() {
+  const failed = useStore((s) => s.frameFailed);
+  const behind = useStore((s) => !s.playing && !s.showVideo && !!s.frameAt && (s.frameAt.doc !== (s.previewDoc ?? s.doc) || Math.abs(s.frameAt.time - s.time) > 1e-6));
+  if (failed) {
+    return (
+      <div className="frame-status failed" role="alert">
+        This frame couldn’t be drawn: {failed}
+        <button className="small" onClick={() => { setState({ frameFailed: null }); requestFrame(); }}>Retry</button>
+      </div>
+    );
+  }
+  return behind ? <div className="frame-status updating" role="status">Updating this frame…</div> : null;
 }
 
 /** Premiere-style transport under the program monitor. */

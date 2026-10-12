@@ -280,15 +280,22 @@ function CodeToggle() {
 function PreviewButton() {
   const video = useStore((s) => s.video);
   const fresh = useStore((s) => previewFresh(s));
+  const key = useStore((s) => docKey(s.doc));
   const running = video && (video.state === 'running' || video.state === 'queued') && !fresh;
   const stale = !fresh && !running;
+  const failed = video?.state === 'error' && video.key === key;
+  const outdated = !fresh && !running && !failed && video?.state === 'done' && video.key !== key;
   return (
     <button
-      className={`render-status ${fresh ? 'ok' : running ? 'busy' : 'stale'}`}
-      title={fresh ? 'Smooth preview is up to date: Space plays it' : running ? video?.message : video?.state === 'error' ? video.message : 'Render a smooth preview now'}
-      onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview())}
+      className={`render-status ${fresh ? 'ok' : running ? 'busy' : failed ? 'failed' : 'stale'}`}
+      title={fresh ? 'Smooth preview is up to date: Space plays it'
+        : running ? video?.message
+        : failed ? `${video?.message ?? 'The preview didn’t render'}. Click to try again`
+        : outdated ? 'The scene changed since the preview was rendered: playback shows live frames until it is rendered again. Click to render it now'
+        : 'Render a smooth preview now'}
+      onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview(failed))}
     >
-      {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : video?.state === 'error' && video.key === docKey(getState().doc) ? '● Render failed' : '● Render preview'}
+      {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : failed ? '● Render failed · Retry' : outdated ? '● Preview out of date' : '● Render preview'}
     </button>
   );
 }

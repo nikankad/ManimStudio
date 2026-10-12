@@ -1106,7 +1106,67 @@ def work_area(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def preview_freshness(b):
+    """A frame that arrives after another project was opened never shows in it; a frame the backend didn't draw says
+    so with Retry; a failed preview render can be retried."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        new_project(pg)
+        add(pg, "Circle")
+        pg.wait_for_selector("img.frame", timeout=30000)
+        pg.wait_for_timeout(800)
+
+        # a late frame for the project open before
+        held, holding = [], [True]
+        pg.route("**/api/run", lambda r: held.append(r) if holding[0] else r.continue_())
+        pg.locator(".tl-lanes").click(position={"x": 5, "y": 5})
+        pg.keyboard.press("End")
+        for _ in range(50):
+            if held:
+                break
+            pg.wait_for_timeout(100)
+        assert held, "a frame was asked for"
+        late = held.pop(0)
+        pg.get_by_text("⌂ Home").click()
+        pg.get_by_text("Riemann sums").first.click()
+        pg.get_by_role("alertdialog").get_by_role("button", name="Don’t save").click()
+        pg.wait_for_selector(".toolbar")
+        pg.wait_for_timeout(500)
+        late.continue_()
+        pg.wait_for_timeout(1500)
+        assert pg.locator("img.frame").count() == 0, "the other project's frame doesn't show"
+        holding[0] = False
+        for r in held:
+            r.continue_()
+        pg.wait_for_selector("img.frame", timeout=60000)
+        pg.unroute("**/api/run")
+
+        # the backend doesn't answer: the monitor says so, Retry draws it
+        pg.route("**/api/run", lambda r: r.abort())
+        pg.locator(".tl-lanes").click(position={"x": 5, "y": 5})
+        pg.keyboard.press("Home")
+        status = pg.locator(".frame-status.failed")
+        status.wait_for(timeout=10000)
+        assert "This frame couldn’t be drawn" in status.inner_text()
+        pg.unroute("**/api/run")
+        status.get_by_role("button", name="Retry").click()
+        status.wait_for(state="detached", timeout=60000)
+
+        # a preview render that failed: Retry renders again
+        pg.route("**/api/render", lambda r: r.fulfill(json={"id": None, "state": "error", "message": "manim stopped"}))
+        button = pg.locator(".render-status")
+        add(pg, "Square")  # a new version of the scene: auto-render (or the button) renders it
+        pg.wait_for_timeout(2000)
+        if "Render preview" in button.inner_text():
+            button.click()
+        pg.wait_for_function("document.querySelector('.render-status')?.textContent.includes('Render failed · Retry')", timeout=10000)
+        pg.unroute("**/api/render")
+        button.click()
+        pg.wait_for_function("/Rendering|Preview ready/.test(document.querySelector('.render-status')?.textContent)", timeout=30000)
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, preview_freshness, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
