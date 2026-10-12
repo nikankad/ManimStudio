@@ -64,7 +64,7 @@ export const TOUR: TourStep[] = [
   {
     target: '[data-tour="record"]',
     title: 'Record',
-    body: <>With Record on, canvas edits become animation clips at the playhead instead of changing the starting picture. Dragging a point that is bound to a parameter records a <code>set_value</code> animation.</>,
+    body: <>With Record on, canvas edits become animation clips at the playhead instead of changing the starting picture. Dragging a point that is bound to a parameter records a <code>set_value</code> animation. (In a narrow window Record is in the <b>Options</b> menu.)</>,
   },
   {
     target: '[data-tour="output"]',
