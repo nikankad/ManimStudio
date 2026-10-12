@@ -31,7 +31,7 @@ function useWindowTitle() {
     const name = path ? path.split(/[\\/]/).pop()!.replace(/\.(manimstudio|mathengine)$/, '') : 'Untitled';
     const title = home || !hasProject ? 'Manim Studio' : `${dirty ? '• ' : ''}${name} - Manim Studio`;
     document.title = title;
-    api.setTitle(title).catch(() => undefined); // the native window isn't a page with a <title>
+    api.setTitle(title, dirty && hasProject).catch(() => undefined); // the native window isn't a page with a <title>
   }, [home, hasProject, path, dirty]);
 }
 

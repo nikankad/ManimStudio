@@ -36,6 +36,7 @@ class AppState:
         self.catalog_cache: dict[str, dict] = {}
         self.dialogs: Any = None  # set by the desktop shell (pywebview)
         self.set_title: Any = None  # likewise: names the window after the project
+        self.dirty = False  # the open project has unsaved changes (reported by the page along with the title)
         self.port = 0
 
 
@@ -417,7 +418,9 @@ class Handler(BaseHTTPRequestHandler):
         return {"prefs": prefs.set_pref(body.get("key"), body.get("value"))}
 
     def api_title(self, _q: dict, body: dict) -> dict:
-        """Name the native window after the open project (a browser tab takes it from the page itself)."""
+        """Name the native window after the open project (a browser tab takes it from the page itself), and note
+        whether the project has unsaved changes, for asking before the window closes."""
+        self.app.dirty = bool(body.get("dirty"))
         if self.app.set_title:
             self.app.set_title(str(body.get("title", ""))[:200])
         return {"ok": True}

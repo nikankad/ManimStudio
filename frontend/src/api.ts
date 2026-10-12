@@ -129,7 +129,7 @@ export const api = {
   saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),
   prefs: () => get<{ prefs: Record<string, string> }>('/api/prefs'),
   setPref: (key: string, value: string | null) => post<{ prefs: Record<string, string> }>('/api/prefs', { key, value }),
-  setTitle: (title: string) => post<{ ok: boolean }>('/api/title', { title }),
+  setTitle: (title: string, dirty: boolean) => post<{ ok: boolean }>('/api/title', { title, dirty }),
   dialog: (kind: 'open' | 'save', filename = '', types: string[] = []) =>
     post<{ path: string | null; unsupported?: boolean }>('/api/dialog', { kind, filename, types }),
 };

@@ -19,6 +19,22 @@ import warnings
 from pathlib import Path
 
 
+CLOSE_QUESTION = ("This project has unsaved changes. Close anyway?\n\n"
+                  "A copy is kept: Home offers to restore it the next time you open Manim Studio.")
+
+
+def close_allowed(app, confirm) -> bool:
+    """Whether the window may close: yes unless the project has unsaved changes and the user says to stay.
+    ``confirm(title, message)`` asks; anything but an explicit "no" lets the window close, so a failing dialog
+    can never trap the user in the app."""
+    if not getattr(app, "dirty", False):
+        return True
+    try:
+        return confirm("Unsaved changes", CLOSE_QUESTION) is not False
+    except Exception:
+        return True
+
+
 def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool = False) -> None:
     from .server import make_server
 
@@ -64,6 +80,10 @@ def _open_editor(project: str | None, browser: bool, port: int, serve_only: bool
 
     app.dialogs = dialogs
     app.set_title = window.set_title
+    try:  # the page's own "leave site?" prompt doesn't exist in a native window: ask here instead
+        window.events.closing += lambda: None if close_allowed(app, window.create_confirmation_dialog) else False
+    except Exception:  # an older pywebview: the window just closes (unsaved changes are kept for Home to restore)
+        pass
     icon = Path(__file__).parent / "web" / "icon.png"  # the window icon on Linux (Windows and macOS use the app's)
     try:
         try:
