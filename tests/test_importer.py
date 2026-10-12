@@ -344,3 +344,17 @@ def test_markers_keep_their_attachment_through_code_edits(tmp_path):
     path = tmp_path / "m.manimstudio"
     project.save_project(path, new)
     assert project.load_project(path)["markers"] == d["markers"]
+
+
+def test_an_expression_animated_keeps_its_parentheses():
+    src = ("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+           "        g = VGroup(a)\n        self.add(g, b)\n        self.play((g + b).animate.shift(RIGHT))\n")
+    out = codegen.generate(import_code(src).doc).source
+    assert "self.play((g + b).animate.shift(RIGHT))" in out or "self.play((g+b).animate.shift(RIGHT))" in out, out
+
+
+def test_a_complex_tracker_previews():
+    src = ("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        z = ComplexValueTracker(1 + 1j)\n"
+           "        self.add(z)\n        self.play(z.animate.set_value(2j))\n")
+    r = runtime.run(import_code(src).doc, render=False)
+    assert r.error is None, r.error

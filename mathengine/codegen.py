@@ -22,6 +22,7 @@ map variables to mobjects and to measure when each statement and animation runs.
 
 from __future__ import annotations
 
+import ast
 import json
 import keyword
 import re
@@ -87,6 +88,18 @@ def is_composition(anim: dict) -> bool:
     return anim.get("anims") is not None
 
 
+def _primary(expr: str) -> str:
+    """``expr`` as something ``.animate`` can follow: ``(a + b)``, not ``a + b`` (which animates only ``b``)."""
+    try:
+        node = ast.parse(expr, mode="eval").body
+    except SyntaxError:
+        return expr
+    simple = (ast.Name, ast.Attribute, ast.Subscript, ast.Call, ast.Constant, ast.List, ast.Tuple)
+    if isinstance(node, simple) and not (isinstance(node, ast.Tuple) and not expr.lstrip().startswith("(")):
+        return expr
+    return f"({expr})"
+
+
 def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None = None, tag: bool = False,
               skip: set[str] = frozenset()) -> str:
     """Python expression for one animation, as written in ``self.play(...)``.
@@ -100,6 +113,7 @@ def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None =
         expr = construct.terms_expr(anim, doc, plan)
     elif cls == "animate":
         kw = _call_args(args)
+        target = _primary(target)
         expr = (f"{target}.animate({kw})" if kw else f"{target}.animate") + _join_chain(anim.get("chain", ""))
     elif is_composition(anim):
         children = [anim_expr(c, doc, plan, tag, skip) for c in anim.get("anims") or []

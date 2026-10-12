@@ -447,7 +447,13 @@ def _state(mob: Any) -> dict | None:
 
 def _tracker_values(scene: Any) -> dict[str, float]:
     m = manim()
-    return {name: float(mob.get_value()) for name, (mob, _oid) in scene._me_registry.items() if isinstance(mob, m.ValueTracker)}
+    out = {}
+    for name, (mob, _oid) in scene._me_registry.items():
+        if isinstance(mob, m.ValueTracker):
+            v = mob.get_value()
+            if not isinstance(v, complex):  # a ComplexValueTracker has no number to show
+                out[name] = float(v)
+    return out
 
 
 def _media_dir():

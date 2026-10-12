@@ -17,7 +17,9 @@ asset files) is listed as skipped and left out of the numbers. Then, for each sc
   keyframe rows: counted apart.
 * Parity: the code regenerated from the document, run by manim, against the original (length, number of plays, the
   frame at the end of every play and wait), and the editor's own preview run against manim (length).
-* Code: whether the regenerated construct() is the same Python (AST) as the original.
+* Code: whether the regenerated construct() is the same Python (AST) as the original, else which rewrite makes the
+  difference: "split chains" (``x = Square().scale(2)`` written as ``x = Square()`` and ``x.scale(2)``), "keywords"
+  (``Line(a, b)`` written as ``Line(a, end=b)``), or "other".
 
 It is slow (a manim run or three per scene), so it is not part of the tests.
 """
@@ -27,6 +29,7 @@ from __future__ import annotations
 import argparse
 import ast
 import collections
+import copy
 import concurrent.futures
 import json
 import os
@@ -100,10 +103,10 @@ def native(src: str, scene: str) -> dict:
     from mathengine import runtime
 
     m = runtime.manim()
-    random.seed(0)
-    np.random.seed(0)
+    media = tempfile.mkdtemp(prefix="import-fidelity-media-")  # its own: scenes running side by side share no files
     with m.tempconfig({"format": "none", "disable_caching": True, "frame_rate": FPS, "pixel_width": SIZE[0],
-                       "pixel_height": SIZE[1], "verbosity": "ERROR", "progress_bar": "none", "write_to_movie": False}):
+                       "pixel_height": SIZE[1], "verbosity": "ERROR", "progress_bar": "none", "write_to_movie": False,
+                       "media_dir": media}):
         ns: dict = {"__name__": "corpus_scene"}
         exec(compile(src, "<scene>", "exec"), ns)
         s = ns[scene]()
@@ -121,7 +124,12 @@ def native(src: str, scene: str) -> dict:
             type(s).wait(s, *args, **kwargs)
             snap()
 
-        s.play, s.wait = play, wait
+        def construct():  # the same random numbers in both runs (a Scene reseeds when it is made)
+            random.seed(0)
+            np.random.seed(0)
+            type(s).construct(s)
+
+        s.play, s.wait, s.construct = play, wait, construct
         s.render()
         snap()
     return {"duration": round(float(s.renderer.time), 4), "plays": s.renderer.num_plays, "frames": frames}
@@ -138,6 +146,87 @@ def construct_of(src: str, scene: str):
     tree = ast.parse(src)
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == scene)
     return cls, next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "construct")
+
+
+# ---- comparing code: the same, or the same up to one of the rewrites the importer makes
+
+
+def _merge_chains(body: list) -> list:
+    """``x = E`` then ``x.m(...)``: as ``x = E.m(...)``, the way manim code often writes it in one line."""
+    out: list = []
+    for st in body:
+        prev = out[-1] if out else None
+        if (isinstance(prev, ast.Assign) and len(prev.targets) == 1 and isinstance(prev.targets[0], ast.Name)
+                and isinstance(st, ast.Expr) and isinstance(st.value, ast.Call) and isinstance(st.value.func, ast.Attribute)):
+            root = st.value
+            while isinstance(root, ast.Call) and isinstance(root.func, ast.Attribute):
+                root = root.func.value
+            if isinstance(root, ast.Name) and root.id == prev.targets[0].id:
+                new = copy.deepcopy(st.value)
+                cur = new
+                while isinstance(cur.func.value, ast.Call) and isinstance(cur.func.value.func, ast.Attribute):
+                    cur = cur.func.value
+                cur.func.value = prev.value
+                out[-1] = ast.Assign(targets=prev.targets, value=new, lineno=0)
+                continue
+        out.append(st)
+    return out
+
+
+class _NoKeywords(ast.NodeTransformer):
+    """Calls with their argument values only: ``Line(a, b)`` and ``Line(a, end=b)`` read the same."""
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        values = [ast.dump(a) for a in node.args] + [ast.dump(k.value) for k in node.keywords if k.arg]
+        node.args = [ast.Constant(v) for v in sorted(values)]
+        node.keywords = [k for k in node.keywords if not k.arg]
+        return node
+
+
+def _dump(body: list, chains: bool = False, keywords: bool = False) -> str:
+    m = ast.Module(copy.deepcopy(_merge_chains(body) if chains else body), [])
+    return ast.dump(_NoKeywords().visit(m) if keywords else m)
+
+
+def code_difference(a: list, b: list) -> str:
+    """How construct()'s statements ``b`` differ from ``a``: not at all, or only in how they are written."""
+    for kind, chains, keywords in [("same", False, False), ("split chains", True, False), ("keywords", False, True),
+                                   ("split chains + keywords", True, True)]:
+        if _dump(a, chains, keywords) == _dump(b, chains, keywords):
+            return kind
+    return "other"
+
+
+def statement_kind(st: ast.stmt) -> str:
+    """What a statement kept as code does, roughly: to see which kinds of code the editor doesn't take in."""
+    if isinstance(st, (ast.For, ast.While)):
+        return "loop"
+    if isinstance(st, ast.FunctionDef):
+        return "function definition"
+    if isinstance(st, ast.Expr) and isinstance(st.value, ast.Call) and isinstance(st.value.func, ast.Attribute):
+        on = ast.unparse(st.value.func.value)
+        if on == "self":
+            return f"self.{st.value.func.attr}(…) with computed arguments"
+        if "updater" in st.value.func.attr:
+            return "updater"
+        if re.fullmatch(r"\w+", on):
+            return "method call on an object, later in the scene (.set_color, .next_to, .move_to…)"
+        return "method call on an expression (VGroup(...).arrange(), group[0].shift()…)"
+    if isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+        v = st.value
+        if isinstance(st, ast.Assign) and not all(isinstance(t, ast.Name) for t in st.targets):
+            return "assignment to an attribute, item or several names"
+        if isinstance(v, (ast.List, ast.Tuple, ast.Dict, ast.Constant, ast.Lambda, ast.BinOp, ast.UnaryOp)):
+            return "plain value (number, list, dict, lambda…)"
+        if isinstance(v, (ast.ListComp, ast.GeneratorExp, ast.DictComp)):
+            return "list comprehension"
+        if isinstance(st, ast.AugAssign):
+            return "+= / -="
+        if isinstance(v, ast.Call):
+            return "object built by a call the importer doesn't take (a method, a helper function, *args…)"
+        return "other assignment"
+    return type(st).__name__
 
 
 def leaves(anims):
@@ -178,6 +267,14 @@ def one(path: str, scene: str) -> dict:
     cls, construct = construct_of(src, scene)
     res["statements"] = len(construct.body)
     res["code_statements"] = sum(count_statements(s.get("code", "")) for s in doc["timeline"] if s["kind"] == "code")
+    kinds: collections.Counter = collections.Counter()
+    for s in doc["timeline"]:
+        if s["kind"] == "code":
+            try:
+                kinds.update(statement_kind(st) for st in ast.parse(textwrap.dedent(s.get("code", ""))).body)
+            except SyntaxError:
+                kinds["unreadable"] += 1
+    res["code_kinds"] = dict(kinds)
     res["steps"] = dict(collections.Counter(s["kind"] for s in doc["timeline"]))
     res["objects"] = len(doc["objects"])
     res["other_members"] = len([n for n in cls.body if not (isinstance(n, ast.FunctionDef) and n.name == "construct")])
@@ -216,9 +313,10 @@ def one(path: str, scene: str) -> dict:
     # code: the same Python?
     try:
         _, c2 = construct_of(regenerated, scene)
-        res["same_ast"] = ast.dump(ast.Module(construct.body, [])) == ast.dump(ast.Module(c2.body, []))
+        res["code_diff"] = code_difference(construct.body, c2.body)
     except Exception:  # noqa: BLE001
-        res["same_ast"] = False
+        res["code_diff"] = "unreadable"
+    res["same_ast"] = res["code_diff"] == "same"
     res["doc"] = doc
     return res
 
@@ -289,6 +387,8 @@ def report(results: list[dict], sources: dict) -> str:
         ed_same = sum(1 for r in ed if abs(r["editor_duration"] - r["native_duration"]) < 1e-3)
         all_struct = sum(1 for r in rs_imp if r["code_statements"] == 0)
         same_ast = sum(1 for r in rs_imp if r["same_ast"])
+        kinds = collections.Counter(r["code_diff"] for r in rs_imp if not r["same_ast"])
+        rewrites = ", ".join(f"{n} {k}" for k, n in kinds.most_common()) or "none"
         return [f"## {title}", "",
                 "| | |", "|---|---|",
                 f"| Scenes | {len(rs)} ({len(rs) - len(rs_ran)} skipped: manim can't render them here) |",
@@ -299,7 +399,7 @@ def report(results: list[dict], sources: dict) -> str:
                 f"| Regenerated code: same length and plays as the original under manim | {pct(same_len, len(regen_ok))} ({same_len} of {len(regen_ok)}; {len(rs_imp) - len(regen_ok)} failed to run) |",
                 f"| Regenerated code: same frame at the end of every play and wait, pixel for pixel | {pct(same_frame, len(regen_ok))} ({same_frame} of {len(regen_ok)}; {nonblank} of these scenes show something) |",
                 f"| Editor preview: same length as manim | {pct(ed_same, len(rs_imp))} ({ed_same} of {len(rs_imp)}) |",
-                f"| Regenerated construct() is the same Python (AST) | {pct(same_ast, len(rs_imp))} ({same_ast} of {len(rs_imp)}) |", ""]
+                f"| Regenerated construct() is the same Python (AST) | {pct(same_ast, len(rs_imp))} ({same_ast} of {len(rs_imp)}; the others: {rewrites}) |", ""]
 
     groups = collections.defaultdict(list)
     for r in results:
@@ -332,7 +432,12 @@ def report(results: list[dict], sources: dict) -> str:
     for r in imported:
         for n in r.get("notes", []):
             notes[re.sub(r"`[^`]*`|\b\d+\b", "…", n)[:140]] += 1
-    lines += ["## What the importer keeps as code, and why", ""] + [f"- {n}× {w}" for w, n in notes.most_common(15)] + [""]
+    kinds = collections.Counter()
+    for r in imported:
+        kinds.update(r.get("code_kinds", {}))
+    lines += ["## What the importer keeps as code", "", "Statements of construct() kept as code steps, by kind:", ""]
+    lines += [f"- {n}× {w}" for w, n in kinds.most_common(15)]
+    lines += ["", "The importer's own notes:", ""] + [f"- {n}× {w}" for w, n in notes.most_common(15)] + [""]
 
     cls = collections.Counter()
     for r in imported:
@@ -356,7 +461,7 @@ def report(results: list[dict], sources: dict) -> str:
             lines.append(f"| {r['file']} | {r['scene']} | import failed | | | |")
             continue
         regen = "error" if "regen_error" in r else ("yes" if r["regen_frame_diff"] == 0 and r["regen_duration"][0] == r["regen_duration"][1] else f"no ({r['regen_duration']}, {r['regen_frame_diff']:.1%} px)")
-        lines.append(f"| {r['file']} | {r['scene']} | {r['statements'] - min(r['code_statements'], r['statements'])}/{r['statements']} | {r['anims_on_objects']}/{r['anims']} | {regen} | {'yes' if r['same_ast'] else 'no'} |")
+        lines.append(f"| {r['file']} | {r['scene']} | {r['statements'] - min(r['code_statements'], r['statements'])}/{r['statements']} | {r['anims_on_objects']}/{r['anims']} | {regen} | {'yes' if r['same_ast'] else r['code_diff']} |")
     return "\n".join(lines) + "\n"
 
 
