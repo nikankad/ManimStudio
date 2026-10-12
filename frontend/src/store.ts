@@ -27,6 +27,10 @@ export interface AppState {
   catalog: Catalog | null;
   signatures: Record<string, Signature>;
   playing: boolean;
+  // the work area (editor state, not part of the document): In and Out points, either may be unset
+  range: { in: number | null; out: number | null };
+  loop: boolean; // playback starts over at the end (of the range when there is one)
+  playingRange: boolean; // playing In to Out: stops at Out
   past: SceneDoc[];
   future: SceneDoc[];
   panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project';
@@ -76,6 +80,9 @@ let state: AppState = {
   catalog: null,
   signatures: {},
   playing: false,
+  range: { in: null, out: null },
+  loop: false,
+  playingRange: false,
   past: [],
   future: [],
   panel: null,
@@ -111,7 +118,7 @@ const subscribe = (l: () => void) => {
 export const getState = () => state;
 
 // The editor's switches are remembered between launches (prefs.json, through the backend).
-const SWITCHES = ['snap', 'timelineSnap', 'keepTiming', 'autoIntro', 'autoRender'] as const;
+const SWITCHES = ['snap', 'timelineSnap', 'keepTiming', 'loop', 'autoIntro', 'autoRender'] as const;
 let applyingPrefs = false;
 
 /** Start from the switches as they were left; call once the preferences are loaded. */
@@ -191,7 +198,7 @@ export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) 
     recoveryId = recoverId;
     recoveryTouched = true;
   }
-  setState({ video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
+  setState({ range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
 }
 
 // ---------------------------------------------------------------- unsaved-work recovery
@@ -401,23 +408,79 @@ export function parseTimecode(text: string, rate = fps()): number | null {
 
 // ---------------------------------------------------------------- playback
 
+/**
+ * The work area: In to Out. Only In set: In to the end; only Out: the start to Out. `set`: either is set. Out is
+ * where the range ends (the frame at Out is the first one not in it).
+ */
+export function workArea(s: AppState = state): { start: number; end: number; set: boolean } {
+  const end = sequenceEnd(s.doc, s.timeline);
+  const a = Math.min(s.range.in ?? 0, end), b = Math.min(s.range.out ?? end, end);
+  return { start: a, end: Math.max(a, b), set: s.range.in !== null || s.range.out !== null };
+}
+
+/** Where playback stops (or, looping, starts over), and where it starts over. */
+function playLimits(s: AppState): { from: number; to: number } {
+  const r = workArea(s);
+  return s.range.in !== null || s.range.out !== null ? (s.loop || s.playingRange ? { from: r.start, to: r.end } : { from: 0, to: sequenceEnd(s.doc, s.timeline) }) : { from: 0, to: r.end };
+}
+
+/**
+ * Playback reached time `t`: where it is now. At the end it stops, or with Loop on starts over (at In when there is a
+ * range). Shared by live playback and the preview video.
+ */
+export function playbackAt(t: number): { t: number; stop?: boolean; wrapped?: boolean } {
+  const { from, to } = playLimits(state);
+  if (t < to - 1e-6) return { t };
+  if (state.loop && to - from > 1e-3) return { t: from, wrapped: true };
+  return { t: to, stop: true };
+}
+
+/** Set In or Out at time `t` (the playhead): an Out before In (or an In after Out) clears the other one, and says so. */
+export function setRangePoint(which: 'in' | 'out', t = state.time) {
+  t = frameSnap(Math.max(0, Math.min(sequenceEnd(state.doc, state.timeline), t)));
+  const range = { ...state.range, [which]: t };
+  const other = which === 'in' ? 'out' : 'in';
+  if (range.in !== null && range.out !== null && range.out - range.in < 1 / fps() - 1e-6) {
+    range[other] = null;
+    toast(which === 'in' ? 'In is at or after Out, so Out is cleared: the range now runs from In to the end' : 'Out is at or before In, so In is cleared: the range now runs from the start to Out');
+  }
+  setState({ range });
+}
+
+export function clearRange() {
+  setState({ range: { in: null, out: null }, playingRange: false });
+}
+
+/** Play from In to Out (and stop there, unless Loop is on). */
+export function playRange() {
+  const r = workArea();
+  if (r.end - r.start < 1e-3) return toast('The range is empty: set In (I) before Out (O)');
+  setPlaying(false);
+  setState({ time: r.start, playingRange: true });
+  setPlaying(true, true);
+}
+
 let playRaf = 0;
-export function setPlaying(playing: boolean) {
+export function setPlaying(playing: boolean, keepRange = false) {
   cancelAnimationFrame(playRaf);
+  if (!keepRange && state.playingRange) setState({ playingRange: false });
   const duration = sequenceEnd(state.doc, state.timeline);
   if (playing && duration <= 0) return setState({ playing: false, time: 0, showVideo: false }); // nothing to play
-  if (playing && state.time >= duration - 1e-3) setState({ time: 0 });
+  if (playing) {
+    // from the start (of the range, when looping one) when the playhead is at the end or outside the range played
+    const { from, to } = playLimits(state);
+    if (state.time >= to - 1e-3 || (state.time < from - 1e-6 && (state.loop || state.playingRange))) setState({ time: from });
+  }
   setState({ playing, showVideo: playing ? previewFresh() : state.showVideo });
   if (!playing) return requestFrame();
   let last = performance.now();
   const tick = (now: number) => {
     const s = getState();
     if (!s.playing) return;
-    const end = sequenceEnd(s.doc, s.timeline);
-    const t = Math.min(end, s.time + (now - last) / 1000);
+    const p = playbackAt(s.time + (now - last) / 1000);
     last = now;
-    if (!s.showVideo) setState({ time: t });
-    if (t >= end && !s.showVideo) return setState({ playing: false });
+    if (!s.showVideo) setState({ time: p.t });
+    if (p.stop && !s.showVideo) return setState({ playing: false, playingRange: false });
     playRaf = requestAnimationFrame(tick);
   };
   playRaf = requestAnimationFrame(tick);

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
+  addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
 import { zoomBy, zoomToFit } from './Timeline';
@@ -539,13 +539,25 @@ export function useShortcuts() {
         else undo();
       } else if (mod && k === 'y') redo();
       else if (mod && k === 'c') copyClips();
-      else if (mod && k === 'x') cutClips();
+      else if (mod && e.shiftKey && k === 'x') {
+        e.preventDefault();
+        clearRange();
+      } else if (mod && k === 'x') cutClips();
       else if (mod && k === 'v') pasteClips();
       else if (mod && k === 'd') {
         e.preventDefault();
         if (selectedObjectIds().length) duplicateObjects(selectedObjectIds());
       } else if (mod || e.altKey) {
         // Any other Ctrl / ⌘ / Alt combination belongs to the system: ⌘M minimises, Ctrl+= zooms the page…
+      } else if (e.key === ' ' && e.shiftKey) {
+        e.preventDefault();
+        if (s.playingRange) setPlaying(false);
+        else playRange();
+      } else if (k === 'i' || k === 'o') {
+        if (e.shiftKey) {
+          const r = s.range[k === 'i' ? 'in' : 'out'];
+          if (r !== null) go(r);
+        } else setRangePoint(k === 'i' ? 'in' : 'out');
       } else if (e.key === ' ' || k === 'l') {
         e.preventDefault();
         setPlaying(e.key === ' ' ? !s.playing : true);

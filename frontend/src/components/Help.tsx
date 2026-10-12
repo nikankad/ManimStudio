@@ -298,7 +298,7 @@ const TOPICS: Topic[] = [
   {
     id: 'timeline',
     title: 'Timeline and animation',
-    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple keep later timing hold cancel escape cue chapter narration review notes attached',
+    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple keep later timing hold cancel escape cue chapter narration review notes attached in out range loop work area',
     body: (
       <>
         <ul>
@@ -315,6 +315,7 @@ const TOPICS: Topic[] = [
           <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
           <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
           <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>
+          <li><b>In / Out</b>: <kbd>I</kbd> and <kbd>O</kbd> (or <code>{'{'}</code> <code>{'}'}</code> by the transport) mark a range; it shows as a bar on the ruler that you can drag. <kbd>{keys('⇧Space')}</kbd> plays In to Out and stops at Out; <b>Loop</b> ⟲ starts playback over at In. The readout by the transport gives the range’s length in seconds and frames (the frame at Out is not included). The range is for playback only: export still renders the whole scene. <kbd>{keys('⇧⌘X')}</kbd> clears it.</li>
           <li><b>Markers</b>: with a clip selected under the playhead, <kbd>M</kbd> attaches the new marker to that clip’s start or end, so it moves with the clip. Click a marker to jump there and edit it (name, kind, notes, what it is attached to); double-click to name it; drag it along the ruler; <kbd>Alt</kbd>-click deletes it. <i>Scene › Markers</i> lists them all, with search and a filter by kind (Chapter, Narration, Visual event, Review).</li>
           <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it.</li>
         </ul>
@@ -360,6 +361,8 @@ const TOPICS: Topic[] = [
             [keys('⌘X / ⌘C / ⌘V'), 'Cut / copy / paste clips'],
             [keys('⌘Z / ⇧⌘Z'), 'Undo / redo'],
             [keys('⌘S / ⌘N'), 'Save / new project'],
+            ['I / O', 'Set In / Out at the playhead (Shift: go to it)'],
+            [keys('⇧Space · ⇧⌘X'), 'Play In to Out · clear In and Out'],
             ['M · S · = / -', 'Marker · timeline snap · zoom'],
             ['/', 'Search the library: type a name, Enter adds the top result'],
             ['? or F1', 'Open this guide'],

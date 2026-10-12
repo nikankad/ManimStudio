@@ -716,3 +716,11 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .outline-row.cue .cue-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .marker-kind { flex-wrap: wrap; }
 .marker-insp select { flex: 1; min-width: 0; }
+.work-area { position: absolute; top: 0; height: 7px; background: rgba(61, 155, 255, 0.55); border-radius: 2px; cursor: grab; z-index: 2; }
+.wa-handle { position: absolute; top: -2px; width: 8px; height: 11px; background: #3d9bff; cursor: ew-resize; }
+.wa-handle.in { left: -4px; border-radius: 3px 0 0 3px; }
+.wa-handle.out { right: -4px; border-radius: 0 3px 3px 0; }
+.wa-dim { position: absolute; background: rgba(0, 0, 0, 0.28); pointer-events: none; z-index: 4; }
+.transport .sep { width: 1px; height: 16px; background: var(--line); margin: 0 6px; align-self: center; }
+.transport-btns button.on { color: #3d9bff; }
+.range-readout { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

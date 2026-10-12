@@ -121,6 +121,13 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     Review, each with its colour), notes, and what it is attached to. **Scene › Markers** lists them in time
     order, with search and a filter by kind. Deleting the clip a marker is attached to leaves the marker where it
     was, and a note says so.
+  - **In / Out** (I and O, or the `{` `}` buttons by the transport) mark a range of the scene: it shows as a bar on
+    the ruler (drag it, or its ends) and the rest of the timeline dims. **Play In to Out** (⇧Space) plays just
+    that range and stops at Out; with **Loop** (⟲) on, playback starts over at In (or at the start when there is
+    no range). Only In set means In to the end; only Out, the start to Out. Next to the transport, a readout
+    gives the range's length in seconds and frames (the frame at Out is not included). An Out set before In (or
+    an In after Out) clears the other one and says so. The range belongs to the editor, not to the project, and
+    export still renders the whole scene. Ctrl/⌘+Shift+X clears it.
   - It snaps to the playhead, markers and clip edges (toggle with **S**). Shift-click or drag a box to select
     several clips, and right-click for more (enable/disable, ripple delete, show in code…). Ctrl/⌘ + wheel
     zooms, the scroll bar's ends zoom too, and `\` zooms to fit.
@@ -306,7 +313,8 @@ move into an **Options** menu, so Settings, Export video and Help stay in reach 
 buttons that take you to the right place, and a guided tour that spotlights each part of the interface. First-time
 users are offered the tour once.
 
-Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
+Shortcuts: Space play · J/K/L · I / O set In / Out (Shift: go to it) · ⇧Space play In to Out · ⇧⌘X clear In and Out ·
+←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
 S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘X/⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S save · ⌘N new project ·
 ⌘D duplicate object(s) · 1–7 drawing tools · Enter finish polygon · Esc cancel drawing, close a dialog, or go
 back from Home · / search the library · ? or F1 help. (⌘ is Ctrl on Windows and Linux; other Ctrl, ⌘ and Alt

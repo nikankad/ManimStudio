@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  addAnimation, addMarker, addObject, deleteMarker, selectMarker, setMarker, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
+  addAnimation, addMarker, addObject, deleteMarker, selectMarker, setMarker, workArea, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
   previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
@@ -59,6 +59,7 @@ type Drag =
   | { mode: 'trim-anim' | 'trim-step'; id: string; x0: number; dur0: number; dur: number }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: string[]; band?: string }
   | { mode: 'marker'; id: string; x0: number; t0: number; t: number; moved: boolean }
+  | { mode: 'range'; which: 'in' | 'out' | 'both'; x0: number; in0: number; out0: number; orig: { in: number | null; out: number | null } }
   | { mode: 'scrub' };
 
 /**
@@ -133,6 +134,7 @@ export function Timeline() {
   const view = useStore((s) => s.view);
   const snapOn = useStore((s) => s.timelineSnap);
   const keep = useStore((s) => s.keepTiming);
+  const range = useStore((s) => s.range);
   const catalog = useStore((s) => s.catalog);
   const error = useStore((s) => s.frame?.error ?? s.timeline?.error);
   const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
@@ -291,6 +293,19 @@ export function Timeline() {
         return setDrag({ ...d, x1: nx, y1: ny });
       }
       const dx = (e.clientX - d.x0) / pps;
+      if (d.mode === 'range') {
+        // In and Out handles (the bar between them moves both); they stay a frame apart at least
+        const f = 1 / fps(), end = lay.end;
+        if (d.which === 'both') {
+          const shift = Math.max(-d.in0, Math.min(end - d.out0, frameSnap(dx)));
+          return setState({ range: { in: frameSnap(d.in0 + shift), out: frameSnap(d.out0 + shift) } });
+        }
+        const { v, guide: g } = snapTo(d.which === 'in' ? d.in0 + dx : d.out0 + dx, new Set());
+        setGuide(g);
+        const r = getState().range;
+        if (d.which === 'in') return setState({ range: { ...r, in: frameSnap(Math.max(0, Math.min(v, (r.out ?? end) - f))) } });
+        return setState({ range: { ...r, out: frameSnap(Math.min(end, Math.max(v, (r.in ?? 0) + f))) } });
+      }
       if (d.mode === 'marker') {
         const { v, guide: g } = snapTo(d.t0 + dx, new Set([d.id]));
         setGuide(g);
@@ -320,6 +335,7 @@ export function Timeline() {
       setDrag(null);
       setGuide(null);
       if (d?.mode === 'marquee') selectClips(d.base);
+      if (d?.mode === 'range') setState({ range: d.orig });
     };
     const up = () => {
       const d = dragRef.current;
@@ -451,6 +467,7 @@ export function Timeline() {
     if (!sel) toast(`${p.name} animates ${target}, the newest object. Select an object first to target it, or change it in Effect Controls`);
   };
   const dropLanding = dropAt && landing(doc, lay, dropAt.t, dropAt.row >= 0);
+  const area = workArea(); // (it follows `range`)
   const note = drag && changes(drag) ? dragNote(drag, doc, lay, sdoc, slay, shown.moved, shown.rt, keep) : null;
 
   // ------------------------------------------------------------ ruler
@@ -662,6 +679,16 @@ export function Timeline() {
                 ];
               })}
               <div className="end-mark" style={{ left: x(end) }} title="Sequence end" />
+              {area.set && (
+                <div className="work-area" style={{ left: x(area.start), width: Math.max(2, (area.end - area.start) * pps) }}
+                  title="The range played by Play In to Out and Loop: drag it to move it, drag its ends to change In and Out"
+                  onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) setDrag({ mode: 'range', which: 'both', x0: e.clientX, in0: area.start, out0: area.end, orig: range }); }}>
+                  <span className="wa-handle in" role="slider" aria-label="In" aria-valuemin={0} aria-valuemax={end} aria-valuenow={area.start} aria-valuetext={timecode(area.start)}
+                    onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) setDrag({ mode: 'range', which: 'in', x0: e.clientX, in0: area.start, out0: area.end, orig: range }); }} />
+                  <span className="wa-handle out" role="slider" aria-label="Out" aria-valuemin={0} aria-valuemax={end} aria-valuenow={area.end} aria-valuetext={timecode(area.end)}
+                    onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) setDrag({ mode: 'range', which: 'out', x0: e.clientX, in0: area.start, out0: area.end, orig: range }); }} />
+                </div>
+              )}
               <RenderBar left={x(0)} width={end * pps} />
             </div>
             {stripH > 0 && <div className="lane-row steps-lane" style={{ top: RULER, height: stripH }} />}
@@ -695,6 +722,8 @@ export function Timeline() {
               <div className={`drag-note ${note.warn ? 'warn' : ''}`} role="status" aria-live="polite"
                 style={{ left: Math.max(4, Math.min(x(note.at) + 8, laneW - 360)), top: RULER + 4 }}>{note.text}</div>
             )}
+            {area.set && area.start > 0 && <div className="wa-dim" style={{ left: 0, width: Math.max(0, x(area.start)), top: RULER, height: totalH - RULER }} />}
+            {area.set && <div className="wa-dim" style={{ left: Math.max(0, x(area.end)), right: 0, top: RULER, height: totalH - RULER }} />}
             {guide !== null && <div className="snap-guide" style={{ left: x(guide), height: totalH }} />}
             <div className="playhead" style={{ left: x(time), height: totalH }}>
               <div className="playhead-cap" />

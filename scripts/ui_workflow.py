@@ -597,6 +597,14 @@ def accessibility(b):
         pg.get_by_role("group", name="Marker kind").get_by_role("button", name="Review").click()
         pg.wait_for_timeout(300)
         found["marker"] = violations(pg)
+        pg.keyboard.press("Escape")
+        pg.locator(".transport").click(position={"x": 2, "y": 2})
+        pg.keyboard.press("Home")
+        pg.keyboard.press("i")
+        pg.keyboard.press("End")
+        pg.keyboard.press("o")
+        assert pg.locator(".work-area").count() == 1
+        found["range"] = violations(pg)
         pg.get_by_role("button", name="</> Code").click()
         pg.wait_for_timeout(1500)
         found["Code tab"] = violations(pg)
@@ -1026,7 +1034,79 @@ def markers(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def work_area(b):
+    """I and O set a range (editor state, not the document), with a readout of its length in seconds and frames.
+    Play In to Out stops at Out; with Loop on it starts over at In. An Out before In clears In and says so. The range's
+    ends drag on the ruler (Esc puts them back), and Ctrl+Shift+X clears it."""
+    code = ("from manim import *\n\nclass K(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+            "        self.play(Create(a))\n        self.wait(2)\n        self.play(Create(b))\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "range.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        tc = pg.locator(".tl-header .timecode")
+        readout = pg.locator(".range-readout")
+        pg.get_by_role("button", name="Program").click()  # the monitor with the transport (a .py file opens on its code)
+
+        def seek(code):
+            tc.click()
+            pg.locator(".tl-header input.timecode").fill(code)
+            pg.keyboard.press("Enter")
+
+        assert readout.inner_text() == "" and not pg.locator(".work-area").count()
+        seek("00:00:01:00")
+        pg.keyboard.press("i")
+        seek("00:00:02:00")
+        pg.keyboard.press("o")
+        assert readout.inner_text().startswith("In 00:00:01:00 → Out 00:00:02:00: 1 s, 60 frames"), readout.inner_text()
+        assert pg.locator(".work-area").count() == 1
+
+        # Play In to Out stops at Out
+        pg.keyboard.press("Home")
+        pg.keyboard.press("Shift+Space")
+        pg.wait_for_timeout(200)
+        assert "00:00:01" in tc.inner_text(), tc.inner_text()
+        pg.wait_for_function("document.querySelector('.tl-header .timecode').textContent === '00:00:02:00'", timeout=5000)
+        pg.wait_for_timeout(500)
+        assert tc.inner_text() == "00:00:02:00", "stopped at Out"
+
+        # Loop: it starts over at In
+        pg.get_by_role("button", name="Loop").click()
+        pg.keyboard.press("Shift+Space")
+        pg.wait_for_timeout(1700)
+        t = tc.inner_text()
+        pg.keyboard.press("k")
+        assert t.startswith("00:00:01:"), ("looping In to Out", t)
+        pg.get_by_role("button", name="Loop").click()
+
+        # Esc puts dragged handles back; a drag moves In
+        h = pg.get_by_role("slider", name="In").bounding_box()
+        sec = pg.locator(".tl-lanes .clip.anim").first.bounding_box()["width"]
+        pg.mouse.move(h["x"] + h["width"] / 2, h["y"] + h["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(h["x"] + h["width"] / 2 + 0.5 * sec, h["y"] + h["height"] / 2, steps=6)
+        pg.keyboard.press("Escape")
+        pg.mouse.up()
+        assert readout.inner_text().startswith("In 00:00:01:00 → Out 00:00:02:00"), readout.inner_text()
+        pg.mouse.move(h["x"] + h["width"] / 2, h["y"] + h["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(h["x"] + h["width"] / 2 + 0.5 * sec, h["y"] + h["height"] / 2, steps=6)
+        pg.mouse.up()
+        assert readout.inner_text().startswith("In 00:00:01:30 → Out 00:00:02:00: 0.5 s, 30 frames"), readout.inner_text()
+
+        # an Out before In clears In, and says so
+        seek("00:00:00:30")
+        pg.keyboard.press("o")
+        assert "In is cleared" in " ".join(pg.locator(".toast").all_inner_texts())
+        assert readout.inner_text().startswith("Start → Out 00:00:00:30"), readout.inner_text()
+
+        pg.keyboard.press("Control+Shift+X")
+        assert readout.inner_text() == "" and not pg.locator(".work-area").count()
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, markers, work_area, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
