@@ -7,6 +7,7 @@ Host header, so other websites open in a browser can't drive it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import re
@@ -34,6 +35,7 @@ class AppState:
         self.manim_lock = threading.Lock()
         self.jobs: dict[str, render.RenderJob] = {}
         self.catalog_cache: dict[str, dict] = {}
+        self.thumbnail_of: dict[str, str] = {}  # project path -> fingerprint of the document its preview was made from
         self.dialogs: Any = None  # set by the desktop shell (pywebview)
         self.set_title: Any = None  # likewise: names the window after the project
         self.dirty = False  # the open project has unsaved changes (reported by the page along with the title)
@@ -326,8 +328,18 @@ class Handler(BaseHTTPRequestHandler):
         save_project(body["path"], body["doc"])
         self.app.project_path = body["path"]
         recent.add(body["path"])
-        threading.Thread(target=self._thumbnail, args=(body["path"], body["doc"]), daemon=True).start()
+        if self._wants_thumbnail(body["path"], body["doc"]):
+            threading.Thread(target=self._thumbnail, args=(body["path"], body["doc"]), daemon=True).start()
         return {"path": body["path"]}
+
+    def _wants_thumbnail(self, path: str, doc: dict) -> bool:
+        """A new preview for Home, unless this exact project already has one: rendering it holds the manim lock for a
+        moment, which stalls the canvas, and Ctrl+S is pressed often."""
+        key = hashlib.sha1(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        if self.app.thumbnail_of.get(path) == key and recent.has_thumbnail(path):
+            return False
+        self.app.thumbnail_of[path] = key
+        return True
 
     def _thumbnail(self, path: str, doc: dict) -> None:
         """The Home screen's preview of a saved project: its frame at 70% of the video (in the background)."""

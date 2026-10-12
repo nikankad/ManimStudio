@@ -100,6 +100,23 @@ def test_missing_project_file_starts_at_home(tmp_path):
         server.shutdown()
 
 
+def test_saving_an_unchanged_project_does_not_render_its_preview_again(tmp_path):
+    from mathengine.server import AppState, Handler
+
+    handler = object.__new__(Handler)
+    handler.app = AppState(None)
+    path = str(tmp_path / "talk.manimstudio")
+    doc = {"version": 4, "objects": [], "timeline": []}
+    save_project(path, doc)
+    assert handler._wants_thumbnail(path, doc) is True  # never had one
+    assert handler._wants_thumbnail(path, doc) is True  # still none on disk (the render may have failed): try again
+    recent.add(path, "data:image/jpeg;base64,/9j/AA==")  # saving lists the project on Home, with its preview
+    assert handler._wants_thumbnail(path, doc) is False  # the preview matches this document
+    assert handler._wants_thumbnail(path, {**doc, "objects": [{"id": "o1"}]}) is True  # edited: a new one
+    recent.remove(path)
+    assert handler._wants_thumbnail(path, {**doc, "objects": [{"id": "o1"}]}) is True  # removed from Home: make it again
+
+
 def test_recovery_keeps_unsaved_work_until_cleared(tmp_path):
     from mathengine import recovery
 
