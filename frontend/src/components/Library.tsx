@@ -293,7 +293,7 @@ function Constructions() {
   const row = (t: Template, remove?: () => void) => (
     <div key={t.id} className="construction-row" title={t.description}>
       <button className="construction-name" onClick={() => setState({ panel: 'insert', panelData: t })}>{t.name}</button>
-      <span className="muted small">{t.objects.length} objects</span>
+      <span className="muted small">{t.objects.length} {t.objects.length === 1 ? 'object' : 'objects'}</span>
       {!t.builtin && <button className="x-btn" title="Update linked instances of this template" onClick={() => syncInstances(t.id)}>⟳</button>}
       {remove && <button className="x-btn" title="Remove" onClick={() => { if (confirm(`Remove "${t.name}"?`)) remove(); }}>×</button>}
     </div>

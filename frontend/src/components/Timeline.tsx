@@ -411,7 +411,7 @@ export function Timeline() {
       <div className="tl-body" ref={bodyRef}>
         <div className="tl-grid" style={{ height: totalH }}>
           <div className="tl-heads">
-            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} statements</span></div>
+            <div className="tl-corner" style={{ height: RULER }}><span className="muted small">{doc.timeline.length} {doc.timeline.length === 1 ? 'statement' : 'statements'}</span></div>
             <div className="track-head steps-head" style={{ height: STEPS }} title="Each statement of construct(): self.play, self.wait, self.add, code… in order">
               <span className="th-name">Statements</span>
             </div>
