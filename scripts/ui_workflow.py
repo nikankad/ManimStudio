@@ -1300,6 +1300,24 @@ def keyframe_controls(b):
         src = saved()
         assert ".scale(" not in src and "self.wait(2)" in src, src
 
+        # dragging a value off a keyframe adds one clip there and then changes it: one clip, no complaints, one undo
+        seek("00:00:03:00")
+        x = row("position").locator(".scrub").first
+        bb = x.bounding_box()
+        pg.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+        pg.mouse.down()
+        pg.mouse.move(bb["x"] + bb["width"] / 2 + 40, bb["y"] + bb["height"] / 2, steps=10)
+        pg.mouse.up()
+        pg.wait_for_timeout(300)
+        assert not toasts(), toasts()
+        src = saved()
+        assert src.count("c.animate.move_to(") == 1 and "self.wait(1)" in src, src
+        assert row("position").locator(".kf-toggle").get_attribute("aria-pressed") == "true"
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+        src = saved()
+        assert "move_to" not in src and "self.wait(2)" in src, src
+
         # ◆ on a keyframe removes it: the shift clip goes, and its time stays as a pause
         seek("00:00:02:00")
         row("position").locator(".kf-toggle").click()

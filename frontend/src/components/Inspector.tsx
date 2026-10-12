@@ -978,6 +978,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
   const end = Math.max(lay.end, EPS);
   const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
   const fixed = ownsPosition(obj) || isFollow(obj);
+  const redraw = isRedraw(obj);
 
   /** Write `v` into the channel at the playhead. */
   const write = (ch: Channel, v: KeyValue) =>
@@ -995,7 +996,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
       }
       const r = addKey(d, tl, obj.name, ch, time, v);
       return 'error' in r ? r.error : null;
-    }, `kf:${obj.id}:${ch}`);
+    }, `kf:${obj.id}:${ch}:${time}`);
 
   return (
     <section className="fx-section kf-channels">
@@ -1011,7 +1012,8 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         if (value === undefined && ch === 'position' && info?.center) value = [info.center[0], info.center[1]];
         if (value === undefined && ch === 'value' && typeof live === 'number') value = live;
         if (value === undefined) value = valueBefore(own, obj, ch, time);
-        const why = on && !on.editable ? on.why : ch === 'position' && fixed ? 'Its position comes from its construction' : undefined;
+        const why = redraw ? 'It is redrawn every frame (always_redraw), so animating it is overwritten: change what it is drawn from'
+          : on && !on.editable ? on.why : ch === 'position' && fixed ? 'Its position comes from its construction' : undefined;
         const label = `${meta.label} of ${obj.name}`;
         const toggle = () => {
           if (on) return kfEdit((d) => deleteKey(d, layout(d, getState().timeline), on));
@@ -1020,7 +1022,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
           kfEdit((d) => {
             const r = addKey(d, getState().timeline, obj.name, ch, time, value!);
             return 'error' in r ? r.error : null;
-          }, `kf:${obj.id}:${ch}`);
+          }, `kf:${obj.id}:${ch}:${time}`);
         };
         const num = typeof value === 'number' ? value : null;
         let editor;
@@ -1041,7 +1043,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
             <div className="fx-row">
               <span>{meta.label}</span>
               <button className="x-btn" disabled={prev === undefined} title={`Previous keyframe of ${label}`} aria-label={`Previous keyframe of ${label}`} onClick={() => go(prev)}>◀</button>
-              <button className={`x-btn kf-toggle ${on ? 'on' : ''}`} aria-pressed={!!on} title={on ? `Remove this keyframe of ${label}` : `Add a keyframe of ${label} at ${timecode(time)}`} aria-label={on ? `Remove keyframe of ${label}` : `Add keyframe of ${label}`} onClick={toggle}>◆</button>
+              <button className={`x-btn kf-toggle ${on ? 'on' : ''}`} aria-pressed={!!on} disabled={redraw && !on} title={on ? `Remove this keyframe of ${label}` : `Add a keyframe of ${label} at ${timecode(time)}`} aria-label={on ? `Remove keyframe of ${label}` : `Add keyframe of ${label}`} onClick={toggle}>◆</button>
               <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${label}`} aria-label={`Next keyframe of ${label}`} onClick={() => go(next)}>▶</button>
               <div className="kf-value">{editor}</div>
             </div>
