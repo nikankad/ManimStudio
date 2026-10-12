@@ -526,6 +526,12 @@ export function useShortcuts() {
         const pts = editPoints(s.doc, s.timeline);
         const t = e.key === 'ArrowDown' ? pts.find((p) => p > s.time + 1e-6) : [...pts].reverse().find((p) => p < s.time - 1e-6);
         if (t !== undefined) go(t);
+      } else if (e.key === '/' && !mod) {
+        const search = document.querySelector<HTMLInputElement>('.library .search'); // the library's search box
+        if (search) {
+          e.preventDefault();
+          search.focus();
+        }
       } else if (k === 'm') addMarker();
       else if (k === 's' && !mod) setState({ timelineSnap: !s.timelineSnap });
       else if (e.key === '=' || e.key === '+') zoomBy(1.4);

@@ -109,7 +109,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - Code that is unchanged keeps what the editor knows about it: constructions, equation terms, disabled clips.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track. The *Effects* tab holds
   animations; dropping one on a track targets the selected object. Double-clicking a class adds it too, at the
-  centre or the first free spot beside what is already there, so adding several doesn't pile them up.
+  centre or the first free spot beside what is already there, so adding several doesn't pile them up. `/` jumps to
+  the search box; type a name and press Enter to add the top result.
 - **Program monitor**: the frame at the playhead, rendered by manim. Select an object to move it, drag the
   corner handles to scale it, the edge handles to stretch it, or the top knob to rotate it. Arrow keys
   nudge it. With **● Record** on, each of these edits becomes an `.animate` clip at the playhead instead.
@@ -274,7 +275,7 @@ users are offered the tour once.
 
 Shortcuts: Space play · J/K/L · ←/→ frame (Shift ×5) · ↑/↓ edit points · Home/End · M marker ·
 S snap · =/- zoom · Del / ⇧Del ripple delete · ⌘X/⌘C/⌘V clips · ⌘Z/⇧⌘Z · ⌘S save · ⌘N new project · ⌘D duplicate object(s) ·
-1–7 drawing tools · Enter finish polygon · Esc cancel drawing, close a dialog, or go back from Home · ? or F1 help.
+1–7 drawing tools · Enter finish polygon · Esc cancel drawing, close a dialog, or go back from Home · / search the library · ? or F1 help.
 
 ## How it works
 

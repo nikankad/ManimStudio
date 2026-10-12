@@ -355,6 +355,7 @@ const TOPICS: Topic[] = [
             [keys('⌘Z / ⇧⌘Z'), 'Undo / redo'],
             [keys('⌘S / ⌘N'), 'Save / new project'],
             ['M · S · = / -', 'Marker · timeline snap · zoom'],
+            ['/', 'Search the library: type a name, Enter adds the top result'],
             ['? or F1', 'Open this guide'],
           ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
         </tbody>

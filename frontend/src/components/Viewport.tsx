@@ -832,7 +832,7 @@ export function Viewport() {
           </svg>
           {menu && <CanvasMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
           {doc.objects.length === 0 && !dropPoint && tool === 'select' && (
-            <div className="empty-hint">Draw with the tools above, or drag a manim object here<br /><span className="muted">e.g. Circle, MathTex, Axes</span></div>
+            <div className="empty-hint">Draw with the tools above, or drag a manim object here<br /><span className="muted">or double-click one in the library (press / to search it): Circle, MathTex, Axes</span></div>
           )}
         </div>
         {(error || diag) && (

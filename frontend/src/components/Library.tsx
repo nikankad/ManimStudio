@@ -71,7 +71,21 @@ export function Library() {
         <Constructions />
       ) : (
         <>
-          <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setQuery('');
+                e.currentTarget.blur();
+              } else if (e.key === 'Enter') {
+                // Add the top result: type a name, press Enter.
+                const first = groups.flatMap(([, items]) => items)[0];
+                if (!first) return;
+                activate(first);
+                setQuery('');
+                e.currentTarget.blur();
+              }
+            }}
+          />
           {!catalog && <div className="muted pad">Loading manim…</div>}
           <div className="scroll">
             {tab === 'animation' && !query && (
