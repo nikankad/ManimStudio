@@ -226,6 +226,36 @@ def system_keys(b):
         assert not pg.errors, pg.errors
 
 
+def timeline_keys(b):
+    """Tab reaches a clip, Enter selects it, Delete removes it, and a mouse click still leaves Space as play."""
+    with editor() as (url, home):
+        ctx, pg = page_in(b, url)
+        new_project(pg)
+        add(pg, "Circle")
+        add(pg, "Square")
+        before = clips(pg)
+        clip = pg.locator(".tl-lanes .clip.anim").first
+        clip.focus()
+        assert pg.evaluate("document.activeElement.classList.contains('clip')")
+        pg.keyboard.press("Enter")
+        pg.wait_for_timeout(300)
+        assert clip.get_attribute("aria-pressed") == "true", "Enter selects the focused clip"
+        assert "Effect Controls" in pg.locator(".inspector, aside").last.inner_text()
+        pg.keyboard.press("Delete")
+        pg.wait_for_timeout(400)
+        assert clips(pg) == before - 1, "Delete removed it"
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+        assert clips(pg) == before
+        # the mouse still works: a click selects, and Space then plays (it doesn't "press" the focused clip)
+        pg.locator(".tl-lanes .clip.anim").last.click()
+        pg.keyboard.press("Home")
+        pg.keyboard.press("Space")
+        pg.wait_for_timeout(300)
+        assert pg.evaluate("document.querySelector('.icon.play').innerText.includes('❚')")
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -349,7 +379,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

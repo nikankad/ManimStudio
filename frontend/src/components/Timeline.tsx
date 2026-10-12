@@ -308,6 +308,11 @@ export function Timeline() {
         className={`clip anim ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
         style={{ left, width: w, top: rowTop(row) + 3, height: ROW - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
         title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
+        tabIndex={0}
+        role="button"
+        aria-pressed={selected.has(a.id)}
+        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+        onKeyDown={(e) => keySelect(e, a.id)}
         onPointerDown={(e) => onAnimDown(e, a, step, row)}
         onContextMenu={(e) => openMenu(e, a.id)}
         onDoubleClick={() => setState({ time: frameSnap(sp.end), showVideo: false })}
@@ -354,6 +359,11 @@ export function Timeline() {
         className={`clip step ${s.kind} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
         style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : w, top: RULER + 3, height: STEPS - 6, ['--clip' as string]: STEP_COLORS[s.kind] }}
         title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${s.disabled ? '\nDisabled: left out of the code' : ''}`}
+        tabIndex={0}
+        role="button"
+        aria-pressed={selected.has(s.id)}
+        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+        onKeyDown={(e) => keySelect(e, s.id)}
         onPointerDown={(e) => onStepDown(e, s)}
         onContextMenu={(e) => openMenu(e, s.id)}
         onDoubleClick={() => setState({ time: frameSnap(sp.end), showVideo: false })}
@@ -366,6 +376,14 @@ export function Timeline() {
         )}
       </div>
     );
+  };
+
+  /** Tab reaches a clip and Enter selects it (Shift adds to the selection): the timeline without a mouse. */
+  const keySelect = (e: React.KeyboardEvent, id: string) => {
+    if (e.key !== 'Enter' || e.target !== e.currentTarget) return;
+    e.preventDefault();
+    e.stopPropagation();
+    selectClips(e.shiftKey ? [...new Set([...selected, id])] : [id]);
   };
 
   const openMenu = (e: React.MouseEvent, id: string) => {
