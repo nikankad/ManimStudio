@@ -345,9 +345,11 @@ function PanelDialog() {
 
 export const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
 
+const DEFAULT_BASES = ['Scene'];
+
 function SettingsPanel() {
   const doc = useStore((s) => s.doc);
-  const bases = useStore((s) => s.catalog?.scene_bases ?? ['Scene']);
+  const bases = useStore((s) => s.catalog?.scene_bases) ?? DEFAULT_BASES; // (a fallback made inside the selector is a new array every render: an endless loop)
   const set = (fn: (d: typeof doc) => void, key: string) => updateDoc(fn, 'settings:' + key);
   const res = `${doc.config.pixel_width}x${doc.config.pixel_height}`;
   return (

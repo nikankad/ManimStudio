@@ -275,6 +275,30 @@ def broken_files(b):
         assert not pg.errors, pg.errors
 
 
+def early_settings(b):
+    """Dialogs opened before manim's catalog has loaded (the first seconds of a launch) don't crash the editor."""
+    with editor() as (url, home):
+        ctx = b.new_context(viewport={"width": 1500, "height": 900})
+        pg = ctx.new_page()
+        pg.errors = []
+        pg.on("pageerror", lambda e: pg.errors.append(str(e)))
+        pg.route("**/api/catalog", lambda route: route.abort())  # it never arrives
+        pg.goto(url)
+        pg.wait_for_selector(".home")
+        new_project(pg)
+        for name in ["Settings", "Export video"]:
+            pg.get_by_role("button", name=name, exact=True).click()
+            pg.wait_for_timeout(400)
+            assert pg.locator(".modal-back").count() == 1, name
+            pg.keyboard.press("Escape")
+            pg.wait_for_timeout(400)
+            assert pg.locator(".toolbar").count() == 1, f"the editor survived closing {name}"
+        pg.get_by_role("button", name="Settings", exact=True).click()
+        pg.wait_for_selector(".modal-back")
+        pg.locator(".modal").get_by_text("Base class").wait_for()
+        assert not pg.errors, pg.errors
+
+
 def preferences(b):
     """What you set up stays between launches (each launch is a new browser profile)."""
     with editor() as (url, home):
@@ -398,7 +422,7 @@ def accessibility(b):
         assert not bad, bad
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, broken_files, early_settings, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
