@@ -822,7 +822,7 @@ def _keep_top(code: str, scene: ast.ClassDef, doc: dict, plan: construct.Plan) -
         at -= 1
     top = "\n".join(lines[:at])
     numbers = "\n" + tex.NUMBERS_SOURCE.strip("\n") + "\n\n"  # what codegen adds below it when LaTeX is missing
-    if top.endswith(numbers):
+    if top.endswith(numbers) and tex.NUMBERS_SOURCE.strip("\n") not in doc.get("header", ""):
         top = top[: -len(numbers)]
     gen = "\n".join(t for t, _ in codegen.top_lines(doc, plan, False, True))
     if top not in (gen, "\n".join(t for t, _ in codegen.top_lines(doc, plan, False, False))):

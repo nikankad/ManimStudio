@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, askPath, type CodeSpan, type LineKind } from '../api';
-import { getState, selectClips, selectObjects, setState, toast, updateDoc, useStore } from '../store';
+import { getState, projectEpoch, selectClips, selectObjects, setState, toast, updateDoc, useStore } from '../store';
 import type { SceneDoc } from '../types';
 import { findAnim, rootName } from '../timeline';
 import { importManimFile } from './Panels';
@@ -31,6 +31,7 @@ export function CodeEditor() {
   // The document our own code edit produced, and the code text it came from: no need to rewrite the editor.
   const applied = useRef<{ doc: SceneDoc; text: string } | null>(null);
   const generated = useRef<{ doc: SceneDoc; text: string } | null>(null);
+  const generation = useRef(0);
   const edited = generated.current !== null && text !== generated.current.text && text !== applied.current?.text;
   const runFailed = status.kind === 'ok' && !edited && !!error; // the code reads fine, but running the scene fails
 
@@ -39,7 +40,10 @@ export function CodeEditor() {
   const regenerate = () => {
     const before = taRef.current?.value ?? '';
     const d = getState().doc;
+    const opened = projectEpoch();
+    const request = ++generation.current;
     api.code(d).then((r) => {
+      if (!taRef.current || projectEpoch() !== opened || getState().doc !== d || request !== generation.current) return;
       if ((taRef.current?.value ?? '') !== before) return; // typed meanwhile: that wins
       if (before && before !== generated.current?.text && before !== applied.current?.text) toast('The scene changed, so the code edits that weren’t applied were replaced');
       generated.current = { doc: d, text: r.code };
@@ -66,8 +70,11 @@ export function CodeEditor() {
 
   async function apply(code: string) {
     const base = getState().doc;
+    const opened = projectEpoch();
     try {
       const res = await api.importCode(code, base, base.scene.name);
+      // Import runs asynchronously. Never replace a different project or newer timeline edits.
+      if (projectEpoch() !== opened || getState().doc !== base) return;
       if (taRef.current && taRef.current.value !== code) return; // typed on meanwhile; the next pause applies that
       if (!res.ok) return setStatus({ kind: 'error', message: res.error, line: res.line });
       updateDoc((d) => {
@@ -77,6 +84,7 @@ export function CodeEditor() {
       applied.current = { doc: getState().doc, text: code };
       setStatus({ kind: 'ok', message: 'Applied', notes: res.notes });
     } catch (e) {
+      if (projectEpoch() !== opened || getState().doc !== base) return;
       setStatus({ kind: 'error', message: String(e) });
     }
   }

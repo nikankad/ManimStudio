@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib.request
 from contextlib import contextmanager
 
@@ -81,6 +82,30 @@ def add(pg, cls):
 def clips(pg):
     """Animation clips on the timeline (not pauses or the strip of other steps)."""
     return pg.locator(".tl-lanes .clip.anim").count()
+
+
+def toolbar_toggle(pg, label):
+    """A toggle can move into Options when the toolbar folds at the current viewport."""
+    toggle = pg.get_by_label(label, exact=True)
+    if not toggle.count() or not toggle.is_visible():
+        pg.locator(".toolbar").get_by_role("button", name="Options").click()
+    return pg.get_by_label(label, exact=True)
+
+
+def saved_pref(pg, home, key, value):
+    """UI updates are immediate; the preference's POST must finish before disk or relaunch assertions."""
+    deadline = time.monotonic() + 5
+    actual = None
+    while time.monotonic() < deadline:
+        try:
+            with open(os.path.join(home, "prefs.json")) as f:
+                actual = json.load(f).get(key)
+            if actual == value:
+                return
+        except (OSError, ValueError):
+            pass
+        pg.wait_for_timeout(50)
+    raise AssertionError(f"saved preference {key}: expected {value!r}, got {actual!r}")
 
 
 # ---------------------------------------------------------------------------------------------------- scenarios
@@ -168,14 +193,15 @@ def shortcuts(b):
         pg.wait_for_timeout(300)
         assert clips(pg) == n and playing(), "Space plays (it doesn't add the class again) after a double-click"
         pg.keyboard.press("Space")
-        rec = pg.locator(".toolbar").get_by_label("● Record")
+        rec = toolbar_toggle(pg, "● Record")
         rec.check()
         pg.keyboard.press("Home")
         pg.keyboard.press("Space")
         pg.wait_for_timeout(300)
         assert rec.is_checked() and playing(), "Space plays, not toggles the checkbox that still has focus"
         pg.keyboard.press("Space")
-        rec.uncheck()
+        toolbar_toggle(pg, "● Record").uncheck()
+        pg.keyboard.press("Escape")  # close Options if the toolbar is folded
         pg.keyboard.press("End")  # new objects start at the playhead: at the end they get their own self.play
         # library search: / focuses, Enter adds the top result
         pg.keyboard.press("/")
@@ -384,7 +410,7 @@ def timeline_edit(b):
         start = lambda loc: label(loc).split(", ")[-1].split(" to ")[0]
         square = pg.locator(".tl-lanes .clip.anim", has_text="square")
         circle = pg.locator(".tl-lanes .clip.anim", has_text="circle")
-        assert "Create" in square.inner_text() and square.inner_text().index("square") < square.inner_text().index("Create"), \
+        assert "Draw" in square.inner_text() and square.inner_text().index("square") < square.inner_text().index("Draw"), \
             "clips read object first"
         assert pg.locator(".track-head", has_text="Statements").count() == 0, "no statement lane"
         assert pg.locator(".tl-lanes .clip.step.pause").count() == 1, "the pause spans the tracks"
@@ -517,7 +543,10 @@ def toolbar(b):
             pg.wait_for_timeout(400)
             over = pg.evaluate("(() => { const t = document.querySelector('.toolbar'); return t.scrollWidth - t.clientWidth; })()")
             assert over <= 1, f"the toolbar overflows by {over}px at {width}px"
-            assert pg.get_by_role("button", name="Export video").is_visible()
+            for name in ["Export video", "Settings", "? Help"]:
+                button = pg.get_by_role("button", name=name, exact=True)
+                bounds = button.bounding_box()
+                assert button.is_visible() and bounds and 0 <= bounds["x"] <= width - bounds["width"], f"{name} is outside the viewport at {width}px"
         # in a folded toolbar the toggles live in the Options menu
         pg.set_viewport_size({"width": 1100, "height": 800})
         pg.wait_for_timeout(400)
@@ -640,7 +669,7 @@ def clip_roles(b):
         pg.wait_for_selector(".toolbar")
         pg.wait_for_selector(".tl-lanes .clip.anim:not(.estimated)", timeout=30000)
         pg.wait_for_timeout(500)
-        clip = lambda text: pg.locator(".tl-lanes .clip.anim", has_text=text)
+        clip = lambda text: pg.locator(f'.tl-lanes .clip.anim[title*="{text}"]')
         role = lambda text: clip(text).get_attribute("aria-label").split(", ")[-2]
         assert [role(t) for t in ["FadeIn", ".animate", "ReplacementTransform", "Indicate", "FadeOut"]] == \
             ["intro", "effect", "swap", "effect", "outro"], [role(t) for t in ["FadeIn", ".animate", "ReplacementTransform", "Indicate", "FadeOut"]]
@@ -699,7 +728,7 @@ def track_heights(b):
         assert height(0) == 106 and height(1) == 46, (height(0), height(1))
         assert pg.locator(".tl-lanes .clip.anim").first.bounding_box()["height"] == clip0 + 60, "the clip grows with its track"
         assert heads.nth(1).bounding_box()["y"] == heads.nth(0).bounding_box()["y"] + 106, "V2 moves down"
-        assert json.load(open(os.path.join(home, "prefs.json")))["ui.trackHeights"] == "106"
+        saved_pref(pg, home, "ui.trackHeights", "106")
         assert not pg.errors, pg.errors
         ctx.close()
 
@@ -711,7 +740,7 @@ def track_heights(b):
         pg.get_by_role("separator", name="V1 height").dblclick()
         pg.wait_for_timeout(300)
         assert height(0) == 46
-        assert "ui.trackHeights" not in json.load(open(os.path.join(home, "prefs.json")))
+        saved_pref(pg, home, "ui.trackHeights", None)
 
 
 def add_tracks(b):
@@ -727,7 +756,7 @@ def add_tracks(b):
         for _ in range(3):
             pg.get_by_role("button", name="+ Add track").click()
         assert heads() == 6
-        assert json.load(open(os.path.join(home, "prefs.json")))["ui.tracks"] == "6"
+        saved_pref(pg, home, "ui.tracks", "6")
 
         # drag the square onto V6 in the circle's column: it joins the circle's group, on V2
         circle = pg.locator(".tl-lanes .clip.anim", has_text="circle")
@@ -748,6 +777,7 @@ def add_tracks(b):
         for n in [5, 4, 3]:
             pg.get_by_role("button", name=f"Remove V{n}").click()
         assert heads() == 2 and pg.get_by_role("button", name="Remove V2").count() == 0, "V2 holds the square"
+        saved_pref(pg, home, "ui.tracks", "2")
         assert not pg.errors, pg.errors
         ctx.close()
         ctx, pg = page_in(b, url, 1500, 1000)
@@ -952,7 +982,7 @@ def retiming(b):
         assert label("a").endswith("to 00:00:03:00") and label("b") == b0, (label("a"), label("b"))
         pg.keyboard.press("Control+z")
         pg.wait_for_timeout(400)
-        assert label("a").endswith("to 00:00:01:30") and label("b").startswith("Create b, intro, 00:00:03:00"), "one undo step"
+        assert label("a").endswith("to 00:00:01:30") and label("b").startswith("b Draw, intro, 00:00:03:00"), "one undo step"
 
         # a pause is the hold itself: with Keep on, making it longer or shorter still moves what comes after
         wait = pg.locator(".tl-lanes .clip.step.pause").first
@@ -965,7 +995,7 @@ def retiming(b):
         pg.wait_for_timeout(400)
         assert "No pause" not in text and "later beats move by +0.5 s" in text, text
         measured()
-        assert label("b").startswith("Create b, intro, 00:00:03:30"), label("b")
+        assert label("b").startswith("b Draw, intro, 00:00:03:30"), label("b")
         pg.keyboard.press("Control+z")
         pg.wait_for_timeout(400)
         assert label("b") == b0
@@ -1335,6 +1365,91 @@ def keyframe_controls(b):
         src = saved()
         assert "Rotate" not in src and "self.play(c.animate.shift(RIGHT * 3))" in src, src
         assert not pg.errors, pg.errors
+
+
+def keyframe_regressions(b):
+    """Chained values, group-end keys and returning easing stay faithful when edited through the GUI."""
+    fixtures = {
+        "chain": "c = Square()\nself.play(Create(c))\nself.play(c.animate.shift(RIGHT).shift(RIGHT * 2))",
+        "group": "c = Square()\nt = ValueTracker(0)\nself.play(Create(c, run_time=2))",
+        "shared_group": "c = Square()\nt = ValueTracker(0)\nself.play(Create(c, run_time=4), run_time=2)",
+        "return": "c = Square()\nself.play(Create(c))\nself.play(c.animate(rate_func=there_and_back).scale(2))\nself.wait(2)",
+    }
+    with tempfile.TemporaryDirectory(prefix="manim-studio-ui-keys-") as folder:
+        for case, body in fixtures.items():
+            project = os.path.join(folder, f"{case}.py")
+            with open(project, "w") as f:
+                f.write("from manim import *\n\nclass K(Scene):\n    def construct(self):\n" +
+                        "".join("        " + line + "\n" for line in body.splitlines()))
+            with editor(project) as (url, home):
+                ctx, pg = page_in(b, url, 1500, 950)
+
+                def measured():
+                    pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+
+                def seek(t):
+                    pg.locator(".tl-header .timecode").click()
+                    pg.locator(".tl-header input.timecode").fill(t)
+                    pg.keyboard.press("Enter")
+                    pg.wait_for_timeout(300)
+
+                def saved():
+                    pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+                    pg.wait_for_timeout(700)
+                    src = pg.locator(".code-monitor textarea").first.input_value()
+                    pg.get_by_role("button", name="Program", exact=True).click()
+                    return src
+
+                def set_number(row, value):
+                    row.locator(".scrub").first.click()
+                    row.locator("input.scrub-edit").fill(str(value))
+                    row.locator("input.scrub-edit").press("Enter")
+                    measured()
+
+                measured()
+                pg.get_by_role("button", name="Program", exact=True).click()
+                if case in ("group", "shared_group"):
+                    pg.get_by_role("button", name="Scene", exact=True).first.click()
+                    pg.locator(".outline-row", has=pg.locator("span.mono", has_text="t")).last.click()
+                    seek("00:00:02:00")
+                    row = pg.locator('.kf-channel[data-channel="value"]')
+                    row.locator(".kf-toggle").click()
+                    measured()
+                    assert row.locator(".kf-toggle").get_attribute("aria-pressed") == "true"
+                    assert row.locator(".kf-dot").count() == 1
+                    assert row.locator(".kf-dot").get_attribute("aria-label") == "Value keyframe at 00:00:02:00"
+                    set_number(row, 5)
+                    src = saved()
+                    assert "t.animate(run_time=2).set_value(5)" in src
+                    assert "Create(c, run_time=2)" in src
+                    assert pg.locator(".tl-lanes .clip.anim").first.get_attribute("aria-label").endswith("to 00:00:02:00")
+                else:
+                    pg.locator(".tl-lanes .clip.anim").nth(1).click()
+                    seek("00:00:02:00")
+                    if case == "chain":
+                        row = pg.locator('.kf-channel[data-channel="position"]')
+                        assert row.locator(".kf-dot").count() == 1
+                        assert row.locator(".scrub").first.inner_text() == "3"
+                        set_number(row, 4)
+                        assert "c.animate.shift(RIGHT).shift(RIGHT * 3)" in saved()
+                        assert row.locator(".scrub").first.inner_text() == "4"
+                    else:
+                        row = pg.locator('.kf-channel[data-channel="scale"]')
+                        assert row.locator(".kf-args input").input_value() == "2"
+                        assert "1" in row.locator(".kf-why .muted").inner_text()
+                        row.locator(".kf-args input").fill("3")
+                        row.locator(".kf-args input").press("Enter")
+                        measured()
+                        seek("00:00:03:00")
+                        row.locator(".kf-toggle").click()
+                        measured()
+                        set_number(row, 3)
+                        src = saved()
+                        assert "c.animate(rate_func=there_and_back).scale(3)" in src
+                        assert "self.play(c.animate.scale(3))" in src
+                assert not pg.errors, (case, pg.errors)
+                assert not pg.locator(".toast").count(), (case, pg.locator(".toast").all_inner_texts())
+                ctx.close()
 
 
 def relative_keys(b):
@@ -1859,7 +1974,7 @@ def wording(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, text_values, wording, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, keyframe_regressions, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, text_values, wording, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
@@ -1876,6 +1991,10 @@ def main() -> int:
             except Exception as exc:  # report every scenario, not just the first failure
                 failed.append(scenario.__name__)
                 print(f"FAIL  {scenario.__name__}: {type(exc).__name__}: {exc}")
+                traceback.print_exc()
+            finally:
+                for context in browser.contexts:
+                    context.close()
         browser.close()
     return 1 if failed else 0
 

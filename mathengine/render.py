@@ -120,9 +120,10 @@ def prune_cache(media: Path, max_age: float = CACHE_MAX_AGE, max_bytes: int = CA
     return gone
 
 
-# render jobs working in each project's folder: a job tidies the shared cache only while no other job is writing to it
-_active: dict[Path, set["RenderJob"]] = {}
-_active_lock = threading.Lock()
+# Jobs for one project share a script and Manim's partial-movie cache. Hold the
+# project lock through rendering and copying the result, including cancellation.
+_project_locks: dict[Path, threading.Lock] = {}
+_project_locks_lock = threading.Lock()
 
 
 class RenderJob:
@@ -137,6 +138,7 @@ class RenderJob:
         self.result: Path | None = None
         self.log = ""
         self._proc: subprocess.Popen | None = None
+        self._process_lock = threading.Lock()
         self.workdir = cache_root() / "projects" / hashlib.sha1(project_key.encode()).hexdigest()[:12]
         self.total_plays = max(1, plays)
         self._retried = False
@@ -155,45 +157,51 @@ class RenderJob:
         threading.Thread(target=self._run_registered, daemon=True).start()
 
     def _run_registered(self) -> None:
-        with _active_lock:
-            _active.setdefault(self.workdir, set()).add(self)
-        try:
+        with _project_locks_lock:
+            lock = _project_locks.setdefault(self.workdir, threading.Lock())
+        with lock:
             self._run()
-        finally:
-            with _active_lock:
-                _active.get(self.workdir, set()).discard(self)
-
-    def _alone(self) -> bool:
-        """No other job is rendering into this project's cache (a cancelled one's manim is already killed)."""
-        with _active_lock:
-            return not any(j is not self and j.state != "cancelled" for j in _active.get(self.workdir, ()))
 
     def cancel(self) -> None:
-        self.state = "cancelled"
-        if self._proc and self._proc.poll() is None:
-            self._proc.kill()
+        with self._process_lock:
+            if self.state in ("done", "error"):
+                return
+            self.state = "cancelled"
+            if self._proc and self._proc.poll() is None:
+                self._proc.kill()
 
     def _run(self) -> None:
-        self.state = "running"
+        with self._process_lock:
+            if self.state == "cancelled":
+                return
+            self.state = "running"
         try:
             self.workdir.mkdir(parents=True, exist_ok=True)
             scene_name = self.doc.get("scene", {}).get("name") or "MainScene"
             script = self.workdir / "scene.py"
-            script.write_text(codegen.generate(self.doc).source, encoding="utf-8")
             if self.quality in QUALITIES:
                 w, h, fps = QUALITIES[self.quality]
             else:
                 cfg = self.doc.get("config", {})
                 w, h, fps = cfg.get("pixel_width", 1920), cfg.get("pixel_height", 1080), cfg.get("frame_rate", 60)
+            # Manim imports the module after reading CLI flags. Preserved Python config assignments
+            # would otherwise undo the selected quality (including the low-resolution preview).
+            # Override only output settings in the job's script; portable source stays untouched.
+            source = codegen.generate(self.doc).source
+            source += ("\n\n# Output settings selected in Manim Studio.\n"
+                       "import manim as _mathengine_render_manim\n"
+                       f"_mathengine_render_manim.config.pixel_width = {int(w)}\n"
+                       f"_mathengine_render_manim.config.pixel_height = {int(h)}\n"
+                       f"_mathengine_render_manim.config.frame_rate = {float(fps)!r}\n")
+            script.write_text(source, encoding="utf-8")
             out_name = "preview" if self.quality == "preview" else "render"
             media = self.workdir / "media"
             # A video left by an earlier render of this project must not pass for this one's (a scene without
             # self.play makes no video at all).
             for old in media.glob(f"videos/**/{out_name}.mp4"):
                 old.unlink(missing_ok=True)
-            if self._alone():  # another render's pieces still being written aren't broken, nor stale
-                purge_broken_partials(media)  # left by a render that was cancelled or killed
-                prune_cache(media)
+            purge_broken_partials(media)  # left by a render that was cancelled or killed
+            prune_cache(media)
             cmd = [
                 *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,
@@ -201,41 +209,53 @@ class RenderJob:
             ]
             env = dict(os.environ, PYTHONWARNINGS="ignore", PYTHONUNBUFFERED="1", COLUMNS="200")
             self.message = "Rendering…"
-            self._proc = subprocess.Popen(
-                cmd, cwd=self.workdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
-                **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}),
-            )
+            with self._process_lock:
+                if self.state == "cancelled":
+                    return
+                self._proc = subprocess.Popen(
+                    cmd, cwd=self.workdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                    **({"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}),
+                )
             self._pump(self._proc)
             code = self._proc.wait()
             if self.state == "cancelled":
                 return
-            if code != 0 and not self._retried and "Invalid data found" in self.log and self._alone() and purge_broken_partials(media):
+            if code != 0 and not self._retried and "Invalid data found" in self.log and purge_broken_partials(media):
                 self._retried = True  # a cached piece was damaged after all: it is gone now, so once more
                 self.log = ""
                 self.progress = 0.0
                 return self._run()
             if code != 0:
-                self.state = "error"
-                self.message = _last_error(self.log) or f"manim exited with code {code}"
+                with self._process_lock:
+                    if self.state != "cancelled":
+                        self.state = "error"
+                        self.message = _last_error(self.log) or f"manim exited with code {code}"
                 return
             found = sorted(media.glob(f"videos/**/{out_name}.mp4"), key=lambda p: p.stat().st_mtime)
             if not found:
-                self.state = "error"
-                self.message = ("Nothing to play: the scene has no self.play or self.wait" if "no play calls" in self.log
-                                else "manim finished but no video was produced")
+                with self._process_lock:
+                    if self.state != "cancelled":
+                        self.state = "error"
+                        self.message = ("Nothing to play: the scene has no self.play or self.wait" if "no play calls" in self.log
+                                        else "manim finished but no video was produced")
                 return
-            self.result = found[-1]
-            if self.output:
-                dest = Path(self.output).expanduser()
+            # The assembled cache video is overwritten by the next render. Give
+            # every job its own artifact so an older preview stays playable.
+            with self._process_lock:
+                if self.state == "cancelled":
+                    return
+                dest = Path(self.output).expanduser() if self.output else media / "videos" / "results" / f"{self.id}.mp4"
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(self.result, dest)
+                shutil.copyfile(found[-1], dest)
                 self.result = dest
-            self.progress = 1.0
-            self.state = "done"
-            self.message = f"Saved {self.result}"
+                self.progress = 1.0
+                self.state = "done"
+                self.message = f"Saved {self.result}"
         except Exception as exc:
-            self.state = "error"
-            self.message = str(exc)
+            with self._process_lock:
+                if self.state != "cancelled":
+                    self.state = "error"
+                    self.message = str(exc)
 
     def _pump(self, proc: subprocess.Popen) -> None:
         anim_re = re.compile(rb"Animation (\d+)")

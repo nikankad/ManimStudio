@@ -20,6 +20,7 @@ and ``len``.
 from __future__ import annotations
 
 import math
+import keyword
 import re
 from dataclasses import dataclass, field
 
@@ -55,7 +56,7 @@ HELPERS = {"isprime": (
     "    n = int(n)\n"
     "    return n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))\n"
 )}
-RESERVED = set(FUNCTIONS) | set(CONSTANTS) | set(MULTI) | SPECIAL | {VARIABLE, "y"}
+RESERVED = set(FUNCTIONS) | set(CONSTANTS) | set(MULTI) | SPECIAL | {VARIABLE, "y", "np", "int", "range", "all"}
 
 
 class ExprError(ValueError):
@@ -166,7 +167,7 @@ class _Parser:
     def args(self, name: str, count: int | None = None) -> list[tuple]:
         """``(a, b, …)`` after a function's name."""
         self.expect("(")
-        out = [self.cmp()]
+        out = [] if self.peek() == ("op", ")") else [self.cmp()]
         while self.peek() == ("op", ","):
             self.take()
             out.append(self.cmp())
@@ -182,6 +183,8 @@ class _Parser:
             if t[0] != "name":
                 raise ExprError(f"{val}() starts with the name of its index: {val}(k, 1, n, …).")
             var = t[1]
+            if keyword.iskeyword(var) or var in RESERVED - {VARIABLE}:
+                raise ExprError(f"{var!r} can't be the name of an index.", "Use a short name such as k or n.")
             self.expect(",")
             lo = self.expr()
             self.expect(",")
@@ -376,10 +379,12 @@ def parse_function(text: str, known_params: set[str] | None = None, scope: dict[
     src = (text or "").strip()
     if not src:
         raise ExprError("Enter a function, for example y = a*x^2 + b.")
-    if src.count("=") > 1:
+    assignments = list(re.finditer(r"(?<![!<>=])=(?!=)", src))
+    if len(assignments) > 1:
         raise ExprError("Only one '=' is allowed, in the form y = f(x).")
-    if "=" in src:
-        lhs, rhs = (s.strip() for s in src.split("=", 1))
+    if assignments:
+        at = assignments[0].start()
+        lhs, rhs = src[:at].strip(), src[at + 1:].strip()
         lhs_n = lhs.replace(" ", "")
         if lhs_n in ("y", "f(x)", "g(x)", "h(x)") or re.fullmatch(r"[A-Za-z]\(x\)", lhs_n):
             src = rhs

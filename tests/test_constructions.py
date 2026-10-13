@@ -1,5 +1,6 @@
 """Constructions compile, stay attached while things animate, and report broken links."""
 
+import ast
 import math
 import subprocess
 import sys
@@ -231,7 +232,13 @@ def test_transform_terms_in_a_play_with_other_animations():
         play({"id": "g", "cls": "LaggedStart", "target": "", "args": {"lag_ratio": "0.5"}, "anims": [terms, anim("c2", "Indicate", "dot")]}),
     ]
     gen = codegen.generate(d)
-    assert "self.play(LaggedStart(TransformTerms(eq1, eq2" in gen.source
+    calls = [n for n in ast.walk(ast.parse(gen.source)) if isinstance(n, ast.Call)]
+    played = next(n for n in calls if isinstance(n.func, ast.Attribute) and n.func.attr == "play")
+    group = played.args[0]
+    assert isinstance(group, ast.Call) and isinstance(group.func, ast.Name) and group.func.id == "LaggedStart"
+    transform = group.args[0]
+    assert isinstance(transform, ast.Call) and isinstance(transform.func, ast.Name) and transform.func.id == "TransformTerms"
+    assert [n.id for n in transform.args[:2]] == ["eq1", "eq2"]
     for t in (1.5, 1.9):
         run(d, t)
     r, o = run(d, 10)

@@ -118,6 +118,7 @@ function colorArg(call: ChainCall): { src: string; start: number; end: number } 
   const hit = kw ?? pos;
   if (!hit) return undefined;
   const off = kw ? hit.text.indexOf('=') + 1 : 0;
+  if (hit.text.slice(off).trim() === 'None') return undefined;
   const lead = hit.text.slice(off).length - hit.text.slice(off).trimStart().length;
   return { src: hit.text.slice(off).trim(), start: hit.start + off + lead, end: hit.start + hit.text.trimEnd().length };
 }
@@ -130,6 +131,7 @@ function widthArg(call: ChainCall): { src: string; start: number; end: number } 
   const hit = kw ?? pos;
   if (!hit) return undefined;
   const off = kw ? hit.text.indexOf('=') + 1 : 0;
+  if (hit.text.slice(off).trim() === 'None') return undefined;
   const lead = hit.text.slice(off).length - hit.text.slice(off).trimStart().length;
   return { src: hit.text.slice(off).trim(), start: hit.start + off + lead, end: hit.start + hit.text.trimEnd().length };
 }
@@ -169,8 +171,18 @@ function rotateAngle(a: Anim): string {
 
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
 
-type MeasuredClip = { from?: Record<string, unknown>; to?: Record<string, unknown> };
+type MeasuredClip = { from?: Record<string, unknown>; to?: Record<string, unknown>; curve?: number[] };
 type Measured = Map<string, MeasuredClip>;
+
+/** Only known endpoints are inferred without a render. Custom rate functions need manim's measurement. */
+function endProgress(rate: string | undefined, curve: number[] | undefined): number | undefined {
+  if (curve?.length) return curve[curve.length - 1];
+  const name = (rate ?? 'smooth').trim().replace(/^rate_functions\./, '');
+  if (['there_and_back', 'there_and_back_with_pause', 'wiggle'].includes(name)) return 0;
+  if (['linear', 'smooth', 'smoothstep', 'smootherstep', 'rush_into', 'rush_from', 'slow_into', 'double_smooth',
+    'running_start', 'lingering'].includes(name) || /^ease_(in_out|in|out)_(sine|quad|cubic|quart|quint|expo|circ|back|elastic|bounce)$/.test(name)) return 1;
+  return undefined;
+}
 
 /**
  * The keyframes of `name` (an object's variable name), in time order, per channel. Values come from the code where it
@@ -184,31 +196,64 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
   const cur: Partial<Record<Channel, KeyValue | undefined>> = {};
   for (const ch of CHANNELS) cur[ch.id] = obj ? baseValue(obj, ch.id) : undefined;
   /** The keyframes of one clip (an `.animate` or Rotate animation, or an apply step) that runs from `start` to `end`. */
-  const read = (a: { id: string; cls?: string; chain?: string; args?: Args }, sp: { start: number; end: number }, m: MeasuredClip | undefined, nested: boolean) => {
-    const after = (ch: Channel): KeyValue | undefined => {
-      const to = m?.to as Record<string, unknown> | undefined;
-      if (!to) return undefined;
-      if (ch === 'position' && Array.isArray(to.center)) return [to.center[0] as number, to.center[1] as number];
-      if (ch === 'opacity' && typeof to.opacity === 'number') return to.opacity;
-      if (ch === 'value' && typeof to.value === 'number') return to.value;
-      if (ch === 'color' && typeof to.color === 'string') return to.color;
-      if (ch === 'stroke' && typeof to.stroke === 'number') return to.stroke;
-      if (ch === 'scale' && obj === CAMERA && typeof to.width === 'number') return to.width / frameWidth(doc);
+  const read = (a: { id: string; cls?: string; chain?: string; args?: Args }, sp: { start: number; end: number }, m: MeasuredClip | undefined, nested: boolean, rate?: string) => {
+    const state = (s: Record<string, unknown> | undefined, ch: Channel): KeyValue | undefined => {
+      if (!s) return undefined;
+      if (ch === 'position' && Array.isArray(s.center)) return [s.center[0] as number, s.center[1] as number];
+      if (ch === 'opacity' && typeof s.opacity === 'number') return s.opacity;
+      if (ch === 'value' && typeof s.value === 'number') return s.value;
+      if (ch === 'stroke' && typeof s.stroke === 'number') return s.stroke;
+      if (ch === 'scale' && obj === CAMERA && typeof s.width === 'number') return Number(fmtNum(s.width / frameWidth(doc)));
+      if (ch === 'color' && typeof s.color === 'string') return JSON.stringify(s.color);
       return undefined;
     };
-    const touched = new Set<Channel>(); // channels an earlier call of this chain set: measured `from` is before those
-    const before = (ch: Channel): KeyValue | undefined => {
-      const from = touched.has(ch) ? undefined : (m?.from as Record<string, unknown> | undefined);
-      if (ch === 'position' && from && Array.isArray(from.center)) return [from.center[0] as number, from.center[1] as number];
-      if (ch === 'value' && from && typeof from.value === 'number') return from.value;
-      return cur[ch];
+    // A measurement describes the whole clip's start, not the start of every call in its chain.
+    for (const ch of CHANNELS) {
+      const from = state(m?.from, ch.id);
+      if (from !== undefined && (ch.id === 'position' || ch.id === 'value' || cur[ch.id] === undefined)) cur[ch.id] = from;
+    }
+    const start = { ...cur };
+    const after = (ch: Channel) => state(m?.to, ch);
+    const pending = new Map<Channel, Key>();
+    const finish = () => {
+      const progress = a.cls ? endProgress(rate ?? a.args?.rate_func, m?.curve) : 1;
+      for (const key of pending.values()) {
+        // A property has one endpoint per clip, even when several calls change it.
+        if (progress !== undefined && Math.abs(progress - 1) < 1e-8) {
+          if (key.channel !== 'color') key.value = after(key.channel) ?? key.value;
+          if (key.channel === 'position') {
+            const suffix = chainCalls(a.chain ?? '')?.slice(key.call + 1) ?? [];
+            const safe = suffix.every((c) => {
+              const channel = METHODS[c.name]?.channel;
+              if (channel === 'stroke' || channel === 'color' || channel === 'opacity' || channel === 'value') return true;
+              return ['scale', 'rotate'].includes(c.name) && !/\babout_(point|edge)\s*=|\*\*/.test(c.args);
+            });
+            if (!safe) {
+              key.editable = false;
+              key.relative = false;
+              key.measuring = false;
+              key.why = 'Later methods also transform its position; edit the method arguments below';
+            }
+          }
+        } else {
+          const returns = progress !== undefined && Math.abs(progress) < 1e-8;
+          key.value = after(key.channel) ?? (returns ? start[key.channel] : undefined);
+          key.editable = false;
+          key.relative = false;
+          key.measuring = progress === undefined && !m;
+          key.why = returns ? 'This easing returns to the starting value; edit its target arguments below' :
+            progress === undefined ? 'Measure this custom easing to find its ending value' :
+              'This easing ends before or beyond its target; edit its target arguments below';
+        }
+        cur[key.channel] = key.value;
+        keys.push(key);
+      }
     };
     const push = (k: Omit<Key, 'start' | 't' | 'anim' | 'args'>, args: string) => {
       const key: Key = { ...k, args: args.trim(), anim: a.id, start: sp.start, t: sp.end };
       if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…), so its timing is the group\'s' });
-      keys.push(key);
+      pending.set(k.channel, key);
       cur[k.channel] = key.value;
-      touched.add(k.channel);
     };
     if (a.cls === 'Rotate') {
       const deg = evalNumber(rotateAngle(a as Anim));
@@ -218,6 +263,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         value: deg !== null && typeof b === 'number' ? b + toDeg(deg) : undefined,
         editable: deg !== null && typeof b === 'number', why: deg === null ? `The angle is an expression (${rotateAngle(a as Anim)})` : undefined,
       }, rotateAngle(a as Anim));
+      finish();
       return;
     }
     const calls = chainCalls(a.chain ?? '');
@@ -229,7 +275,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
           const v = evalNumber(w.src);
           push({ channel: 'stroke', call: i, method: c.name, value: v ?? after('stroke'), editable: v !== null, why: v === null ? `The value is an expression (${w.src.slice(0, 40)})` : undefined }, c.args);
         }
-        if (!colorArg(c)) return; // set_stroke(width=4): no colour
+        if (!colorArg(c)) return;
       }
       const info = METHODS[c.name];
       if (!info) return;
@@ -246,7 +292,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         why = `.${c.name}(…) places it relative to something else`;
       } else if (ch === 'position') {
         const p = arg ? vec2(arg.src) : null;
-        const b = before('position');
+        const b = cur.position;
         if (info.kind === 'abs') value = p ?? after(ch);
         else if (info.kind === 'rel') value = p && Array.isArray(b) ? [b[0] + p[0], b[1] + p[1]] : after(ch);
         else {
@@ -277,13 +323,14 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         if (!col) [editable, why] = [false, `.${c.name}(…) here doesn't set a colour`];
       } else if (ch === 'value') {
         const v = arg ? evalNumber(arg.src) : null;
-        const b = before('value');
+        const b = cur.value;
         value = info.kind === 'abs' ? v ?? after(ch) : v !== null && typeof b === 'number' ? b + v : after(ch);
         if (v === null) [editable, why] = [false, expr(arg?.src ?? '')];
         else if (info.kind === 'rel' && typeof b !== 'number') [editable, why, measuring] = [false, 'Measuring where it starts…', true];
       }
       push({ channel: ch, call: i, method: c.name, value, editable, why, relative: info.kind === 'other' && ch === 'position', measuring }, c.args);
     });
+    finish();
   };
   const stepsMeasured: Measured = new Map((measured?.steps ?? []).map((x) => [x.id, x as MeasuredClip]));
   let depth = 0; // inside a block (a loop, an if…): the keyframes there are edited by their method's arguments
@@ -311,7 +358,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         const sp = lay.anims.get(a.id);
         if (!sp) continue;
         const nested = a !== top;
-        if (a.cls === 'Rotate' || a.cls === 'animate') read(a, sp, stepMeasured && !nested ? ms.get(a.id) : undefined, nested);
+        if (a.cls === 'Rotate' || a.cls === 'animate') read(a, sp, stepMeasured && !nested ? ms.get(a.id) : undefined, nested, s.args?.rate_func);
       }
     }
   }
@@ -395,28 +442,15 @@ function spliceChain(obj: SceneObject, start: number, end: number, text: string)
  * Set a keyframe's value: rewrite only the argument of the method that sets it, in the style it was written in. A
  * value it already has changes nothing. Returns why not, when it can't.
  */
-export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null, key: Key, value: KeyValue): string | null {
+export function setKeyValue(d: SceneDoc, _lay: Layout, _measured: RunResult | null, key: Key, value: KeyValue): string | null {
   if (!key.editable) return key.why ?? 'This keyframe can only be edited in the code';
   if (same(key.value, value)) return null;
   const a = clipOf(d, key.anim);
   if (!a) return 'Its clip is gone';
-  const obj = objectNamed(d, a.target ?? '');
-  const keys = obj ? keyframes(d, lay, measured, obj.name) : [];
-  const i = keys.findIndex((k) => k.anim === key.anim && k.call === key.call && k.channel === key.channel);
-  const prev = i > 0 ? keys.slice(0, i).filter((k) => k.channel === key.channel).pop() : undefined;
-  const before = (): KeyValue | undefined => {
-    // measured from where the clip starts, unless an earlier call of the same clip set it (.move_to(…).shift(…))
-    if ((key.channel === 'position' || key.channel === 'value') && prev?.anim !== key.anim) {
-      const m = [...(measured?.anims ?? []), ...(measured?.steps ?? [])].find((x) => x.id === key.anim) as { from?: { center?: number[]; value?: number } } | undefined;
-      if (key.channel === 'position' && m?.from?.center) return [m.from.center[0], m.from.center[1]];
-      if (key.channel === 'value' && typeof m?.from?.value === 'number') return m.from.value;
-    }
-    return prev ? prev.value : obj ? baseValue(obj, key.channel) : undefined;
-  };
   if (key.method === 'Rotate' && 'cls' in a) {
-    const b = before();
-    if (typeof b !== 'number' || typeof value !== 'number') return 'Its angle before this is not known';
-    setAngle(a, angleSrc(value - b, rotateAngle(a)));
+    const angle = evalNumber(rotateAngle(a));
+    if (angle === null || typeof key.value !== 'number' || typeof value !== 'number') return 'Its angle before this is not known';
+    setAngle(a, angleSrc(toDeg(angle) + value - key.value, rotateAngle(a)));
     return null;
   }
   const chain = a.chain ?? '';
@@ -437,27 +471,35 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
     return w && typeof value === 'number' ? at(w, num(Math.max(0, value))) : 'Not a width';
   }
   if (!arg) return 'Its value is missing';
-  const b = before();
   if (key.channel === 'position' && Array.isArray(value)) {
-    if (info.kind === 'abs') return at(arg, pointSrc(value, arg.src, evalVector(arg.src)?.[2] ?? 0));
-    if (info.kind === 'x' || info.kind === 'y') return at(arg, num(info.kind === 'x' ? value[0] : value[1]));
-    if (!Array.isArray(b)) return 'Where it starts is not measured yet';
-    return at(arg, pointSrc([value[0] - b[0], value[1] - b[1]], arg.src));
+    if (!Array.isArray(key.value)) return 'Where it ends is not measured yet';
+    if (info.kind === 'x' || info.kind === 'y') {
+      const axis = info.kind === 'x' ? 0 : 1;
+      if (Math.abs(value[1 - axis] - key.value[1 - axis]) > EPS) return `This method only sets ${info.kind}; edit the other coordinate with another method`;
+      const old = evalNumber(arg.src);
+      return old === null ? 'Its coordinate is an expression' : at(arg, num(old + value[axis] - key.value[axis]));
+    }
+    const p = vec2(arg.src);
+    if (!p) return 'Its point is an expression';
+    return at(arg, pointSrc([p[0] + value[0] - key.value[0], p[1] + value[1] - key.value[1]], arg.src, evalVector(arg.src)?.[2] ?? 0));
   }
   if (typeof value !== 'number') return 'Not a number';
   if (key.channel === 'scale') {
-    if (typeof b !== 'number' || !b) return 'Its size before this is not known';
-    return at(arg, num(value / b));
+    const old = evalNumber(arg.src);
+    if (old === null || typeof key.value !== 'number' || !key.value) return 'Its size before this is not known';
+    return at(arg, num(old * value / key.value));
   }
   if (key.channel === 'rotation') {
-    if (typeof b !== 'number') return 'Its angle before this is not known';
-    return at(arg, angleSrc(value - b, arg.src));
+    const old = evalNumber(arg.src);
+    if (old === null || typeof key.value !== 'number') return 'Its angle before this is not known';
+    return at(arg, angleSrc(toDeg(old) + value - key.value, arg.src));
   }
   if (key.channel === 'opacity') return at(arg, num(Math.max(0, Math.min(1, value))));
   if (key.channel === 'value') {
     if (info.kind === 'abs') return at(arg, num(value));
-    if (typeof b !== 'number') return 'Its value before this is not measured yet';
-    return at(arg, num(value - b));
+    const old = evalNumber(arg.src);
+    if (old === null || typeof key.value !== 'number') return 'Its value before this is not measured yet';
+    return at(arg, num(old + value - key.value));
   }
   return 'Not editable';
 }
@@ -512,7 +554,7 @@ export function fixKey(d: SceneDoc, key: Key): string | null {
   return null;
 }
 
-/** Remove a keyframe: the method that sets it (the whole clip when that was all it did; its time stays as a pause). */
+/** Remove all writers of a channel's endpoint; an empty clip keeps its time as a pause. */
 export function deleteKey(d: SceneDoc, lay: Layout, key: Key): string | null {
   const a = clipOf(d, key.anim);
   if (!a) return 'Its clip is gone';
@@ -520,9 +562,22 @@ export function deleteKey(d: SceneDoc, lay: Layout, key: Key): string | null {
     const calls = chainCalls(a.chain ?? '');
     const call = calls?.[key.call];
     if (!calls || !call || call.name !== key.method) return 'The clip changed: try again';
-    if (calls.length > 1) {
-      a.chain = (a.chain ?? '').slice(0, call.at) + (a.chain ?? '').slice(call.end);
-      a.chain = a.chain.replace(/^\s+/, '');
+    const chain = calls.reduceRight((src, c) => {
+      const writes = key.channel === 'stroke' ? c.name === 'set_stroke' && !!widthArg(c)
+        : METHODS[c.name]?.channel === key.channel && (c.name !== 'set_stroke' || !!colorArg(c));
+      if (!writes) return src;
+      // One set_stroke call can set colour, width and opacity. None leaves
+      // just this property unchanged, keeping the other arguments in place.
+      if (c.name === 'set_stroke') {
+        const span = (key.channel === 'stroke' ? widthArg(c) : colorArg(c))!;
+        const others = splitWithSpans(c.args).filter((p) => !(p.start <= span.start && p.start + p.text.length >= span.end));
+        if (others.some((p) => p.text.replace(/^[A-Za-z_]\w*\s*=(?!=)/, '').trim() !== 'None'))
+          return splice(src, c.argStart + span.start, c.argStart + span.end, 'None');
+      }
+      return splice(src, c.at, c.end, '');
+    }, a.chain ?? '').trimStart();
+    if (chain) {
+      a.chain = chain;
       return null;
     }
   }
@@ -579,7 +634,7 @@ export function addKey(d: SceneDoc, measured: RunResult | null, objName: string,
     const busy = (host.anims ?? []).flatMap((x) => [...walk([x])]).find((x) => !x.disabled && x.target === objName);
     if (busy) return { error: `${objName} is already animated in this Play together group (${busy.cls === 'animate' ? `.animate${(busy.chain ?? '').trim().match(/^\.\w+/)?.[0] ?? ''}` : busy.cls}), and manim plays only one animation of an object at a time: edit that keyframe, or put the playhead in a pause` };
     host.anims = [...(host.anims ?? []), clip];
-    if (Math.abs(lay.steps.get(host.id)!.end - t) > EPS || host.args?.run_time !== undefined) setAnimDuration(d, clip.id, t - start);
+    setAnimDuration(d, clip.id, t - start);
     playId = host.id;
   } else if (host) {
     const land = landing(d, lay, Math.max(lay.steps.get(host.id)!.start, t - length), false);
@@ -625,4 +680,3 @@ export function setBaseValue(obj: SceneObject, channel: Channel, value: KeyValue
     else spliceChain(obj, chain.length, chain.length, `.${method}(${text})`);
   }
 }
-
