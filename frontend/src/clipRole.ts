@@ -4,7 +4,7 @@
 // Read from what manim reported was on screen before and after each self.play (RunResult.steps[].before / .after);
 // until it has, guessed from the class name.
 
-import { isMeasured, targetsOf, walk } from './timeline';
+import { animClass, isMeasured, targetsOf, walk } from './timeline';
 import type { Anim, RunResult, SceneDoc } from './types';
 
 export type ClipRole = 'in' | 'out' | 'swap' | 'effect';
@@ -16,7 +16,7 @@ const SWAP = /^(ReplacementTransform|TransformMatching\w*|FadeTransform\w*|Trans
 /** Names an animation refers to: its target(s), and objects named in its arguments (a transform's target). */
 function namesIn(a: Anim): string[] {
   const out = [...targetsOf(a)];
-  for (const v of Object.values(a.args ?? {})) for (const m of v.matchAll(/(^|[^\w.])([A-Za-z_]\w*)/g)) out.push(m[2]);
+  for (const v of [...Object.values(a.args ?? {}), a.src ?? '']) for (const m of v.matchAll(/(^|[^\w.])([A-Za-z_]\w*)/g)) out.push(m[2]);
   return out;
 }
 
@@ -36,7 +36,8 @@ export function clipRoles(doc: SceneDoc, measured: RunResult | null): Map<string
 }
 
 function guessed(a: Anim): ClipRole {
-  return IN.test(a.cls) ? 'in' : OUT.test(a.cls) ? 'out' : SWAP.test(a.cls) ? 'swap' : 'effect';
+  const cls = animClass(a);
+  return IN.test(cls) ? 'in' : OUT.test(cls) ? 'out' : SWAP.test(cls) ? 'swap' : 'effect';
 }
 
 function measuredRole(a: Anim, before: string[], after: string[], idOf: Map<string, string>): ClipRole {

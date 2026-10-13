@@ -684,15 +684,21 @@ export function addAnimation(cls: string, target: string, at?: At): string {
   return a.id;
 }
 
-/** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, or couple / uncouple. */
+/** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, a value, a change, or couple / uncouple. */
 export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: string[]; method?: string; target?: string }): string {
   const step: Step = { id: uid('s'), kind };
   if (kind === 'code') step.code = '# any manim code; every object variable is in scope\n';
   else if (kind === 'apply') {
     step.target = at?.target ?? at?.targets?.[0] ?? state.doc.objects[0]?.name ?? '';
     step.chain = '.shift(RIGHT)';
-  }
-  else if (kind === 'wait') step.args = { duration: '1' };
+  } else if (kind === 'assign') {
+    const used = new Set([...state.doc.objects.map((o) => o.name), ...state.doc.timeline.map((s) => s.target ?? '')]);
+    let n = 1;
+    while (used.has(`value${n}`)) n++;
+    step.target = at?.target ?? `value${n}`;
+    step.op = '=';
+    step.value = '1';
+  } else if (kind === 'wait') step.args = { duration: '1' };
   else if (kind === 'call') {
     step.method = at?.method ?? 'next_section';
     step.args = {};

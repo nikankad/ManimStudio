@@ -11,8 +11,9 @@ what the editor shows:
 * ``add`` / ``remove``: ``self.add(*targets)`` / ``self.remove(*targets)``.
 * ``call``: another method of the scene, ``self.<method>(**args)``: ``self.next_section(...)``,
   ``self.add_sound(...)``, ``self.bring_to_front(...)``, ``ThreeDScene.move_camera(...)``…
-* ``apply``: methods called on an object, ``target.next_to(u, UP).set_color(RED)``: at once, like a jump.
-* ``code``: any Python, run in place.
+* ``apply``: methods called on something, ``target.next_to(u, UP).set_color(RED)``: at once, like a jump.
+* ``assign``: a value given a name or a place, ``k = 2``, ``x += 1``, ``obj.color = RED``.
+* ``code``: any other Python statement, run in place.
 * ``couple`` / ``uncouple``: switch constructions (see construct.py) on or off.
 
 Timing is manim's: a step starts when the one before it ends, a ``self.play`` lasts as long as its
@@ -26,7 +27,7 @@ import uuid
 from collections.abc import Iterator
 
 EPS = 1e-6
-INSTANT = ("add", "remove", "uncouple", "apply")
+INSTANT = ("add", "remove", "uncouple", "apply", "assign")
 
 
 def _id(prefix: str) -> str:

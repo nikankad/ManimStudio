@@ -101,9 +101,10 @@ export interface TemplateInput {
  * The timeline is construct()'s statements, in order (mathengine/timeline.py). Each step is one manim statement:
  * play: self.play(*anims, **args) · wait: self.wait(**args) · add / remove: self.add(*targets) · code: any Python ·
  * couple / uncouple: switch constructions · call: self.<method>(**args), any other method of the scene
- * (next_section, add_sound, move_camera…). A step starts when the one before it ends.
+ * (next_section, add_sound, move_camera…) · apply: target.method(…) · assign: target op value (k = 2, total += x).
+ * A step starts when the one before it ends.
  */
-export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply';
+export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply' | 'assign';
 
 export interface Step {
   id: string;
@@ -121,6 +122,8 @@ export interface Step {
   gap?: boolean; // a blank line before it in the code
   target?: string; // apply: the object (or part of one) its methods are called on
   chain?: string; // apply: the methods, ".next_to(u, UP).set_color(RED)"
+  op?: string; // assign: "=", "+=", "-="…
+  value?: string; // assign: the expression on the right
   written?: Written;
 }
 
@@ -133,7 +136,8 @@ export interface Written {
 /** An animation: cls(target, **args), target.animate(**args).chain, or a composition of `anims`. */
 export interface Anim {
   id: string;
-  cls: string; // "Create", ... or "animate"
+  cls: string; // "Create", ... "animate", or "expr" (any other animation expression, written as `src`)
+  src?: string; // cls === "expr": the expression, "*[FadeOut(m) for m in dots]"
   target: string;
   args: Args;
   chain?: string; // cls === "animate"

@@ -161,6 +161,11 @@ def _numeric(node: ast.AST) -> float | None:
     return None
 
 
+_AUG_OPS = {ast.Add: "+=", ast.Sub: "-=", ast.Mult: "*=", ast.Div: "/=", ast.FloorDiv: "//=", ast.Mod: "%=",
+            ast.Pow: "**=", ast.MatMult: "@=", ast.BitAnd: "&=", ast.BitOr: "|=", ast.BitXor: "^=",
+            ast.LShift: "<<=", ast.RShift: ">>="}
+
+
 def _num(v: float) -> float | int:
     return int(v) if v == int(v) else v
 
@@ -379,10 +384,12 @@ class _Importer:
 
     # ---- statements
     def play(self, call: ast.Call) -> dict | None:
-        anims = [self.animation(a) for a in call.args]
         kw = self.keywords(call)
-        if not anims or any(a is None for a in anims) or kw is None:
+        if not call.args or kw is None:
             return None
+        # an animation built by an expression (a list, a variable, a helper) is a clip of its own, its code as written
+        anims = [self.animation(a) or {"id": _id("a"), "cls": "expr", "target": "", "args": {}, "src": self.s.seg(a)}
+                 for a in call.args]
         return {"id": _id("s"), "kind": "play", "anims": anims, "args": kw}
 
     def wait(self, call: ast.Call) -> dict | None:
@@ -396,9 +403,10 @@ class _Importer:
         return {"id": _id("s"), "kind": "wait", "args": kw}
 
     def add_remove(self, call: ast.Call, kind: str) -> dict | None:
-        if call.keywords or not call.args or not all(isinstance(a, ast.Name) for a in call.args):
+        if call.keywords or not call.args:
             return None
-        return {"id": _id("s"), "kind": kind, "targets": [a.id for a in call.args]}  # type: ignore[attr-defined]
+        # names, or what an expression gives (``*dots``, ``VGroup(a, b)``), as written
+        return {"id": _id("s"), "kind": kind, "targets": [self.s.seg(a) for a in call.args]}
 
     def scene_call(self, call: ast.Call) -> dict | None:
         """``self.next_section(...)``, ``self.add_sound(...)``, ``self.move_camera(...)``: a method of the scene's class."""
@@ -414,8 +422,9 @@ class _Importer:
         return step
 
     def apply(self, stmt: ast.stmt) -> dict | None:
-        """``obj.next_to(u, UP)``, ``group[0].set_color(RED)``, ``self.camera.frame.save_state()``: methods called
-        on one of the scene's objects (or a part of one, or the camera's frame), later in the scene."""
+        """``obj.next_to(u, UP)``, ``group[0].set_color(RED)``, ``self.camera.frame.save_state()``,
+        ``VGroup(a, b).arrange()``, ``Text.set_default(color=BLACK)``: methods called on something (an object, a part
+        of one, the camera's frame, what an expression gives), later in the scene."""
         if not isinstance(stmt, ast.Expr):
             return None
         mc = _method_calls(stmt.value)
@@ -426,12 +435,27 @@ class _Importer:
         while isinstance(base, (ast.Attribute, ast.Subscript)):
             base = base.value
         camera = ast.unparse(root) == "self.camera.frame"
-        if not camera and not (isinstance(base, ast.Name) and base.id in self.known):
-            return None
+        if not camera and isinstance(base, ast.Name) and base.id == "self":
+            return None  # the scene's own methods are statements of their own (play, wait, add…)
         if any(c.func.attr == "animate" for c in calls):  # type: ignore[union-attr]
             return None
         chain = "".join(f".{c.func.attr}({self.call_args(c)})" for c in calls)  # type: ignore[union-attr]
         return {"id": _id("s"), "kind": "apply", "target": self.s.seg(root), "chain": chain}
+
+    def assignment(self, stmt: ast.stmt) -> dict | None:
+        """``k = 2``, ``a, b = f()``, ``x += 1``, ``obj.color = RED``, ``row = make_row(3)``: a value given a name (or
+        a place), editable as its target, operator and value."""
+        if isinstance(stmt, ast.Assign):
+            target, op = " = ".join(self.s.seg(t) for t in stmt.targets), "="
+        elif isinstance(stmt, ast.AugAssign):
+            target, op = self.s.seg(stmt.target), _AUG_OPS.get(type(stmt.op), "")
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target, op = f"{self.s.seg(stmt.target)}: {self.s.seg(stmt.annotation)}", "="
+        else:
+            return None
+        if not op:
+            return None
+        return {"id": _id("s"), "kind": "assign", "target": target, "op": op, "value": self.s.seg(stmt.value)}  # type: ignore[arg-type]
 
     def statement_step(self, stmt: ast.stmt) -> dict | None:
         if (step := self.apply(stmt)) is not None:
@@ -444,7 +468,7 @@ class _Importer:
             return self.add_remove(call, call.func.attr)  # type: ignore[union-attr]
         if (call := _self_call(stmt, *self.scene_methods)) is not None:
             return self.scene_call(call)
-        return None
+        return self.assignment(stmt)
 
     def object_def(self, stmt: ast.stmt) -> tuple[dict, type | None] | None:
         """``name = Ctor(...)`` (optionally followed by method calls on it) of a name not used before."""
@@ -612,6 +636,7 @@ class _Importer:
                     self.notes.append(f"Line {stmt.lineno}: this self.play is kept as code (its animations are built by "
                                       "an expression, such as a list or a variable).")
                 self.keep_as_code(stmt, first)
+                self.flush()  # each statement is a step of its own: it can be moved, disabled, timed
             prev_end = stmt.end_lineno or stmt.lineno
             i += 1
         self.flush()

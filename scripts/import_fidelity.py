@@ -467,6 +467,10 @@ def report(results: list[dict], sources: dict) -> str:
     kinds = collections.Counter()
     for r in imported:
         kinds.update(r.get("code_kinds", {}))
+    steps = collections.Counter()
+    for r in imported:
+        steps.update(r.get("steps", {}))
+    lines += ["## Timeline steps (all imported scenes)", "", ", ".join(f"{n}× {k}" for k, n in steps.most_common()), ""]
     lines += ["## What the importer keeps as code", "", "Statements of construct() kept as code steps, by kind:", ""]
     lines += [f"- {n}× {w}" for w, n in kinds.most_common(15)]
     lines += ["", "The importer's own notes:", ""] + [f"- {n}× {w}" for w, n in notes.most_common(15)] + [""]

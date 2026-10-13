@@ -541,6 +541,10 @@ function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: 
 /** Hover help for the clip settings that aren't manim arguments. */
 const CLIP_HELP: Record<string, TipContent> = {
   cls: { title: 'Animation', text: 'The manim animation this clip plays. Type or pick another class to switch to it. Arguments the new class doesn’t take must be removed below, or the clip shows an error.' },
+  assignTarget: { title: 'Name', text: 'What gets the value: a variable (k), an attribute (self.count) or an item (values[0]). Several names unpack a tuple (a, b).' },
+  assignValue: { title: 'Value', text: 'Any Python expression. It is worked out when the scene runs, at this point in it.' },
+  addExpr: { title: 'Expressions', text: 'Anything else the statement passes: *dots spreads a list, VGroup(a, b) builds a group on the spot.' },
+  exprSrc: { title: 'Animation code', text: 'An animation written as an expression manim works out when the scene runs: a list of animations (*[FadeIn(d) for d in dots]), a function call, a variable. Its length is measured by running the scene.' },
   target: { title: 'Object', text: 'The object this clip animates. Pick another object’s name to animate that one instead; the timing stays the same.' },
   start: {
     title: 'Start',
@@ -646,6 +650,52 @@ function ApplySection({ step }: { step: Step }) {
   );
 }
 
+const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '//=', '%=', '**=', '@=', '|=', '&=', '^=', '<<=', '>>='];
+
+/** An assign step: `target op value`, a variable (or an attribute, an item…) later statements read. */
+function AssignSection({ step }: { step: Step }) {
+  const op = step.op ?? '=';
+  return (
+    <section>
+      <p className="muted small">Runs here, between the statements around it, and takes no time. Steps after it can use the value.</p>
+      <label className="param"><span className="pname"><Tip tip={CLIP_HELP.assignTarget}>Name</Tip></span>
+        <Field className="mono" value={step.target ?? ''} ariaLabel="Name" onChange={(v) => setStep(step.id, (s) => void (s.target = v), 'target')} />
+      </label>
+      <label className="param"><span className="pname">Operation</span>
+        <select className="field mono" aria-label="Operation" value={op} onChange={(e) => setStep(step.id, (s) => void (s.op = e.target.value), 'op')}>
+          {(ASSIGN_OPS.includes(op) ? ASSIGN_OPS : [op, ...ASSIGN_OPS]).map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </label>
+      <h4><Tip tip={CLIP_HELP.assignValue}>Value</Tip></h4>
+      <CodeArea value={step.value ?? ''} minLines={1} onChange={(v) => setStep(step.id, (s) => void (s.value = v), 'value')} />
+    </section>
+  );
+}
+
+/** Targets of self.add / self.remove that aren't object names (`*dots`, `VGroup(a, b)`): each one an expression. */
+function ExtraTargets({ step, names }: { step: Step; names: Set<string> }) {
+  const targets = step.targets ?? [];
+  const set = (i: number, v: string | null) => setStep(step.id, (s) => {
+    const t = [...(s.targets ?? [])];
+    if (v === null) t.splice(i, 1);
+    else if (i >= t.length) t.push(v);
+    else t[i] = v;
+    s.targets = t;
+  }, 'targets:' + i);
+  return (
+    <>
+      <h4><Tip tip={CLIP_HELP.addExpr}>Expressions</Tip></h4>
+      {targets.map((t, i) => names.has(t) ? null : (
+        <div key={i} className="row">
+          <Field className="mono" value={t} ariaLabel={`Expression ${i + 1}`} onChange={(v) => set(i, v)} />
+          <button className="x-btn" title="Remove it" aria-label={`Remove ${t}`} onClick={() => set(i, null)}>×</button>
+        </div>
+      ))}
+      <div className="row"><button className="ghost small" title="Add an expression (*dots, VGroup(a, b), group[0]…)" onClick={() => set(targets.length, 'VGroup()')}>+ expression</button></div>
+    </>
+  );
+}
+
 /** Effect Controls of a statement: self.play, self.wait, self.add / self.remove, any other scene method, code, couple / uncouple. */
 function StepInspector({ step }: { step: Step }) {
   const objects = useStore((s) => s.doc.objects);
@@ -669,7 +719,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
+      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once', assign: 'Value' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />
@@ -713,6 +763,7 @@ function StepInspector({ step }: { step: Step }) {
       )}
 
       {step.kind === 'apply' && <ApplySection step={step} />}
+      {step.kind === 'assign' && <AssignSection step={step} />}
 
       {(step.kind === 'add' || step.kind === 'remove') && (
         <section>
@@ -723,6 +774,7 @@ function StepInspector({ step }: { step: Step }) {
               <span className="mono">{o.name}</span>
             </label>
           ))}
+          <ExtraTargets step={step} names={new Set(objects.map((o) => o.name))} />
         </section>
       )}
 
@@ -831,6 +883,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
   const list = parent?.anims ?? step.anims ?? [];
   const at = list.indexOf(anim);
   const setTarget = (v: string) => setAnim(anim.id, (a) => void (a.target = v), 'target');
+  if (anim.cls === 'expr') return <ExprAnimInspector r={r} />;
   return (
     <div className="pad">
       <div className="insp-head">
@@ -882,6 +935,36 @@ function AnimInspector({ r }: { r: AnimRef }) {
       {plain && (
         <ArgsEditor params={(sig?.params ?? []).filter((p) => p.name !== 'run_time')} args={anim.args} onChange={(k, v) => setAnim(anim.id, (a) => setArg(a.args, k, v), 'arg:' + k)} />
       )}
+      <ClipActions id={anim.id} />
+    </div>
+  );
+}
+
+/** An animation written as an expression (`*[FadeOut(m) for m in dots]`, `make_anim(k)`): edited as code. */
+function ExprAnimInspector({ r }: { r: AnimRef }) {
+  const { anim, step, parent } = r;
+  const list = parent?.anims ?? step.anims ?? [];
+  const at = list.indexOf(anim);
+  return (
+    <div className="pad">
+      <h3>{animLabel(anim).name === 'code' ? 'Animation code' : `${animLabel(anim).name} (code)`}</h3>
+      <Diagnostics id={anim.id} />
+      <section className="fx-section">
+        <h4>Timing</h4>
+        <TimingRow id={anim.id} step={false} />
+        <p className="muted small"><Tip tip={CLIP_HELP.measured}>How long it runs</Tip> is measured by running the scene.</p>
+        <div className="fx-row"><span>In</span>
+          <button className="ghost small mono" onClick={() => selectClips([parent?.id ?? step.id])} title="Select it">{parent ? parent.cls : 'self.play'}</button>
+          <span className="muted small">{parent ? `#${at + 1} of ${list.length}` : `V${at + 1}`}</span>
+          <button className="x-btn" disabled={at <= 0} title="Earlier" onClick={() => updateDoc((d) => reorder(d, anim.id, -1))}>↑</button>
+          <button className="x-btn" disabled={at >= list.length - 1} title="Later" onClick={() => updateDoc((d) => reorder(d, anim.id, 1))}>↓</button>
+        </div>
+        <EnabledRow id={anim.id} disabled={anim.disabled} />
+      </section>
+      <section>
+        <h4><Tip tip={CLIP_HELP.exprSrc}>Animation code</Tip></h4>
+        <CodeArea value={anim.src ?? ''} minLines={2} onChange={(v) => setAnim(anim.id, (a) => void (a.src = v), 'src')} />
+      </section>
       <ClipActions id={anim.id} />
     </div>
   );

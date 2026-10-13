@@ -117,6 +117,8 @@ export function layout(doc: SceneDoc, measured: RunResult | null): Layout {
           const am = !a.disabled && m ? ma.get(a.id) : undefined;
           let span: Span;
           if (am && m) span = { start: t + (am.start - m.start), end: t + (am.end - m.start), curve: am.curve };
+          // `*[FadeOut(m) for m in dots]`: animations manim makes as it runs, measured together as their self.play
+          else if (m && top && a.cls === 'expr' && !a.disabled) span = { start: t, end: t + dur };
           else {
             const d = top && playRt !== undefined && !a.disabled ? playRt : animEstimate(a);
             span = { start: cursor, end: cursor + d, estimated: true };
@@ -213,13 +215,19 @@ export function targetsOf(a: Anim): string[] {
 
 const STRING = /([rRbBuUfF]{0,2})("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g;
 
+/** The animation class an expression builds ("FadeOut" of `*[FadeOut(m) for m in dots]`), else "code". */
+export const exprName = (src: string) => src.match(/([A-Z]\w*)\s*\(/)?.[1] ?? 'code';
+
+/** The class an animation is, or builds (an expression animation). */
+export const animClass = (a: Anim) => (a.cls === 'expr' ? exprName(a.src ?? '') : a.cls);
+
 /** The variable an expression starts from: `group` of `group[0].submobjects`. */
 export const rootName = (expr: string) => expr.trim().match(/^[A-Za-z_]\w*/)?.[0] ?? '';
 
 /** Every identifier a step's code reads (targets, arguments, chains, code), outside string literals. */
 export function namesUsed(s: Step): Set<string> {
-  const texts: string[] = [...(s.targets ?? []), s.code ?? '', s.target ?? '', s.chain ?? '', ...Object.values(s.args ?? {})];
-  for (const a of walk(s.anims)) texts.push(a.target ?? '', a.chain ?? '', ...Object.values(a.args ?? {}));
+  const texts: string[] = [...(s.targets ?? []), s.code ?? '', s.target ?? '', s.chain ?? '', s.value ?? '', ...Object.values(s.args ?? {})];
+  for (const a of walk(s.anims)) texts.push(a.target ?? '', a.chain ?? '', a.src ?? '', ...Object.values(a.args ?? {}));
   return new Set(texts.flatMap((t) => t.replace(STRING, '').match(/[A-Za-z_]\w*/g) ?? []));
 }
 
@@ -657,10 +665,12 @@ export function renameInTimeline(d: SceneDoc, names: Map<string, string>) {
     if (s.code) s.code = rep(s.code);
     if (s.target) s.target = rep(s.target);
     if (s.chain) s.chain = rep(s.chain);
+    if (s.value) s.value = rep(s.value);
     for (const k in s.args ?? {}) s.args![k] = rep(s.args![k]);
     for (const a of walk(s.anims)) {
       a.target = rep(a.target ?? '');
       if (a.chain) a.chain = rep(a.chain);
+      if (a.src) a.src = rep(a.src);
       for (const k in a.args ?? {}) a.args[k] = rep(a.args[k]);
     }
   }

@@ -119,7 +119,7 @@ def test_statements_become_steps_objects_and_code():
     assert objs["square"]["chain"] == ".shift(RIGHT * 2).set_fill(RED, opacity=0.5)"
     # Objects are made where the code makes them: dots after the move, t after the Transform.
     kinds = [s["kind"] for s in doc["timeline"]]
-    assert kinds == ["play", "play", "wait", "play", "play", "play", "code", "add", "play", "add", "play", "remove", "code", "wait"]
+    assert kinds == ["play", "play", "wait", "play", "play", "play", "code", "add", "play", "add", "play", "remove", "play", "wait"]
     steps = doc["timeline"]
     assert "after" not in objs["circle"] and objs["dots"]["after"] == steps[3]["id"] and objs["t"]["after"] == steps[8]["id"]
     play = steps[1]
@@ -135,7 +135,8 @@ def test_statements_become_steps_objects_and_code():
     assert steps[6]["code"] == "for d in dots:\n    d.set_color(GREEN)"
     assert [(a["cls"], a["target"], a["args"]) for a in steps[8]["anims"]] == [("Transform", "circle", {"*": "square"}),
                                                                                ("LaggedStartMap", "dots", {"*": "FadeOut"})]
-    assert any("Line" in n and "kept as code" in n for n in res.notes)
+    # animations an expression builds are clips of their own, their code as written
+    assert [(a["cls"], a["src"]) for a in steps[12]["anims"]] == [("expr", "*[FadeOut(m) for m in [title, circle]]")]
 
 
 def test_codegen_places_objects_where_they_are_made():
@@ -439,10 +440,49 @@ def test_methods_called_later_become_steps_that_can_be_edited():
     assert r.error is None, r.error
 
 
-def test_a_call_on_something_unknown_stays_code():
-    src = LATER.replace("        g[0].set_color(RED)\n", "        helper.set_color(RED)\n")
+def test_calls_on_anything_and_values_become_steps():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        k = 2
+        k += 1
+        a, b = Dot(), Square()
+        row = VGroup(*[Dot() for _ in range(3)])
+        Text.set_default(color=YELLOW)
+        VGroup(a, b).arrange(RIGHT, buff=k)
+        make = lambda n: VGroup(*[Circle() for _ in range(n)])
+        make(2).shift(UP)
+        self.add(*row, VGroup(a, b))
+        self.play(*[FadeIn(m) for m in row], FadeIn(a), run_time=k)
+        self.remove(a)
+        Text.set_default()
+'''
     doc = import_code(src).doc
-    assert not any(s.get("target") == "helper" for s in doc["timeline"] if s.get("kind") == "apply")
+    rows = [(s["kind"], s.get("target") or s.get("targets"), s.get("op"), s.get("value") or s.get("chain")) for s in doc["timeline"]]
+    assert rows == [
+        ("assign", "k", "=", "2"), ("assign", "k", "+=", "1"), ("assign", "a, b", "=", "Dot(), Square()"),
+        ("apply", "Text", None, ".set_default(color=YELLOW)"), ("apply", "VGroup(a, b)", None, ".arrange(RIGHT, buff=k)"),
+        ("assign", "make", "=", "lambda n: VGroup(*[Circle() for _ in range(n)])"), ("apply", "make(2)", None, ".shift(UP)"),
+        ("add", ["*row", "VGroup(a, b)"], None, None), ("play", None, None, None), ("remove", ["a"], None, None),
+        ("apply", "Text", None, ".set_default()")], rows
+    assert [o["name"] for o in doc["objects"]] == ["row"]
+    play = doc["timeline"][8]
+    assert [(a["cls"], a.get("src"), a["target"]) for a in play["anims"]] == [("expr", "*[FadeIn(m) for m in row]", ""), ("FadeIn", None, "a")]
+    out = codegen.generate(doc, latex=True).source
+    assert _construct(out) == _construct(src), out
+    assert import_code(out, base=doc).doc == doc  # read back: the same elements, the same ids
+    # the measuring run never evaluates a target twice when it runs code (make(2) would make another group)
+    preview = codegen.generate(doc, preview=True, latex=True).source
+    assert "_me_state" not in "\n".join(ln for ln in preview.splitlines() if "make(2)" in ln or "VGroup(a, b)" in ln)
+    assert preview.count("make(2)") == 1
+    r = runtime.run(doc, render=False)
+    assert r.error is None, r.error
+    # edited in the program: written the usual way
+    doc["timeline"][1]["value"] = "4"
+    doc["timeline"][1]["op"] = "*="
+    assert "        k *= 4\n" in codegen.generate(doc, latex=True).source
 
 
 WRAPPED = '''from manim import *

@@ -1452,7 +1452,69 @@ def code_highlight(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def computed_steps(b):
+    """What the script works out as it runs is on the timeline too: a value (k = 2, total += k) is a step of its own,
+    an animation built by an expression (*[FadeOut(m) for m in …]) is a clip edited as code, and self.add of an
+    expression keeps it. Each one is edited in the inspector and the code follows."""
+    code = ("from manim import *\n\n\nclass C(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+            "        k = 2\n        self.add(a, VGroup(b))\n        self.play(a.animate.shift(RIGHT * k))\n"
+            "        self.play(*[FadeOut(m) for m in [a, b]])\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "computed.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        assert pg.locator(".tl-lanes .clip.step.code").count() == 0, pg.locator(".tl-lanes .clip.step").all_inner_texts()
+
+        def source():
+            pg.wait_for_timeout(300)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        assert source() == code
+        # the value: its own diamond, side by side with self.add at the same moment, both clickable
+        value = pg.locator(".tl-lanes .clip.step.assign")
+        add = pg.locator(".tl-lanes .clip.step.add")
+        assert value.count() == 1 and add.count() == 1
+        vb, ab = value.bounding_box(), add.bounding_box()
+        assert ab["x"] >= vb["x"] + vb["width"] - 1, (vb, ab)
+        value.click()
+        assert pg.locator(".inspector h3", has_text="Value").count() == 1
+        pg.get_by_label("Operation").select_option("+=")
+        assert "        k += 2\n" in source()
+        pg.get_by_label("Operation").select_option("=")
+
+        # self.add of an expression: the object is ticked, the expression is its own field
+        add.click()
+        expr = pg.get_by_label("Expression 2")
+        assert expr.input_value() == "VGroup(b)", expr.input_value()
+        expr.fill("VGroup(b).shift(UP)")
+        expr.press("Enter")
+        assert "        self.add(a, VGroup(b).shift(UP))\n" in source()
+
+        # the computed animation: a clip named after what it builds, its code edited as code
+        clip = pg.locator(".tl-lanes .clip.anim", has_text="FadeOut")
+        assert clip.count() == 1, pg.locator(".tl-lanes .clip.anim").all_inner_texts()
+        clip.click()
+        assert pg.locator(".inspector h3", has_text="FadeOut (code)").count() == 1
+        area = pg.locator(".inspector textarea").first
+        assert area.input_value() == "*[FadeOut(m) for m in [a, b]]", area.input_value()
+        area.fill("*[FadeOut(m, shift=DOWN) for m in [a, b]]")
+        src = source()
+        assert "        self.play(*[FadeOut(m, shift=DOWN) for m in [a, b]])\n" in src, src
+
+        # a new value from the toolbar
+        pg.get_by_role("button", name="+ Value").click()
+        assert pg.locator(".inspector h3", has_text="Value").count() == 1
+        assert "value1 = 1" in source()
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

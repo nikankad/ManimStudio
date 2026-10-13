@@ -111,6 +111,19 @@ def _primary(expr: str) -> str:
     return f"({expr})"
 
 
+def _pure(expr: str) -> bool:
+    """Whether evaluating ``expr`` only reads (names, attributes, items): safe to evaluate again to measure it."""
+    try:
+        node = ast.parse(expr, mode="eval").body
+    except SyntaxError:
+        return False
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        if isinstance(node, ast.Subscript) and not isinstance(node.slice, (ast.Constant, ast.Name, ast.UnaryOp)):
+            return False
+        node = node.value
+    return isinstance(node, ast.Name)
+
+
 def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None = None, tag: bool = False,
               skip: set[str] = frozenset()) -> str:
     """Python expression for one animation, as written in ``self.play(...)``.
@@ -120,6 +133,9 @@ def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None =
     cls = (anim.get("cls") or "").strip()
     target = (anim.get("target") or "").strip()
     args = anim.get("args") or {}
+    if cls == "expr":  # built by an expression (``*[FadeIn(m) for m in dots]``, a variable): as written
+        src = (anim.get("src") or "").strip()
+        return f"self._me_tag({src}, {anim['id']!r})" if tag and src and not src.startswith("*") else src
     if cls == "TransformTerms" and doc is not None and plan is not None:
         expr = construct.terms_expr(anim, doc, plan)
     elif cls == "animate":
@@ -671,10 +687,15 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
         if not target or not chain:
             return []
         line = f"{_primary(target)}{chain}"
-        if preview:  # its object before and after, for the keyframe editor (the measuring run only)
+        if preview and _pure(target):  # its object before and after, for the keyframe editor (the measuring run only)
             return [(f"self._me_state({step['id']!r}, {_primary(target)}, 0)", ref), (line, ref),
                     (f"self._me_state({step['id']!r}, {_primary(target)}, 1)", ref)]
         return [(line, ref)]
+    if kind == "assign":
+        target, op, value = (step.get("target") or "").strip(), (step.get("op") or "=").strip(), (step.get("value") or "").strip()
+        if not target or not value:
+            return []
+        return [(line, ref) for line in f"{target} {op} {value}".splitlines()]
     if kind == "code":
         body = textwrap.dedent(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []

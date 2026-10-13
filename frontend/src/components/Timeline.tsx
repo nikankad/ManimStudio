@@ -6,6 +6,7 @@ import {
 import {
   canTrimStep, EPS, findAnim, findStep, landing, layout, markerTime, moveAnims, moveSteps, retime,
   type Layout, type Retime,
+  exprName,
 } from '../timeline';
 import type { Anim, Marker, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
@@ -52,6 +53,7 @@ const STEP_COLORS: Record<Step['kind'], string> = {
   uncouple: '#8a6a2f',
   call: '#4f5b2f',
   apply: '#5a4f7a',
+  assign: '#4a5f6b',
 };
 
 type Drag =
@@ -396,7 +398,7 @@ export function Timeline() {
     if (!ids) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const sp = lay.anims.get(a.id)!;
-    if (rect.right - e.clientX < 7 && rect.width > 10) return setDrag({ mode: 'trim-anim', id: a.id, x0: e.clientX, dur0: sp.end - sp.start, dur: sp.end - sp.start });
+    if (a.cls !== 'expr' && rect.right - e.clientX < 7 && rect.width > 10) return setDrag({ mode: 'trim-anim', id: a.id, x0: e.clientX, dur0: sp.end - sp.start, dur: sp.end - sp.start });
     // Only whole animations of a self.play move; selected statements and nested animations stay.
     const top = ids.filter((id) => { const r = findAnim(doc, id); return r && !r.parent; });
     if (!top.length || step.disabled) return;
@@ -542,12 +544,30 @@ export function Timeline() {
     );
   };
 
-  const renderStep = (s: Step, l: Layout) => {
+  // Statements that take no time at the same moment (k = 2, label.next_to(…), self.add(…)…) are drawn side by side,
+  // in code order, so each diamond can be picked.
+  const fanned = (steps: Step[], l: Layout) => {
+    const at = new Map<string, number>();
+    let right = -Infinity;
+    for (const s of steps) {
+      const sp = l.steps.get(s.id);
+      if (!sp) continue;
+      const w = (sp.end - sp.start) * pps;
+      if (s.kind === 'wait' && !s.disabled) continue;
+      if (w < 6 || s.disabled) {
+        const left = Math.max(0, x(sp.start) - 7, right);
+        at.set(s.id, left);
+        right = left + 14;
+      } else right = -Infinity;
+    }
+    return at;
+  };
+  const renderStep = (s: Step, l: Layout, fan: Map<string, number>) => {
     const sp = l.steps.get(s.id)!;
     const w = (sp.end - sp.start) * pps;
     const pause = s.kind === 'wait' && !s.disabled;
     const instant = !pause && (w < 6 || !!s.disabled);
-    const left = x(sp.start);
+    const left = instant ? (fan.get(s.id) ?? x(sp.start) - 7) + 7 : x(sp.start);
     if (left + w < -40 || left > laneW + 40) return null;
     const label = stepLabel(s);
     const shown = stepText(s);
@@ -619,6 +639,7 @@ export function Timeline() {
           <button className="ghost small" onClick={() => addStep('add', { targets: objNames() })} title="self.add(...) at the playhead: objects appear without an animation">+ Add</button>
           <button className="ghost small" onClick={() => addStep('remove', { targets: objNames() })} title="self.remove(...) at the playhead: objects disappear without an animation">+ Remove</button>
           <button className="ghost small" onClick={() => addStep('apply', { target: objNames()[0] })} title="Call methods on an object at the playhead (obj.next_to(…), .set_color(…)…): it changes at once, without an animation">+ Change</button>
+          <button className="ghost small" onClick={() => addStep('assign')} title="Set a value at the playhead (k = 2, total += 1): a variable later steps can use">+ Value</button>
           <button className="ghost small" onClick={() => addStep('uncouple', { targets: objNames() })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
           <button className="ghost small" onClick={() => addStep('couple', { targets: objNames() })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
           <select className="inline scene-call" value="" title="Call another method of the scene at the playhead: sections, sounds, subcaptions, the camera (ThreeDScene)…"
@@ -711,7 +732,11 @@ export function Timeline() {
                 </div>
               );
             })}
-            {sdoc.timeline.filter((s) => !(s.kind === 'play' && !s.disabled)).map((s) => renderStep(s, slay))}
+            {(() => {
+              const steps = sdoc.timeline.filter((s) => !(s.kind === 'play' && !s.disabled));
+              const fan = fanned(steps, slay);
+              return steps.map((s) => renderStep(s, slay, fan));
+            })()}
             {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).flatMap((s) => (s.anims ?? []).map((a, i) => renderAnim(a, s, i, slay)))}
             {drag?.mode === 'marquee' && (
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
@@ -891,6 +916,7 @@ const firstLine = (code: string) => code.split('\n').map((l) => l.trim()).find((
 
 /** How an animation reads on the timeline, and its code. */
 export function animLabel(a: Anim): { name: string; sub: string; title: string } {
+  if (a.cls === 'expr') return { name: exprName(a.src ?? ''), sub: (a.src ?? '').split('\n').join(' '), title: a.src ?? '' };
   if (a.cls === 'animate') {
     const chain = (a.chain ?? '').split('\n').join('').trim();
     return { name: `.animate${chain.match(/^\.\w+/)?.[0] ?? ''}`, sub: a.target, title: `${a.target}.animate${chain}` };
@@ -901,6 +927,7 @@ export function animLabel(a: Anim): { name: string; sub: string; title: string }
 
 /** What a clip shows: the object first, then what happens to it ("circle · Create"). */
 export function clipText(a: Anim): { name: string; sub: string } {
+  if (a.cls === 'expr') return { name: exprName(a.src ?? ''), sub: (a.src ?? '').split('\n').join(' ') };
   if (a.anims) return { name: a.cls, sub: `${a.anims.length} animation${a.anims.length === 1 ? '' : 's'}` };
   if (a.cls === 'animate') return { name: a.target, sub: `.animate${(a.chain ?? '').split('\n').join('').trim().match(/^\.\w+/)?.[0] ?? ''}` };
   return a.target ? { name: a.target, sub: a.cls } : { name: a.cls, sub: a.args['*'] || '' };
@@ -928,6 +955,8 @@ export function stepText(s: Step): { name: string; sub: string } {
       return { name: 'Remove', sub: targets };
     case 'apply':
       return { name: s.target ?? '', sub: firstCall(s.chain ?? '') };
+    case 'assign':
+      return { name: s.target ?? '', sub: `${s.op ?? '='} ${firstLine(s.value ?? '')}` };
     default: {
       const l = stepLabel(s);
       return { name: l.name, sub: l.sub };
@@ -958,6 +987,8 @@ export function stepLabel(s: Step): { name: string; sub: string; title: string }
     }
     case 'apply':
       return { name: s.target ?? '', sub: firstCall(s.chain ?? ''), title: `${s.target ?? ''}${(s.chain ?? '').trim()}` };
+    case 'assign':
+      return { name: s.target ?? '', sub: `${s.op ?? '='} ${firstLine(s.value ?? '')}`, title: `${s.target ?? ''} ${s.op ?? '='} ${s.value ?? ''}` };
     default:
       return { name: s.kind === 'add' ? '+ add' : '− remove', sub: targets, title: `self.${s.kind}(${targets})` };
   }
@@ -985,6 +1016,7 @@ const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['
 
 function animColor(a: Anim, anims?: { name: string; category: string }[]): string {
   if (a.cls === 'animate') return '#2f5c8c';
+  if (a.cls === 'expr') return CAT_COLORS[anims?.find((x) => x.name === exprName(a.src ?? ''))?.category ?? ''] ?? '#4a5a6e';
   if (a.anims) return CAT_COLORS.Composition;
   if (/^(FadeOut|Uncreate|Unwrite|ShrinkToCenter|FadeOutAndShift)/.test(a.cls)) return '#7a4545';
   return CAT_COLORS[anims?.find((x) => x.name === a.cls)?.category ?? ''] ?? '#3c5a75';
