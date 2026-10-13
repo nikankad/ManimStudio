@@ -667,7 +667,8 @@ def _with(prefix: str, rest: str) -> str:
 
 
 def _join_chain(chain: str) -> str:
-    chain = " ".join(line.strip() for line in (chain or "").splitlines() if line.strip())
+    lines = [line.strip() for line in (chain or "").splitlines() if line.strip()]
+    chain = "".join(("" if not k or line.startswith(".") else " ") + line for k, line in enumerate(lines))  # .a() .b(): .a().b()
     if chain and not chain.startswith("."):
         chain = "." + chain
     return chain

@@ -197,7 +197,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const chainSig = useSignature(chainCls);
   const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
   const isEquation = obj.ctor === 'MathTex' || obj.ctor === 'Tex';
-  const content = TEXT_CTORS.has(obj.ctor) && !isEquation ? unquote(obj.args['*'] ?? '') : null;
+  const content = TEXT_CTORS.has(obj.ctor) && !isEquation && obj.link?.kind !== 'text' ? unquote(obj.args['*'] ?? '') : null; // a text with values is edited in Relationship
   const terms = useStore((s) => (s.selection?.kind === 'object' && s.selection.id === obj.id ? s.selection.terms : undefined));
   const isVector = sig?.vector ?? true;
   const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
@@ -235,7 +235,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
       {isEquation && <EquationSection obj={obj} />}
       <GeometrySection obj={obj} />
 
-      {!isEquation && (content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
+      {!isEquation && obj.link?.kind !== 'text' && (content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
         <section>
           <h4>{obj.ctor === 'Text' || obj.ctor === 'MarkupText' || obj.ctor === 'Paragraph' ? 'Text' : 'LaTeX'}</h4>
           <Field multiline className="mono content" value={content ?? ''} onChange={(v) => setObj(obj.id, (o) => void (o.args['*'] = quote(v)), 'content')} />
