@@ -5,7 +5,7 @@
 // Times come from manim (RunResult: when each statement and animation ran); a step that hasn't been measured
 // yet (just added) is estimated from its arguments until the next measurement arrives.
 
-import { renameIdentifiers } from './pyparse';
+import { closing, renameIdentifiers } from './pyparse';
 import type { Anim, Args, Marker, MarkerCategory, RunResult, SceneDoc, Step } from './types';
 
 export const EPS = 1e-6;
@@ -307,6 +307,7 @@ export interface Rule {
   object: boolean;
   name: string;
   what: string; // "always_redraw", ".add_updater(…)"
+  code: string; // the updater: what .add_updater(…) or always_redraw(…) is given
   start: number;
   end: number;
   row: number;
@@ -325,12 +326,32 @@ export function rules(doc: SceneDoc, lay: Layout): Rule[] {
     open.set(r.name, [...(open.get(r.name) ?? []), rule]);
   };
   const made = (o: SceneDoc['objects'][number]) => (o.after ? lay.steps.get(o.after)?.end ?? 0 : 0);
+  // manim runs an updater only while its object is in the scene: from its first animation or self.add
+  const shown = (name: string, from: number) => {
+    for (const s of doc.timeline) {
+      if (s.disabled) continue;
+      const sp = lay.steps.get(s.id);
+      if (s.kind === 'add' && sp && sp.start >= from - EPS && (s.targets ?? []).includes(name)) return sp.start;
+      for (const a of walk(s.anims)) {
+        const at = lay.anims.get(a.id)?.start;
+        if (at !== undefined && at >= from - EPS && rootName(a.target ?? '') === name) return at;
+      }
+    }
+    return from;
+  };
+  const given = (chain: string) => {
+    const at = chain.search(ADDS);
+    if (at < 0) return '';
+    const open = chain.indexOf('(', at);
+    const close = closing(chain, open);
+    return close > open ? chain.slice(open + 1, close).trim() : '';
+  };
   const objectsAfter = new Map<string, SceneDoc['objects']>();
   for (const o of doc.objects) objectsAfter.set(o.after ?? '', [...(objectsAfter.get(o.after ?? '') ?? []), o]);
   const objectRules = (list: SceneDoc['objects'] | undefined) => {
     for (const o of list ?? []) {
-      if (o.ctor === 'always_redraw' || o.ctor === 'always') begin({ id: o.id, object: true, name: o.name, what: o.ctor, start: made(o) });
-      else if (ADDS.test(o.chain ?? '')) begin({ id: o.id, object: true, name: o.name, what: '.add_updater(…)', start: made(o) });
+      if (o.ctor === 'always_redraw' || o.ctor === 'always') begin({ id: o.id, object: true, name: o.name, what: o.ctor, code: o.args['*'] ?? '', start: shown(o.name, made(o)) });
+      else if (ADDS.test(o.chain ?? '')) begin({ id: o.id, object: true, name: o.name, what: '.add_updater(…)', code: given(o.chain ?? ''), start: shown(o.name, made(o)) });
     }
   };
   objectRules(objectsAfter.get(''));
@@ -343,7 +364,7 @@ export function rules(doc: SceneDoc, lay: Layout): Rule[] {
         for (const r of open.get(name) ?? []) r.end = Math.min(r.end, sp.start);
         open.delete(name);
       }
-      if (ADDS.test(chain) && !CLEARS.test(chain.slice(chain.search(ADDS)))) begin({ id: s.id, object: false, name, what: '.add_updater(…)', start: sp.start });
+      if (ADDS.test(chain) && !CLEARS.test(chain.slice(chain.search(ADDS)))) begin({ id: s.id, object: false, name, what: '.add_updater(…)', code: given(chain.slice(chain.search(ADDS))), start: sp.start });
     }
     objectRules(objectsAfter.get(s.id));
   }

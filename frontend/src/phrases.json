@@ -111,12 +111,74 @@
     "everything": "{anim} everything",
     "each": "{anim} each of {iter}"
   },
+  "updaters": {
+    "move_to": "keeps moving to {1|point_or_mobject}",
+    "next_to": "stays {2|direction:side=RIGHT} {1|mobject_or_point}",
+    "become": "redrawn every frame",
+    "set_value": "keeps the value {1|value}",
+    "rotate": "keeps turning",
+    "shift": "keeps moving {1:move}",
+    "set_color": "keeps the color {1|color}",
+    "always_redraw": "redrawn every frame",
+    "set_x": "keeps x at {1|x}",
+    "set_y": "keeps y at {1|y}",
+    "other": "updates every frame"
+  },
   "lists": {
-    "side": { "UP": "above", "DOWN": "below", "LEFT": "left of", "RIGHT": "right of", "UL": "above left of", "UR": "above right of", "DL": "below left of", "DR": "below right of" },
-    "edge": { "UP": "top edge", "DOWN": "bottom edge", "LEFT": "left edge", "RIGHT": "right edge" },
-    "corner": { "UL": "top-left", "UR": "top-right", "DL": "bottom-left", "DR": "bottom-right" },
-    "move": { "UP": "up", "DOWN": "down", "LEFT": "left", "RIGHT": "right", "UL": "up-left", "UR": "up-right", "DL": "down-left", "DR": "down-right" },
-    "arrange": { "RIGHT": "in a row", "LEFT": "in a row", "DOWN": "in a column", "UP": "in a column" },
-    "words": { "UP": "up", "DOWN": "down", "LEFT": "left", "RIGHT": "right", "UL": "up-left", "UR": "up-right", "DL": "down-left", "DR": "down-right", "ORIGIN": "the center", "PI": "π", "TAU": "τ", "True": "yes", "False": "no", "None": "nothing", "self.mobjects": "everything on screen" }
+    "side": {
+      "UP": "above",
+      "DOWN": "below",
+      "LEFT": "left of",
+      "RIGHT": "right of",
+      "UL": "above left of",
+      "UR": "above right of",
+      "DL": "below left of",
+      "DR": "below right of"
+    },
+    "edge": {
+      "UP": "top edge",
+      "DOWN": "bottom edge",
+      "LEFT": "left edge",
+      "RIGHT": "right edge"
+    },
+    "corner": {
+      "UL": "top-left",
+      "UR": "top-right",
+      "DL": "bottom-left",
+      "DR": "bottom-right"
+    },
+    "move": {
+      "UP": "up",
+      "DOWN": "down",
+      "LEFT": "left",
+      "RIGHT": "right",
+      "UL": "up-left",
+      "UR": "up-right",
+      "DL": "down-left",
+      "DR": "down-right"
+    },
+    "arrange": {
+      "RIGHT": "in a row",
+      "LEFT": "in a row",
+      "DOWN": "in a column",
+      "UP": "in a column"
+    },
+    "words": {
+      "UP": "up",
+      "DOWN": "down",
+      "LEFT": "left",
+      "RIGHT": "right",
+      "UL": "up-left",
+      "UR": "up-right",
+      "DL": "down-left",
+      "DR": "down-right",
+      "ORIGIN": "the center",
+      "PI": "π",
+      "TAU": "τ",
+      "True": "yes",
+      "False": "no",
+      "None": "nothing",
+      "self.mobjects": "everything on screen"
+    }
   }
 }

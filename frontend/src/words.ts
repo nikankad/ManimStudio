@@ -7,8 +7,8 @@ import DEFAULTS from './phrases.json';
 import { parseArgs, parseChain, pyString, splitTop } from './pyparse';
 import type { Anim, Step } from './types';
 
-export type Section = 'animations' | 'methods' | 'statements' | 'blocks' | 'patterns';
-export const SECTIONS: Section[] = ['animations', 'methods', 'statements', 'blocks', 'patterns'];
+export type Section = 'animations' | 'methods' | 'statements' | 'blocks' | 'patterns' | 'updaters';
+export const SECTIONS: Section[] = ['animations', 'methods', 'statements', 'blocks', 'patterns', 'updaters'];
 export type Overrides = Partial<Record<Section, Record<string, string>>>;
 type Book = Record<Section, Record<string, string>> & { lists: Record<string, Record<string, string>> };
 
@@ -59,6 +59,10 @@ export function pretty(value: string, b: Book = book()): string {
   if (b.lists.words[v]) return b.lists.words[v];
   v = v
     .replace(/\.get_value\(\)/g, '')
+    .replace(/\b\w+\.i2gp\(([^()]+?),\s*(\w+)\)/g, '$2 at $1')
+    .replace(/\b(\w+)\.c2p\(([^()]*)\)/g, '($2) on $1')
+    .replace(/\b(\w+)\.get_center\(\)/g, '$1')
+    .replace(/\b(\w+)\.get_(top|bottom|left|right|start|end)\(\)/g, '$2 of $1')
     .replace(/\bnp\.pi\b/g, 'PI')
     .replace(/\bnp\.(\w+)/g, '$1')
     .replace(/\*\*/g, '^')
@@ -180,6 +184,20 @@ const ASSIGN_OPS: Record<string, string> = { '=': 'assign', '+=': 'increase', '-
 
 const ROLE_WORDS: Record<string, string> = { add: 'Showing objects (self.add)', remove: 'Removing objects (self.remove)', couple: 'Coupling again', uncouple: 'Uncoupling' };
 
+/** self.play(a.animate.shift(UP), Circumscribe(dot)) written as code, in words: “a move up, circle around dot”. */
+function playWords(code: string, b: Book): string | null {
+  const m = code.match(/^self\.play\((.*)\)$/);
+  if (!m) return null;
+  const parts = splitTop(m[1]).filter((p) => p && !/^\w+\s*=(?!=)/.test(p));
+  const said = parts.map((p) => {
+    const anim = p.match(/^([\w.[\]]+)\.animate((?:\.\w+\(.*\))+)$/);
+    if (anim) return `${anim[1]} ${chainWords(anim[2], b).text}`;
+    const w = exprWords(p, b);
+    return [w.name, w.sub.toLowerCase()].filter(Boolean).join(' ');
+  });
+  return said.length ? said.join(', ') : null;
+}
+
 /** What a statement on the timeline shows. */
 export function stepWords(s: Step, b: Book = book(), runs?: number): Words {
   const targets = (s.targets ?? []).join(', ');
@@ -211,8 +229,12 @@ export function stepWords(s: Step, b: Book = book(), runs?: number): Words {
       const args: Args = { pos: s.args?.['*'] ? splitTop(s.args['*']) : [], kw: Object.fromEntries(Object.entries(s.args ?? {}).filter(([n]) => n !== '*')) };
       return { name: cap(phrase(b, 'statements', k, args, nameWords(s.method ?? ''))), sub: '', keys: key(k, `self.${s.method}(…)`) };
     }
-    case 'code':
-      return { name: s.label || st('code'), sub: (s.code ?? '').split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('#')) ?? '', keys: key('code', 'Code') };
+    case 'code': {
+      const lines = (s.code ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+      const note = lines.find((l) => l.startsWith('#'))?.replace(/^#+\s*/, '');
+      const code = lines.filter((l) => !l.startsWith('#'));
+      return { name: s.label || note || st('code'), sub: playWords(code.join(' '), b) ?? code[0] ?? '', keys: key('code', 'Code') };
+    }
     case 'end':
       return { name: st('end'), sub: '', keys: key('end', 'The end of a block') };
     case 'block':
@@ -251,6 +273,19 @@ const BLOCK_WHAT: Record<string, string> = {
   repeat: 'Loops with a counter', each: 'Loops over a list', times: 'Loops that repeat n times', for: 'Other loops', while: 'While loops',
   if: 'Conditions', elif: 'Else-if conditions', else: 'Else', with: 'With blocks', try: 'Try blocks', except: 'Except blocks', finally: 'Finally blocks',
 };
+
+/**
+ * What an updater does, from the function it is given: lambda m: m.move_to(axes.i2gp(t.get_value(), graph)) is
+ * “keeps moving to graph at t”; always_redraw is “redrawn every frame”.
+ */
+export function updaterWords(what: string, code: string, b: Book = book()): { text: string; key: PhraseKey } {
+  if (what !== '.add_updater(…)') return { text: fill(b.updaters.always_redraw, { pos: [], kw: {} }, b), key: { section: 'updaters', key: 'always_redraw', what: 'Redrawn every frame' } };
+  const m = code.replace(/\s+/g, ' ').match(/^lambda (\w+)(?:, *\w+)? *: *\1\.(\w+)\((.*)\)$/);
+  const call = m && parseChain(`.${m[2]}(${m[3]})`)?.length === 1 ? { name: m[2], args: m[3] } : null;
+  if (call && b.updaters[call.name] !== undefined)
+    return { text: fill(b.updaters[call.name], argsOf(call.args), b), key: { section: 'updaters', key: call.name, what: `Updaters that call .${call.name}(…)` } };
+  return { text: fill(b.updaters.other, { pos: [], kw: {} }, b), key: { section: 'updaters', key: 'other', what: 'Other updaters' } };
+}
 
 /** The placeholders a clip's entries can use, with this clip's values: [“{1}”, “axes”]. */
 export function placeholdersOf(a: Anim | null, s: Step | null): [string, string][] {

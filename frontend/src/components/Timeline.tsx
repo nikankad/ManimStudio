@@ -14,7 +14,7 @@ import { rampPath, ratePath } from './rates';
 import { clipRoles, type ClipRole } from '../clipRole';
 import { keys } from '../keys';
 import { pref, setPref } from '../prefs';
-import { animWords, blockWords, stepWords } from '../words';
+import { animWords, blockWords, stepWords, updaterWords } from '../words';
 import { clipsInWords } from '../wording';
 
 const ROW = 46; // a track's height until it is resized
@@ -806,7 +806,6 @@ export function Timeline() {
                   tabIndex={0} role="button" aria-pressed={selected.has(s.id)}
                   aria-label={`Play together: ${n} animation${n === 1 ? '' : 's'}${kw ? ` (${kw})` : ''}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
                   onKeyDown={(e) => keySelect(e, s.id)}>
-                  {kw && (sp.end - sp.start) * pps > 40 && <span className="band-label">{kw}</span>}
                 </div>
               );
             })}
@@ -814,14 +813,15 @@ export function Timeline() {
             {rules(sdoc, slay).map((r) => {
               const left = x(r.start), w = Math.max((r.end - r.start) * pps, 4);
               const sel = r.object ? selection?.kind === 'object' && selection.id === r.id : selected.has(r.id);
+              const said = clipsInWords() ? updaterWords(r.what, r.code).text : (r.what === ".add_updater(…)" ? ".add_updater(…)" : `= ${r.what}(…)`);
               return (
                 <div key={'rule' + r.id + r.start} className={`rule-bar ${sel ? 'sel' : ''}`} role="button" tabIndex={0}
                   style={{ left, width: w, top: RULER + blocksH + 1 + r.row * RULE_H, height: RULE_H - 2 }}
-                  title={`${r.name}${r.what === '.add_updater(…)' ? '.add_updater(…)' : ` = ${r.what}(…)`}: manim runs it on every frame, ${timecode(r.start)} → ${timecode(r.end)}`}
-                  aria-label={`Updater on ${r.name}, ${timecode(r.start)} to ${timecode(r.end)}`}
+                  title={`${r.name} ${said}: manim runs it on every frame while ${r.name} is on screen, ${timecode(r.start)} → ${timecode(r.end)}\nCode: ${r.what === '.add_updater(…)' ? `${r.name}.add_updater(${r.code})` : `${r.name} = ${r.what}(${r.code})`}`}
+                  aria-label={`Updater on ${r.name}: ${said}, ${timecode(r.start)} to ${timecode(r.end)}`}
                   onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (r.object) setState({ selection: { kind: 'object', id: r.id } }); else selectClips([r.id]); } }}
                   onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); if (r.object) setState({ selection: { kind: 'object', id: r.id } }); else selectClips([r.id]); }}>
-                  <span>⟳ {r.name}</span>
+                  <span>⟳ <b>{r.name}</b> {said}</span>
                 </div>
               );
             })}

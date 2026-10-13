@@ -639,7 +639,6 @@ button.brand:hover { background: var(--panel-2); }
 .play-band.sel { background: rgba(88, 196, 221, 0.13); border-color: rgba(88, 196, 221, 0.75); box-shadow: inset 0 2px 0 rgba(88, 196, 221, 0.75); }
 .play-band:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .play-band.ghost { opacity: 0.5; }
-.band-label { position: absolute; right: 4px; bottom: 2px; font: 10px var(--mono); color: #9fcfdd; white-space: nowrap; overflow: hidden; max-width: calc(100% - 8px); text-overflow: ellipsis; }
 /* a pause (self.wait): a hatched block across the tracks, where nothing moves */
 .clip.step.pause { background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.025) 0 6px, rgba(255, 255, 255, 0.06) 6px 12px); border: 1px dashed #4a4b55; box-shadow: none; }
 .clip.step.pause .clip-head { align-items: flex-start; }

@@ -384,7 +384,7 @@ def timeline_edit(b):
         start = lambda loc: label(loc).split(", ")[-1].split(" to ")[0]
         square = pg.locator(".tl-lanes .clip.anim", has_text="square")
         circle = pg.locator(".tl-lanes .clip.anim", has_text="circle")
-        assert "Create" in square.inner_text() and square.inner_text().index("square") < square.inner_text().index("Create"), \
+        assert "Draw" in square.inner_text() and square.inner_text().index("square") < square.inner_text().index("Draw"), \
             "clips read object first"
         assert pg.locator(".track-head", has_text="Statements").count() == 0, "no statement lane"
         assert pg.locator(".tl-lanes .clip.step.pause").count() == 1, "the pause spans the tracks"
@@ -1587,7 +1587,7 @@ def updaters(b):
         pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
         bars = pg.locator(".tl-lanes .rule-bar")
         assert [bars.nth(k).get_attribute("aria-label") for k in range(bars.count())] == [
-            "Updater on c, 00:00:00:00 to 00:00:01:00", "Updater on num, 00:00:00:00 to 00:00:03:00"]
+            "Updater on c: keeps x at t, 00:00:00:00 to 00:00:01:00", "Updater on num: redrawn every frame, 00:00:00:00 to 00:00:03:00"]
         bars.first.click()
         pg.wait_for_timeout(200)
         assert pg.locator(".inspector").get_by_text("add_updater", exact=False).count() >= 1
