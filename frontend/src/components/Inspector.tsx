@@ -1047,7 +1047,8 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         };
         const num = typeof value === 'number' ? value : null;
         let editor;
-        if (on && !on.editable && !redraw) editor = <KeyArgs k={on} label={label} />;
+        const byArgs = on && !on.editable && !redraw ? on : undefined;
+        if (byArgs) editor = <span className="small kf-why" title={byArgs.why}><span className="mono">{keyCode(byArgs)}</span> <span className="muted">{fmtKey(value)}</span></span>;
         else if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
         else if (ch === 'position') {
           const p = Array.isArray(value) ? value : null;
@@ -1069,6 +1070,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
               <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${label}`} aria-label={`Next keyframe of ${label}`} onClick={() => go(next)}>▶</button>
               <div className="kf-value">{editor}</div>
             </div>
+            {byArgs && <KeyArgs k={byArgs} label={label} />}
             {own.length > 0 && (
               <div className="kf-strip kf-lane" aria-label={`Keyframes of ${label}`}>
                 <i className="kf-now" style={{ left: `${(Math.min(time, end) / end) * 100}%` }} />
@@ -1092,14 +1094,11 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
  * edited as code, and (relative ones) Pin, which makes it `.move_to(…)` where it is now.
  */
 function KeyArgs({ k, label }: { k: Key; label: string }) {
-  const call = k.method === 'Rotate' ? 'Rotate(…, ' : `.${k.method}(`;
   const tip = `${k.why ?? ''}${k.value !== undefined ? ` — now ${fmtKey(k.value)}` : ''}. Edit its arguments here.`;
   return (
     <span className="kf-args" title={tip}>
-      <span className="mono small">{call}</span>
       <Field className="mono" value={k.args} ariaLabel={`Arguments of ${keyCode(k)} for ${label}`} onChange={() => {}}
         onBlur={(v) => kfEdit((d) => setKeyArgs(d, k, v))} />
-      <span className="mono small">)</span>
       {k.relative && (
         <button className="x-btn kf-pin" disabled={!Array.isArray(k.value)}
           title={Array.isArray(k.value) ? `Pin it where it is now: .${k.method}(…) becomes .move_to(${fmtKey(k.value)}), and it stops following what it was placed by` : 'Where it ends up is not measured yet'}
