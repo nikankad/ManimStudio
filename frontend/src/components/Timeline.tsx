@@ -14,6 +14,8 @@ import { rampPath, ratePath } from './rates';
 import { clipRoles, type ClipRole } from '../clipRole';
 import { keys } from '../keys';
 import { pref, setPref } from '../prefs';
+import { animWords, blockWords, stepWords } from '../words';
+import { clipsInWords } from '../wording';
 
 const ROW = 46; // a track's height until it is resized
 const ROW_MIN = 26;
@@ -145,6 +147,7 @@ export function Timeline() {
   const keep = useStore((s) => s.keepTiming);
   const range = useStore((s) => s.range);
   const catalog = useStore((s) => s.catalog);
+  useStore((s) => s.wording); // redraw the clips when their wording changes
   const error = useStore((s) => s.frame?.error ?? s.timeline?.error);
   const diagnostics = useStore((s) => (s.timeline ?? s.frame)?.diagnostics);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -508,11 +511,11 @@ export function Timeline() {
         key={a.id}
         className={`clip anim ${kids.length ? '' : role} ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''} ${sp.skipped || sp.elsewhere ? 'unrun' : ''}`}
         style={{ left, width: w, top: rowTop(row) + 3, height: rowH(row) - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
-        title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${RUNS(sp)}${warn ? `\n⚠ ${warn.message}` : ''}`}
+        title={`${tipOf(clipText(a), label.title)}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${RUNS(sp)}${warn ? `\n⚠ ${warn.message}` : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(a.id)}
-        aria-label={`${label.name}${label.sub ? ` ${label.sub}` : ''}${kids.length ? '' : `, ${ROLE[role].word}`}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
+        aria-label={`${[clipText(a).name, clipText(a).sub].filter(Boolean).join(' ')}${kids.length ? '' : `, ${ROLE[role].word}`}, ${timecode(sp.start)} to ${timecode(sp.end)}`}
         onKeyDown={(e) => keySelect(e, a.id)}
         onPointerDown={(e) => onAnimDown(e, a, step, row)}
         onContextMenu={(e) => openMenu(e, a.id)}
@@ -532,10 +535,10 @@ export function Timeline() {
               return (
                 <div key={k.id} className={`kid ${selected.has(k.id) ? 'sel' : ''} ${k.disabled ? 'disabled' : ''}`}
                   style={{ left: (ks.start - sp.start) * pps, width: Math.max(2, (ks.end - ks.start) * pps), top: (i % 2) * 12 + depth, ['--clip' as string]: animColor(k, catalog?.animations) }}
-                  title={`${animLabel(k).title}\n${timecode(ks.start)} → ${timecode(ks.end)}`}
+                  title={`${tipOf(clipText(k), animLabel(k).title)}\n${timecode(ks.start)} → ${timecode(ks.end)}`}
                   onPointerDown={(e) => { e.stopPropagation(); if (e.button === 0) pick(e, k.id); }}
                   onContextMenu={(e) => openMenu(e, k.id)}>
-                  {animLabel(k).name}
+                  {clipsInWords() ? [clipText(k).name, clipText(k).sub].filter(Boolean).join(' · ') : animLabel(k).name}
                 </div>
               );
             })}
@@ -574,13 +577,15 @@ export function Timeline() {
           const cs = sdoc.timeline.find((s) => s.id === c.id)!;
           const cl = x(c.start), cw = Math.max(((k === b.clauses.length - 1 ? b.end : c.end) - c.start) * pps, k ? 3 : 6);
           const runsHere = k === 0 ? runs : c.runs;
-          const head = (cs.head ?? '').trim() || 'if True';
-          const sub = runsHere === undefined ? '' : runsHere === 0 ? 'didn’t run' : `×${runsHere}${b.estimated ? '?' : ''}`;
+          const words = clipsInWords() ? blockWords(cs, runsHere) : null;
+          const head = words?.name ?? ((cs.head ?? '').trim() || 'if True');
+          const sub = words ? (words.sub && runsHere ? `${words.sub}${b.estimated ? '?' : ''}` : words.sub)
+            : runsHere === undefined ? '' : runsHere === 0 ? 'didn’t run' : `×${runsHere}${b.estimated ? '?' : ''}`;
           const label = stepLabel(cs);
           return (
             <div key={c.id} className={`clip block-bar ${k ? 'clause' : ''} ${selected.has(c.id) ? 'sel' : ''} ${opener.disabled ? 'disabled' : ''} ${runsHere === 0 ? 'unrun' : ''} ${b.estimated ? 'estimated' : ''} ${ghost(b.id) ? 'ghost' : ''}`}
               style={{ left: cl, width: cw, top, height: BLOCK_H - 2, ['--clip' as string]: STEP_COLORS.block }}
-              title={`${label.title}${cs.comment ? `\n${cs.comment}` : ''}\n${timecode(c.start)} → ${timecode(k ? c.end : b.end)}${runsHere !== undefined ? `\n${runsHere === 0 ? 'Its body didn’t run' : `Its body ran ${runsHere} time${runsHere === 1 ? '' : 's'}${b.estimated ? ' (estimated: manim hasn’t measured it yet)' : ''}`}` : ''}${!k && b.body < b.end - EPS ? '\nThe first run is laid out clip by clip; the faint clips after it are the later runs' : ''}`}
+              title={`${words ? `${words.name}\nCode: ` : ''}${label.title}${cs.comment ? `\n${cs.comment}` : ''}\n${timecode(c.start)} → ${timecode(k ? c.end : b.end)}${runsHere !== undefined ? `\n${runsHere === 0 ? 'Its body didn’t run' : `Its body ran ${runsHere} time${runsHere === 1 ? '' : 's'}${b.estimated ? ' (estimated: manim hasn’t measured it yet)' : ''}`}` : ''}${!k && b.body < b.end - EPS ? '\nThe first run is laid out clip by clip; the faint clips after it are the later runs' : ''}`}
               tabIndex={0} role="button" aria-pressed={selected.has(c.id)}
               aria-label={`${head}${sub ? `, ${sub}` : ''}, ${timecode(c.start)} to ${timecode(k ? c.end : b.end)}`}
               onKeyDown={(e) => keySelect(e, c.id)}
@@ -650,7 +655,7 @@ export function Timeline() {
         key={s.id}
         className={`clip step ${s.kind} ${pause ? 'pause' : ''} ${instant ? 'instant' : ''} ${sp.skipped || sp.elsewhere ? 'unrun' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
         style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : Math.max(w, 3), top, height, ['--clip' as string]: STEP_COLORS[s.kind] }}
-        title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${RUNS(sp)}${s.disabled ? '\nDisabled: left out of the code' : ''}`}
+        title={`${tipOf(shown, label.title)}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${RUNS(sp)}${s.disabled ? '\nDisabled: left out of the code' : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(s.id)}
@@ -953,6 +958,7 @@ function ClipMenu({ x, y, id, onClose }: { x: number; y: number; id: string; onC
       {sp && item('Move playhead to end', () => setState({ time: frameSnap(sp.end), showVideo: false }))}
       {ref && !step && item('Select the group it plays with', () => selectClips([ref.step.id]))}
       {item('Show in code', () => setState({ centerTab: 'code' }))}
+      {item('Change wording…', () => setState({ panel: 'wording', panelData: id }), 'how clips like it read')}
       {target && s.doc.objects.some((o) => o.name === target) && item(`Select ${target}`, () => {
         const o = s.doc.objects.find((k) => k.name === target);
         if (o) setState({ selection: { kind: 'object', id: o.id } });
@@ -1013,8 +1019,15 @@ export function animLabel(a: Anim): { name: string; sub: string; title: string }
   return { name: a.cls, sub: a.target || a.args['*'] || '', title: `${a.cls}(${[a.target, a.args['*']].filter(Boolean).join(', ')})` };
 }
 
-/** What a clip shows: the object first, then what happens to it ("circle · Create"). */
+/** A clip's tooltip: its words, then its code (only the code when clips show the code). */
+const tipOf = (w: { name: string; sub: string }, code: string) => (clipsInWords() ? `${[w.name, w.sub].filter(Boolean).join(' · ')}\nCode: ${code}` : code);
+
+/** What a clip shows: the object first, then what happens to it, in words (“circle · Draw”) or as in the code. */
 export function clipText(a: Anim): { name: string; sub: string } {
+  return clipsInWords() ? animWords(a) : codeClipText(a);
+}
+
+function codeClipText(a: Anim): { name: string; sub: string } {
   if (a.cls === 'expr') return { name: exprName(a.src ?? ''), sub: (a.src ?? '').split('\n').join(' ') };
   if (a.anims) return { name: a.cls, sub: `${a.anims.length} animation${a.anims.length === 1 ? '' : 's'}` };
   if (a.cls === 'animate') return { name: a.target, sub: `.animate${(a.chain ?? '').split('\n').join('').trim().match(/^\.\w+/)?.[0] ?? ''}` };
@@ -1027,8 +1040,12 @@ const firstCall = (chain: string) => {
   return names.length ? `.${names[0]}(…)${names.length > 1 ? ` +${names.length - 1}` : ''}` : '';
 };
 
-/** What a step shows on the timeline, in plain words. */
+/** What a statement shows on the timeline, in words or as in the code. */
 export function stepText(s: Step): { name: string; sub: string } {
+  return clipsInWords() ? stepWords(s) : codeStepText(s);
+}
+
+function codeStepText(s: Step): { name: string; sub: string } {
   const targets = (s.targets ?? []).join(', ');
   switch (s.kind) {
     case 'play': {

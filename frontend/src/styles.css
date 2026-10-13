@@ -793,3 +793,9 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .rule-bar { position: absolute; border-radius: 6px; background: repeating-linear-gradient(90deg, #2e5f5a 0 6px, #2a5550 6px 12px); border: 1px solid #4f9a90; font: 600 9.5px/11px var(--mono); color: #fff; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .rule-bar.sel { border-color: #fff; box-shadow: 0 0 0 1px #fff; }
 .rule-bar:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* Change wording… */
+.wording-preview { display: flex; gap: 8px; align-items: baseline; margin: 2px 0; }
+.wording-preview .muted { width: 60px; }
+.wording-new { color: var(--accent, #4ea1ff); }
+.wording-row .row { gap: 6px; }

@@ -4,6 +4,7 @@ import { pref, setPref } from './prefs';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { anchorTo, cloneAnim, cloneStep, compoundOf, compounds, findAnim, withBlocks, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
+import { setConstants } from './words';
 import type { Anim, Args, Catalog, CatalogEntry, Job, Link, Marker, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
 
 export interface VideoState {
@@ -35,7 +36,7 @@ export interface AppState {
   playingRange: boolean; // playing In to Out: stops at Out
   past: SceneDoc[];
   future: SceneDoc[];
-  panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project';
+  panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project' | 'wording';
   tour: number | null; // guided tour step
   tryThis: { played: boolean; exported: boolean } | null; // Help › Try this, the guided first animation: what has happened
   panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
@@ -54,6 +55,7 @@ export interface AppState {
   showVideo: boolean; // playing the rendered preview video instead of live frames
   autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
+  wording: number; // bumped when the timeline's wording changes (Change wording…, Settings), to redraw its clips
   home: boolean; // the Home screen (projects, samples) instead of the editor
   hasProject: boolean; // a project is open behind the Home screen (it can go back to it)
   restore: Recovery | null; // unsaved changes found for the project just opened: restore them or keep the saved file?
@@ -109,6 +111,7 @@ let state: AppState = {
   showVideo: false,
   autoRender: true,
   toast: null,
+  wording: 0,
   home: false,
   hasProject: false,
   restore: null,
@@ -359,6 +362,7 @@ export async function loadCatalog() {
   catalogHeader = header;
   try {
     const catalog = await api.catalog(header);
+    setConstants([...catalog.colors, ...catalog.directions]); // RED reads “red” on the timeline
     setState({ catalog, signatures: {} });
   } catch (e) {
     toast(String(e));

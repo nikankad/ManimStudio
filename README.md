@@ -83,7 +83,13 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
 - **Timeline** (bottom, the main workspace): the scene's `construct()` as a Premiere Pro–style timeline, in order,
   exactly as manim runs it: each step starts when the one before it ends.
   - Animations that play together (one `self.play`) share a shaded **Play together** column and are stacked on **animation lanes** V1, V2… (lanes are not drawing layers: Scene › Drawing order lists what is drawn on top);
-    the group lasts as long as its longest animation. Clips read object first (*circle · Create*). A **hatched
+    the group lasts as long as its longest animation. Clips read object first, in words (*circle · Draw*,
+    *title · Scale ×0.55, to the top edge*, *Repeat, k = 1 to 6*, *Fade out all but title*); hover one for its code.
+    The words come from a phrasebook (`frontend/src/phrases.json`); a name it doesn't have is read from the code
+    (`GrowFromCenter` is *Grow from center*). Right-click a clip › **Change wording…** to say how clips like it read,
+    with `{1}` for its first argument, `{angle}` for a named one and `{1:side}` to say `UP` as *above*; every clip
+    that uses the same animation, method or statement follows. Settings › Timeline lists how many you changed, resets
+    them, and can name clips as in the code instead. A **hatched
     block** across the tracks is a pause (`self.wait`). `AnimationGroup`, `LaggedStart` and `Succession` show their
     animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.
   - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, changes, and

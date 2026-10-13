@@ -12,6 +12,8 @@ import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
 import { HelpPanel } from './Help';
 import { AppSettings, UpdateNotice } from './Updates';
+import { WordingDialog } from './Wording';
+import { clipsInWords, customCount, resetWording, setClipsInWords } from '../wording';
 import { NewProjectDialog } from './Home';
 import { keys } from '../keys';
 
@@ -370,12 +372,32 @@ function PanelDialog() {
   if (panel === 'insert') return <InsertConstruction />;
   if (panel === 'save-construction') return <SaveConstruction />;
   if (panel === 'new-project') return <NewProjectDialog />;
+  if (panel === 'wording') return <WordingDialog />;
   return null;
 }
 
 export const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
 
 const DEFAULT_BASES = ['Scene'];
+
+/** Settings › Timeline: clips named in words or as in the code, and the wording the user changed. */
+function TimelineWording() {
+  useStore((s) => s.wording);
+  const n = customCount();
+  return (
+    <section className="app-settings">
+      <h4>Timeline</h4>
+      <label className="check">
+        <input type="checkbox" checked={clipsInWords()} onChange={(e) => setClipsInWords(e.target.checked)} />
+        Name clips in words (“title · Fade in”, “Repeat, k = 1 to 6”); off, they read as in the code
+      </label>
+      <p className="muted small">
+        Right-click a clip › <b>Change wording…</b> to say how clips like it read.{' '}
+        {n > 0 && <>{n} changed · <button className="link" onClick={resetWording}>back to the defaults</button></>}
+      </p>
+    </section>
+  );
+}
 
 function SettingsPanel() {
   const doc = useStore((s) => s.doc);
@@ -413,6 +435,7 @@ function SettingsPanel() {
           <Field className="mono" value={doc.config.background_color} onChange={(v) => /^#[0-9a-f]{6}$/i.test(v) && set((d) => void (d.config.background_color = v), 'bg')} />
         </div>
       </label>
+      <TimelineWording />
       <AppSettings />
     </Modal>
   );

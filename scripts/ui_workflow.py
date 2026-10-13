@@ -191,7 +191,7 @@ def shortcuts(b):
         assert clips(pg) == n + 2
         # cut and paste a clip
         before = clips(pg)
-        pg.locator(".clip", has_text="Create").last.click()
+        pg.locator(".clip", has_text="Draw").last.click()
         pg.keyboard.press("Control+x")
         pg.wait_for_timeout(500)
         assert clips(pg) == before - 1
@@ -908,7 +908,7 @@ def retiming(b):
         ctx, pg = page_in(b, url, 1500, 900)
         measured = lambda: pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
         measured()
-        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="Create {n},"]')
+        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="{n} Draw,"]')
         label = lambda n: clip(n).get_attribute("aria-label")
         note = lambda: " ".join(pg.locator(".drag-note").all_inner_texts())
         a0, b0 = label("a"), label("b")
@@ -1001,7 +1001,7 @@ def markers(b):
     with editor(project) as (url, home):
         ctx, pg = page_in(b, url, 1500, 900)
         pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
-        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="Create {n},"]')
+        clip = lambda n: pg.locator(f'.tl-lanes .clip.anim[aria-label^="{n} Draw,"]')
         marker = pg.locator(".ruler .marker")
         clip("b").click()
         tc = pg.locator(".tl-header .timecode")
@@ -1367,7 +1367,7 @@ def relative_keys(b):
         assert pg.locator(".inspector h3", has_text="Change at once").count() == 1
 
         # the .animate.next_to keyframe: its arguments, edited as code
-        pg.locator(".tl-lanes .clip.anim", has_text="next_to").first.click()
+        pg.locator(".tl-lanes .clip.anim", has_text="Right of label").first.click()
         row = pg.locator('.kf-channel[data-channel="position"]')
         pg.locator(".tl-header .timecode").click()
         pg.locator(".tl-header input.timecode").fill("00:00:02:00")
@@ -1423,11 +1423,11 @@ def code_highlight(b):
               return { sel: [...document.querySelectorAll('.code-ln.sel')].map(ln), rel: [...document.querySelectorAll('.code-ln.rel')].map(ln), marks };
             }""")
 
-        pg.locator('.tl-lanes .clip.anim[aria-label^="Write b"]').click()
+        pg.locator('.tl-lanes .clip.anim[aria-label^="b Write in"]').click()
         pg.wait_for_timeout(300)
         r = lit()
         assert r == {"sel": ["self.play(FadeIn(a), Write(b))"], "rel": ['b = Text("é b")'], "marks": ["Write(b)"]}, r
-        pg.locator(".tl-lanes .kid", has_text=".animate").dispatch_event("pointerdown", {"button": 0})
+        pg.locator(".tl-lanes .kid", has_text="Move up").dispatch_event("pointerdown", {"button": 0})
         pg.wait_for_timeout(300)
         r = lit()
         assert r["marks"] == ["b.animate.shift(UP)"] and r["rel"] == ['b = Text("é b")'], r
@@ -1449,7 +1449,7 @@ def code_highlight(b):
         ta.evaluate(f"(t) => {{ t.focus(); t.setSelectionRange({pos}, {pos}); }}")
         ta.dispatch_event("click")
         pg.wait_for_timeout(300)
-        assert pg.locator(".tl-lanes .kid.sel").all_inner_texts() == ["FadeOut"]
+        assert pg.locator(".tl-lanes .kid.sel").all_inner_texts() == ["a · Fade out"]
         assert not pg.errors, pg.errors
 
 
@@ -1498,7 +1498,7 @@ def computed_steps(b):
         assert "        self.add(a, VGroup(b).shift(UP))\n" in source()
 
         # the computed animation: a clip named after what it builds, its code edited as code
-        clip = pg.locator(".tl-lanes .clip.anim", has_text="FadeOut")
+        clip = pg.locator(".tl-lanes .clip.anim", has_text="Fade out")
         assert clip.count() == 1, pg.locator(".tl-lanes .clip.anim").all_inner_texts()
         clip.click()
         assert pg.locator(".inspector h3", has_text="FadeOut (code)").count() == 1
@@ -1539,7 +1539,7 @@ def blocks(b):
 
         assert source() == code
         bar = pg.locator(".tl-lanes .clip.block-bar").first
-        assert bar.get_attribute("aria-label").startswith("for i in range(3), ×3"), bar.get_attribute("aria-label")
+        assert bar.get_attribute("aria-label").startswith("Repeat, i = 0 to 2, 3 times"), bar.get_attribute("aria-label")
         assert pg.locator(".tl-lanes .clip.anim.iter").count() == 2
         # a loop counting whole numbers opens as a Repeat (i from 0 to 2); its last value, edited: the loop runs 4
         # times once manim has measured it again
@@ -1551,7 +1551,7 @@ def blocks(b):
         last.press("Enter")
         pg.wait_for_timeout(800)
         assert "        for i in range(4):\n            self.play(c.animate.shift(RIGHT), run_time=0.5)\n" in source()
-        pg.wait_for_function("document.querySelector('.tl-lanes .clip.block-bar')?.getAttribute('aria-label').includes('×4') && !document.querySelector('.tl-lanes .block-bar.estimated')", timeout=60000)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.block-bar')?.getAttribute('aria-label').includes('4 times') && !document.querySelector('.tl-lanes .block-bar.estimated')", timeout=60000)
         assert pg.locator(".tl-lanes .clip.anim.iter").count() == 3
         # + else: an empty clause (pass); Unwrap: the steps run once, in place
         pg.locator(".tl-lanes .clip.block-bar").first.click()
@@ -1801,7 +1801,65 @@ def text_values(b):
         ctx.close()
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, text_values, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def wording(b):
+    """Clips are named in words; right-click › Change wording… says how clips like one read (with the code's values
+    filled in, and a preview), every such clip follows, Default goes back; Settings can name them as in the code."""
+    code = ("from manim import *\n\n\nclass W(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+            "        self.play(FadeIn(a))\n        self.play(FadeIn(b))\n        self.play(a.animate.next_to(b, DOWN))\n"
+            "        for i in range(3):\n            self.wait(0.2)\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "wording.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        names = lambda: [t.replace("\n", " ") for t in pg.locator(".tl-lanes .clip.anim:not(.iter) .clip-head").all_inner_texts()]  # noqa: E731
+        assert names() == ["IN a Fade in", "IN b Fade in", "fx a Below b"], names()
+        bar = pg.locator(".tl-lanes .clip.block-bar").first
+        assert bar.get_attribute("aria-label").startswith("Repeat, i = 0 to 2, 3 times"), bar.get_attribute("aria-label")
+        assert "Code: for i in range(3):" in bar.get_attribute("title")
+        # every FadeIn clip reads the new way
+        pg.locator(".tl-lanes .clip.anim", has_text="a").first.click(button="right")
+        pg.locator(".menu-item", has_text="Change wording").click()
+        dlg = pg.get_by_role("dialog", name="Change wording")
+        box = dlg.get_by_label("Wording of FadeIn animations")
+        assert box.input_value() == "Fade in"
+        box.fill("Appear")
+        assert "a · Appear" in dlg.locator(".wording-new").inner_text()
+        dlg.get_by_role("button", name="Save").click()
+        pg.wait_for_timeout(300)
+        assert names()[:2] == ["IN a Appear", "IN b Appear"], names()
+        # a method's wording with its arguments: {1} the object, {2:side} the direction in words
+        pg.locator(".tl-lanes .clip.anim", has_text="Below b").click(button="right")
+        pg.locator(".menu-item", has_text="Change wording").click()
+        dlg = pg.get_by_role("dialog", name="Change wording")
+        assert dlg.get_by_text("{2}").count() and dlg.locator("code", has_text="DOWN").count()
+        dlg.get_by_label("Wording of .next_to(…)").fill("go {2:move} of {1}")
+        dlg.get_by_role("button", name="Save").click()
+        pg.wait_for_timeout(300)
+        assert names()[2] == "fx a Go down of b", names()
+        # Default: back to the phrasebook
+        pg.locator(".tl-lanes .clip.anim", has_text="Appear").first.click(button="right")
+        pg.locator(".menu-item", has_text="Change wording").click()
+        dlg = pg.get_by_role("dialog", name="Change wording")
+        dlg.get_by_role("button", name="Default").click()
+        dlg.get_by_role("button", name="Save").click()
+        pg.wait_for_timeout(300)
+        assert names()[:2] == ["IN a Fade in", "IN b Fade in"], names()
+        # Settings: as in the code, and back to the defaults
+        pg.get_by_role("button", name="Settings").click()
+        st = pg.get_by_role("dialog", name="Scene settings")
+        assert st.get_by_text("1 changed").count() == 1
+        st.get_by_label(re.compile("Name clips in words")).uncheck()
+        pg.wait_for_timeout(300)
+        assert names()[0] == "IN a FadeIn", names()
+        st.get_by_label(re.compile("Name clips in words")).check()
+        st.get_by_role("button", name="back to the defaults").click()
+        pg.wait_for_timeout(300)
+        assert names()[2] == "fx a Below b", names()
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, text_values, wording, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
