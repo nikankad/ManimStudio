@@ -257,7 +257,7 @@ export interface ObjState {
 
 export interface Diagnostic {
   id: string;
-  level: 'error' | 'warning';
+  level: 'error' | 'warning' | 'info';
   message: string;
   kind: 'object' | 'anim';
 }

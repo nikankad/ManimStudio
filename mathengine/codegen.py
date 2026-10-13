@@ -236,7 +236,16 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
     * An empty composition: manim can't play it.
     """
     shown: set[str] = set()
-    for step in steps:
+    # objects brought on screen on purpose later (an intro, self.add): animating one before that is a mistake
+    introduced_at: dict[str, int] = {}
+    for i, step in enumerate(steps):
+        names: list[str] = list(step.get("targets") or []) if step.get("kind") == "add" else []
+        for a in timeline.walk(_playable(step, skip)) if step.get("kind") == "play" else []:
+            if (a.get("cls") or "").strip() == "Add" or _flag((a.get("cls") or "").strip(), "is_introducer"):
+                names += [t.strip() for t in (a.get("target") or "").split(",") if t.strip()]
+        for n in names:
+            introduced_at.setdefault(n, i)
+    for i, step in enumerate(steps):
         kind = step.get("kind")
         if kind == "add":
             shown.update(step.get("targets") or [])
@@ -279,8 +288,13 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
                 continue
             for t in names:
                 if t not in shown and t in plan.mobject_names:
-                    plan.diag(a["id"], "warning", f"{t} isn't on screen before this self.play, so manim adds it as the play "
-                              f"starts, with no intro. Add an intro before it (Create, FadeIn, Write… or self.add).", "anim")
+                    if introduced_at.get(t, -1) > i:
+                        plan.diag(a["id"], "warning", f"{t} isn't on screen before this self.play, so manim adds it as the play "
+                                  f"starts, with no intro, and its intro later finds it already there. Move the intro before "
+                                  f"it (or this after the intro).", "anim")
+                    else:  # how manim code often brings an object on: it appears as it starts to move
+                        plan.diag(a["id"], "info", f"{t} comes on screen with this animation: manim adds it as the play "
+                                  f"starts (no intro).", "anim")
         for a in timeline.walk(anims):
             cls = (a.get("cls") or "").strip()
             names = [t.strip() for t in (a.get("target") or "").split(",") if t.strip()]

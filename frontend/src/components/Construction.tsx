@@ -25,7 +25,7 @@ export function Diagnostics({ id }: { id: string }) {
   return (
     <>
       {diags.map((d, i) => (
-        <div key={i} className={d.level === 'error' ? 'err-box' : 'warn'}>
+        <div key={i} className={d.level === 'error' ? 'err-box' : d.level === 'info' ? 'muted small' : 'warn'}>
           {d.message}
           {/LaTeX isn't installed/.test(d.message) && <> <CheckLatexButton /></>}
         </div>

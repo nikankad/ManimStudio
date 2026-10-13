@@ -478,7 +478,7 @@ export function Timeline() {
 
   // ------------------------------------------------------------ clips
   const ghost = (id: string) => shown.moved.includes(id) || ((drag?.mode === 'trim-anim' || drag?.mode === 'trim-step') && drag.id === id && changes(drag));
-  const warnOf = (id: string) => diagnostics?.find((x) => x.id === id && x.kind === 'anim');
+  const warnOf = (id: string) => diagnostics?.find((x) => x.id === id && x.kind === 'anim' && x.level !== 'info');
 
   const renderAnim = (a: Anim, step: Step, row: number, l: Layout) => {
     const sp = l.anims.get(a.id);
