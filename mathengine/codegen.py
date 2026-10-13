@@ -405,15 +405,80 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         at = len(w.lines)
         _emit_object(obj, emit, B, preview, plan)
         placed(obj, at)
+    # Compound statements (block … end): their bodies are indented one level more. What doesn't balance is
+    # repaired so the code always runs: a clause or end with no open block is left out, an empty body gets
+    # `pass`, a block left open is closed at the end. A disabled block leaves its whole statement out.
+    shapes = timeline.compounds(full)
+    open_: list[dict] = []  # {"id", "end", "at": line of its header, "clause": (id, line) of the open clause, "body"}
+    hidden: list[int] = []  # depth of a disabled block being skipped
+
+    def indent() -> int:
+        return B + 4 * len(open_)
+
+    def close_body(frame: dict) -> None:
+        if not any(ln.strip() and not ln.lstrip().startswith("#") for ln in w.lines[frame["body"]:]):
+            emit("pass", ("step", frame["clause"][0]), indent())
+        if not preview:
+            _spans(w.lines, frame["clause"][1], len(w.lines), frame["clause"][0], None, skip, spans)
+
+    def close(frame: dict) -> None:
+        close_body(frame)
+        open_.pop()
+        if preview and frame["end"]:
+            emit(f"self._me_step_end({frame['end']!r})", ("step", frame["end"]), indent())
+        if not preview:
+            _spans(w.lines, frame["at"], len(w.lines), frame["id"], None, skip, spans)
+
+    def header(step: dict, depth: int) -> None:
+        ref = ("step", step["id"])
+        if step.get("gap") and not preview:
+            emit("")
+        _emit_comment(step, emit, B + 4 * depth, ref)
+        line = f"{(step.get('head') or '').strip() or 'if True'}:"
+        emit(line if preview else _with_eol(step, [line])[0], ref, B + 4 * depth)
+
     for i, step in enumerate(full):
-        if not step.get("disabled"):
+        kind = step.get("kind")
+        if hidden:
+            if kind == "block" and not timeline.is_clause(step):
+                hidden[-1] += 1
+            elif kind == "end":
+                hidden[-1] -= 1
+                if hidden[-1] < 0:
+                    hidden.pop()
+        elif kind == "block" and timeline.is_clause(step):
+            if open_:
+                frame = open_[-1]
+                close_body(frame)
+                header(step, len(open_) - 1)
+                frame["clause"], frame["body"] = (step["id"], len(w.lines) - 1), len(w.lines)
+                if preview:
+                    emit(f"self._me_enter({step['id']!r})", ("step", step["id"]), indent())
+        elif kind == "block":
+            if step.get("disabled"):
+                hidden.append(0)
+            else:
+                end = shapes.get(step["id"], ([], None))[1]
+                if preview and end:
+                    emit(f"self._me_step({end!r})", ("step", end), indent())
+                at = len(w.lines)
+                header(step, len(open_))
+                open_.append({"id": step["id"], "end": end, "at": at, "clause": (step["id"], at), "body": len(w.lines)})
+                if preview:
+                    emit(f"self._me_enter({step['id']!r})", ("step", step["id"]), indent())
+        elif kind == "end":
+            if open_:
+                close(open_[-1])
+        elif not step.get("disabled"):
             at = len(w.lines)
-            _emit_step(step, emit, B, preview, doc, plan, skip)
+            _emit_step(step, emit, indent(), preview, doc, plan, skip)
             placed(step, at, step)
         for obj in groups.get(i, []):
             at = len(w.lines)
-            _emit_object(obj, emit, B, preview, plan)
+            _emit_object(obj, emit, indent(), preview, plan)
             placed(obj, at)
+    while open_:
+        close(open_[-1])
 
     if len(w.lines) == start_len:
         emit("pass", None, B)
@@ -565,12 +630,20 @@ def _emit_object(obj: dict, emit, B: int, preview: bool, plan: construct.Plan) -
         emit("")
     _emit_comment(obj, emit, B, ref)
     lines = object_lines(obj, plan)
-    for line in lines if preview else as_written(obj, lines):
+    for line in lines if preview else _with_eol(obj, as_written(obj, lines)):
         emit(line, ref, B)
     for line in plan.after.get(obj["id"], []):
         emit(line, ref, B)
     if preview:
         emit(f"self._me_reg({name!r}, {name}, {obj['id']!r})", ref, B)
+
+
+def _with_eol(elem: dict, lines: list[str]) -> list[str]:
+    """``lines`` with the element's end-of-line comment (``# …``) after the last one."""
+    eol = (elem.get("eol") or "").strip()
+    if not eol or not lines:
+        return lines
+    return [*lines[:-1], f"{lines[-1]}  {eol if eol.startswith('#') else '# ' + eol}"]
 
 
 def _emit_comment(elem: dict, emit, B: int, ref: tuple[str, str]) -> None:
@@ -696,6 +769,8 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
         if not target or not value:
             return []
         return [(line, ref) for line in f"{target} {op} {value}".splitlines()]
+    if kind == "block":
+        return [(f"{(step.get('head') or '').strip() or 'if True'}:", ref)]
     if kind == "code":
         body = textwrap.dedent(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []
@@ -722,6 +797,8 @@ def _emit_step(step: dict, emit, B: int, preview: bool, doc: dict, plan: constru
         _emit_comment(step, emit, B, ref)
     if preview:
         emit(f"self._me_step({step['id']!r})", ref, B)
+    elif lines and step.get("eol"):
+        lines = [*lines[:-1], (_with_eol(step, [lines[-1][0]])[0], lines[-1][1])]
     for text, r in lines:
         emit(text, r, B)
     if preview:

@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   addAnimation, addMarker, addObject, deleteMarker, selectMarker, setMarker, workArea, addStep, newObjectPos, deleteSelection, docKey, docLayout, fps, frameSnap, getState, parseTimecode,
-  previewFresh, sceneCalls, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
+  previewFresh, sceneCalls, wrapInBlock, selectClips, selectedObjectIds, setPlaying, setState, timecode, toast, toggleDisabled, updateDoc, useStore,
 } from '../store';
 import {
   canTrimStep, EPS, findAnim, findStep, landing, layout, markerTime, moveAnims, moveSteps, retime,
-  type Layout, type Retime,
-  exprName,
+  type BlockSpan, type Layout, type Retime, type Span,
+  estimateRuns, exprName, rules,
 } from '../timeline';
 import type { Anim, Marker, RunResult, SceneDoc, Step } from '../types';
 import { DND_TYPE, type DragPayload } from './Library';
@@ -54,6 +54,8 @@ const STEP_COLORS: Record<Step['kind'], string> = {
   call: '#4f5b2f',
   apply: '#5a4f7a',
   assign: '#4a5f6b',
+  block: '#6b5a2f',
+  end: '#6b5a2f',
 };
 
 type Drag =
@@ -70,7 +72,11 @@ type Drag =
  * couple / uncouple, scene calls), and anything disabled. Animation groups show as the band behind their clips, and
  * pauses as a block across the tracks.
  */
-const inStrip = (s: Step) => !!s.disabled || (s.kind !== 'play' && s.kind !== 'wait');
+const inStrip = (s: Step) => s.kind !== 'block' && s.kind !== 'end' && (!!s.disabled || (s.kind !== 'play' && s.kind !== 'wait'));
+/** What a clip inside a block says about its runs. */
+const RUNS = (sp: Span) => sp.skipped ? '\nIt didn’t run (manim never reached it)' : sp.elsewhere ? `\nIt didn’t run in the block’s first run; it ran ${sp.iters?.length ?? 0} time${sp.iters?.length === 1 ? '' : 's'} later (the faint clips)` : sp.iters ? `\nIt runs ${sp.iters.length + 1} times: the faint clips after it are its later runs` : '';
+const RULE_H = 13; // height of an updater's bar
+const BLOCK_H = 17; // height of a block's bar (for, if, with…) above the strip, per nesting level
 
 /** What a timeline drag does to the document (shown live while dragging, committed on release). */
 function applyDrag(d: SceneDoc, drag: Drag, measured: RunResult | null, keep: boolean): { moved: string[]; rt?: Retime } {
@@ -199,7 +205,11 @@ export function Timeline() {
   const end = slay.end;
   const x = (t: number) => (t - v0) * pps;
   // from the document, not the drag preview: the tracks mustn't jump under the pointer while dragging
-  const stripH = doc.timeline.some(inStrip) ? STRIP : 0;
+  const blocksH = lay.blocks.length ? (Math.max(...lay.blocks.map((b) => b.depth)) + 1) * BLOCK_H + 2 : 0;
+  const docRules = useMemo(() => rules(doc, lay), [doc, lay]);
+  const rulesH = docRules.length ? (Math.max(...docRules.map((r) => r.row)) + 1) * RULE_H + 2 : 0;
+  const stepsTop = RULER + blocksH + rulesH; // where the strip's own steps are
+  const stripH = blocksH + rulesH + (doc.timeline.some(inStrip) ? STRIP : 0);
   const rowH = (r: number) => heights[r] || ROW;
   const tracksH = (n: number) => { let h = 0; for (let i = 0; i < n; i++) h += rowH(i); return h; };
   const rowTop = (r: number) => RULER + stripH + tracksH(r);
@@ -496,9 +506,9 @@ export function Timeline() {
     return (
       <div
         key={a.id}
-        className={`clip anim ${kids.length ? '' : role} ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''}`}
+        className={`clip anim ${kids.length ? '' : role} ${selected.has(a.id) ? 'sel' : ''} ${a.disabled ? 'disabled' : ''} ${error?.id === a.id ? 'err' : ''} ${ghost(a.id) ? 'ghost' : ''} ${warn ? 'warn' : ''} ${sp.estimated ? 'estimated' : ''} ${sp.skipped || sp.elsewhere ? 'unrun' : ''}`}
         style={{ left, width: w, top: rowTop(row) + 3, height: rowH(row) - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}
-        title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${warn ? `\n⚠ ${warn.message}` : ''}`}
+        title={`${label.title}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${sp.estimated ? '\nEstimated: manim hasn’t measured it yet' : ''}${RUNS(sp)}${warn ? `\n⚠ ${warn.message}` : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(a.id)}
@@ -544,6 +554,58 @@ export function Timeline() {
     );
   };
 
+  // A compound statement (for, while, if, with, try…): a bar over its time, with its header and how many times it ran.
+  // Its first run is laid out clip by clip; the later runs follow it, drawn faintly (they are the same clips again).
+  const renderBlock = (b: BlockSpan) => {
+    const left = x(b.start), w = Math.max((b.end - b.start) * pps, 6);
+    if (left + w < -40 || left > laneW + 40) return null;
+    const top = RULER + 1 + b.depth * BLOCK_H;
+    const opener = sdoc.timeline.find((s) => s.id === b.id);
+    if (!opener) return null;
+    const runs = b.runs ?? (b.estimated ? estimateRuns(opener.head ?? '') : undefined);
+    const repeats = (b.end - b.body) * pps;
+    return (
+      <Fragment key={'block' + b.id}>
+        <div className={`block-col ${selected.has(b.id) ? 'sel' : ''} ${opener.disabled ? 'disabled' : ''}`}
+          style={{ left, width: w, top: top + BLOCK_H, height: totalH - top - BLOCK_H - 36 }}>
+          {repeats > 2 && <div className="block-repeats" style={{ left: (b.body - b.start) * pps, width: repeats }} />}
+        </div>
+        {b.clauses.map((c, k) => {
+          const cs = sdoc.timeline.find((s) => s.id === c.id)!;
+          const cl = x(c.start), cw = Math.max(((k === b.clauses.length - 1 ? b.end : c.end) - c.start) * pps, k ? 3 : 6);
+          const runsHere = k === 0 ? runs : c.runs;
+          const head = (cs.head ?? '').trim() || 'if True';
+          const sub = runsHere === undefined ? '' : runsHere === 0 ? 'didn’t run' : `×${runsHere}${b.estimated ? '?' : ''}`;
+          const label = stepLabel(cs);
+          return (
+            <div key={c.id} className={`clip block-bar ${k ? 'clause' : ''} ${selected.has(c.id) ? 'sel' : ''} ${opener.disabled ? 'disabled' : ''} ${runsHere === 0 ? 'unrun' : ''} ${b.estimated ? 'estimated' : ''} ${ghost(b.id) ? 'ghost' : ''}`}
+              style={{ left: cl, width: cw, top, height: BLOCK_H - 2, ['--clip' as string]: STEP_COLORS.block }}
+              title={`${label.title}${cs.comment ? `\n${cs.comment}` : ''}\n${timecode(c.start)} → ${timecode(k ? c.end : b.end)}${runsHere !== undefined ? `\n${runsHere === 0 ? 'Its body didn’t run' : `Its body ran ${runsHere} time${runsHere === 1 ? '' : 's'}${b.estimated ? ' (estimated: manim hasn’t measured it yet)' : ''}`}` : ''}${!k && b.body < b.end - EPS ? '\nThe first run is laid out clip by clip; the faint clips after it are the later runs' : ''}`}
+              tabIndex={0} role="button" aria-pressed={selected.has(c.id)}
+              aria-label={`${head}${sub ? `, ${sub}` : ''}, ${timecode(c.start)} to ${timecode(k ? c.end : b.end)}`}
+              onKeyDown={(e) => keySelect(e, c.id)}
+              onPointerDown={(e) => onStepDown(e, cs)}
+              onContextMenu={(e) => openMenu(e, c.id)}
+              onDoubleClick={() => setState({ time: frameSnap(b.end), showVideo: false })}>
+              <span className="clip-name">{head}</span>{sub && <span className="clip-sub">{sub}</span>}
+            </div>
+          );
+        })}
+      </Fragment>
+    );
+  };
+  // Later runs of a clip inside a loop: faint copies where manim ran it again (select the first run to edit them all).
+  const renderIters = (a: Anim, row: number, l: Layout) => {
+    const sp = l.anims.get(a.id);
+    if (!sp?.iters) return [];
+    return sp.iters.map((it, k) => {
+      const left = x(it.start), w = Math.max((it.end - it.start) * pps, 3);
+      if (left + w < -40 || left > laneW + 40) return null;
+      return <div key={`${a.id}~${k}`} className="clip anim iter" aria-hidden="true" style={{ left, width: w, top: rowTop(row) + 3, height: rowH(row) - 6, ['--clip' as string]: animColor(a, catalog?.animations) }}>
+        <div className="clip-head"><span className="clip-name">{clipText(a).name}</span><span className="clip-sub">run {k + 2}</span></div>
+      </div>;
+    });
+  };
   // Statements that take no time at the same moment (k = 2, label.next_to(…), self.add(…)…) are drawn side by side,
   // in code order, so each diamond can be picked.
   const fanned = (steps: Step[], l: Layout) => {
@@ -564,6 +626,16 @@ export function Timeline() {
   };
   const renderStep = (s: Step, l: Layout, fan: Map<string, number>) => {
     const sp = l.steps.get(s.id)!;
+    const iters = (sp.iters ?? []).map((it, k) => {
+      const instant = (it.end - it.start) * pps < 6;
+      const il = x(it.start);
+      if (il < -40 || il > laneW + 40) return null;
+      return <div key={`${s.id}~${k}`} className={`clip step iter ${s.kind} ${instant ? 'instant' : ''}`} aria-hidden="true"
+        style={{ left: instant ? il - 7 : il, width: instant ? 14 : (it.end - it.start) * pps, top: s.kind === 'wait' && !s.disabled ? rowTop(0) + 3 : stepsTop + 2, height: s.kind === 'wait' && !s.disabled ? tracksH(rows) - 6 : STRIP - 4, ['--clip' as string]: STEP_COLORS[s.kind] }} />;
+    });
+    return <Fragment key={s.id}>{renderStepClip(s, fan, sp)}{iters}</Fragment>;
+  };
+  const renderStepClip = (s: Step, fan: Map<string, number>, sp: Span) => {
     const w = (sp.end - sp.start) * pps;
     const pause = s.kind === 'wait' && !s.disabled;
     const instant = !pause && (w < 6 || !!s.disabled);
@@ -571,14 +643,14 @@ export function Timeline() {
     if (left + w < -40 || left > laneW + 40) return null;
     const label = stepLabel(s);
     const shown = stepText(s);
-    const top = pause ? rowTop(0) + 3 : RULER + 2;
+    const top = pause ? rowTop(0) + 3 : stepsTop + 2;
     const height = pause ? tracksH(rows) - 6 : STRIP - 4;
     return (
       <div
         key={s.id}
-        className={`clip step ${s.kind} ${pause ? 'pause' : ''} ${instant ? 'instant' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
+        className={`clip step ${s.kind} ${pause ? 'pause' : ''} ${instant ? 'instant' : ''} ${sp.skipped || sp.elsewhere ? 'unrun' : ''} ${selected.has(s.id) ? 'sel' : ''} ${s.disabled ? 'disabled' : ''} ${error?.id === s.id ? 'err' : ''} ${ghost(s.id) ? 'ghost' : ''} ${sp.estimated ? 'estimated' : ''} ${canTrimStep(s) ? '' : 'fixed'}`}
         style={{ left: instant ? Math.max(0, left - 7) : left, width: instant ? 14 : Math.max(w, 3), top, height, ['--clip' as string]: STEP_COLORS[s.kind] }}
-        title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${s.disabled ? '\nDisabled: left out of the code' : ''}`}
+        title={`${label.title}${s.comment ? `\n${s.comment}` : ''}\n${timecode(sp.start)} → ${timecode(sp.end)}  (${(sp.end - sp.start).toFixed(2)}s)${RUNS(sp)}${s.disabled ? '\nDisabled: left out of the code' : ''}`}
         tabIndex={0}
         role="button"
         aria-pressed={selected.has(s.id)}
@@ -639,6 +711,7 @@ export function Timeline() {
           <button className="ghost small" onClick={() => addStep('add', { targets: objNames() })} title="self.add(...) at the playhead: objects appear without an animation">+ Add</button>
           <button className="ghost small" onClick={() => addStep('remove', { targets: objNames() })} title="self.remove(...) at the playhead: objects disappear without an animation">+ Remove</button>
           <button className="ghost small" onClick={() => addStep('apply', { target: objNames()[0] })} title="Call methods on an object at the playhead (obj.next_to(…), .set_color(…)…): it changes at once, without an animation">+ Change</button>
+          <button className="ghost small" onClick={() => { const sel = getState().selection; wrapInBlock(sel?.kind === 'clips' ? sel.ids : []); }} title="Repeat the selected clips in a loop (for i in range(2)), or add an empty block at the playhead. Its header can be any for, while, if, with…">+ Repeat</button>
           <button className="ghost small" onClick={() => addStep('assign')} title="Set a value at the playhead (k = 2, total += 1): a variable later steps can use">+ Value</button>
           <button className="ghost small" onClick={() => addStep('uncouple', { targets: objNames() })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
           <button className="ghost small" onClick={() => addStep('couple', { targets: objNames() })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
@@ -732,12 +805,27 @@ export function Timeline() {
                 </div>
               );
             })}
+            {slay.blocks.map((b) => renderBlock(b))}
+            {rules(sdoc, slay).map((r) => {
+              const left = x(r.start), w = Math.max((r.end - r.start) * pps, 4);
+              const sel = r.object ? selection?.kind === 'object' && selection.id === r.id : selected.has(r.id);
+              return (
+                <div key={'rule' + r.id + r.start} className={`rule-bar ${sel ? 'sel' : ''}`} role="button" tabIndex={0}
+                  style={{ left, width: w, top: RULER + blocksH + 1 + r.row * RULE_H, height: RULE_H - 2 }}
+                  title={`${r.name}${r.what === '.add_updater(…)' ? '.add_updater(…)' : ` = ${r.what}(…)`}: manim runs it on every frame, ${timecode(r.start)} → ${timecode(r.end)}`}
+                  aria-label={`Updater on ${r.name}, ${timecode(r.start)} to ${timecode(r.end)}`}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (r.object) setState({ selection: { kind: 'object', id: r.id } }); else selectClips([r.id]); } }}
+                  onPointerDown={(e) => { if (e.button !== 0) return; e.stopPropagation(); if (r.object) setState({ selection: { kind: 'object', id: r.id } }); else selectClips([r.id]); }}>
+                  <span>⟳ {r.name}</span>
+                </div>
+              );
+            })}
             {(() => {
-              const steps = sdoc.timeline.filter((s) => !(s.kind === 'play' && !s.disabled));
+              const steps = sdoc.timeline.filter((s) => !(s.kind === 'play' && !s.disabled) && s.kind !== 'block' && s.kind !== 'end');
               const fan = fanned(steps, slay);
               return steps.map((s) => renderStep(s, slay, fan));
             })()}
-            {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).flatMap((s) => (s.anims ?? []).map((a, i) => renderAnim(a, s, i, slay)))}
+            {sdoc.timeline.filter((s) => s.kind === 'play' && !s.disabled).flatMap((s) => (s.anims ?? []).flatMap((a, i) => [renderAnim(a, s, i, slay), ...renderIters(a, i, slay)]))}
             {drag?.mode === 'marquee' && (
               <div className="marquee" style={{ left: Math.min(drag.x0, drag.x1), top: Math.min(drag.y0, drag.y1), width: Math.abs(drag.x1 - drag.x0), height: Math.abs(drag.y1 - drag.y0) }} />
             )}
@@ -987,6 +1075,10 @@ export function stepLabel(s: Step): { name: string; sub: string; title: string }
     }
     case 'apply':
       return { name: s.target ?? '', sub: firstCall(s.chain ?? ''), title: `${s.target ?? ''}${(s.chain ?? '').trim()}` };
+    case 'block':
+      return { name: (s.head ?? '').trim() || 'if True', sub: '', title: `${(s.head ?? '').trim() || 'if True'}:` };
+    case 'end':
+      return { name: 'end of block', sub: '', title: 'The end of a block: the steps after it run once it is done' };
     case 'assign':
       return { name: s.target ?? '', sub: `${s.op ?? '='} ${firstLine(s.value ?? '')}`, title: `${s.target ?? ''} ${s.op ?? '='} ${s.value ?? ''}` };
     default:

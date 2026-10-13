@@ -18,6 +18,7 @@ export interface SceneObject {
   instance?: InstanceRef; // part of an inserted construction
   after?: string; // created right after this timeline step (as in the imported code); none: at the top of construct()
   comment?: string; // comment lines written above it in the code
+  eol?: string; // the comment at the end of its (last) line in the code
   chain_layout?: string[]; // how the code spread the chain: [on the line that makes it, then each line of calls after it]
   positional?: string[]; // the arguments the code passed by position, in order
   gap?: boolean; // a blank line before it in the code
@@ -102,15 +103,17 @@ export interface TemplateInput {
  * play: self.play(*anims, **args) · wait: self.wait(**args) · add / remove: self.add(*targets) · code: any Python ·
  * couple / uncouple: switch constructions · call: self.<method>(**args), any other method of the scene
  * (next_section, add_sound, move_camera…) · apply: target.method(…) · assign: target op value (k = 2, total += x).
- * A step starts when the one before it ends.
+ * block … end: a compound statement (for, while, if/elif/else, with, try…) around the steps between them; a block whose
+ * head starts with elif / else / except / finally is the next clause of the open one. A step starts when the one before it ends.
  */
-export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply' | 'assign';
+export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply' | 'assign' | 'block' | 'end';
 
 export interface Step {
   id: string;
   kind: StepKind;
   disabled?: boolean; // left out of the code
   comment?: string; // comment lines above it in the code
+  eol?: string; // the comment at the end of its (last) line in the code
   anims?: Anim[]; // play
   args?: Args; // play: self.play keyword arguments (run_time, rate_func…); wait: duration…; call: the method's arguments
   method?: string; // call: the scene method
@@ -124,6 +127,7 @@ export interface Step {
   chain?: string; // apply: the methods, ".next_to(u, UP).set_color(RED)"
   op?: string; // assign: "=", "+=", "-="…
   value?: string; // assign: the expression on the right
+  head?: string; // block: its header without the colon, "for d in dots", "if k > 2", "else"
   written?: Written;
 }
 

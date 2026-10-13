@@ -139,6 +139,17 @@ def native(src: str, scene: str) -> dict:
     return {"duration": round(float(s.renderer.time), 4), "plays": s.renderer.num_plays, "frames": frames}
 
 
+def all_statements(body: list) -> int:
+    """Statements, those in loops, ifs, withs and trys too (the timeline shows each one as a step)."""
+    n = 0
+    for st in body:
+        n += 1
+        if isinstance(st, (ast.For, ast.While, ast.If, ast.With, ast.Try)):
+            n += all_statements(st.body) + all_statements(st.orelse) + all_statements(getattr(st, "finalbody", []))
+            n += sum(all_statements(h.body) for h in getattr(st, "handlers", []))
+    return n
+
+
 def count_statements(code: str) -> int:
     try:
         return len(ast.parse(textwrap.dedent(code)).body)
@@ -278,7 +289,7 @@ def one(path: str, scene: str) -> dict:
 
     # structure
     cls, construct = construct_of(src, scene)
-    res["statements"] = len(construct.body)
+    res["statements"] = all_statements(construct.body)
     res["code_statements"] = sum(count_statements(s.get("code", "")) for s in doc["timeline"] if s["kind"] == "code")
     kinds: collections.Counter = collections.Counter()
     for s in doc["timeline"]:

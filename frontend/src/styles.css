@@ -767,3 +767,21 @@ button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-over
 .kf-args { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 2px 0; }
 .kf-args .field { flex: 1; min-width: 0; width: auto; }
 .kf-args .kf-pin { padding: 0 5px; margin-left: 2px; }
+
+/* blocks: a compound statement's bar (for, if, with…) over the clips of its body; its later runs, faint */
+.clip.block-bar { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 6px; padding: 0 6px; border-radius: 3px 3px 0 0; font-size: 10.5px; overflow: hidden; white-space: nowrap; background: var(--clip); border-color: rgba(255, 220, 140, 0.45); }
+.clip.block-bar::before, .clip.block-bar::after { display: none; }
+.clip.block-bar .clip-name { font-family: var(--mono); font-weight: 600; }
+.clip.block-bar.clause { border-left: 2px solid #ffd36b; border-radius: 0; }
+.clip.block-bar.unrun { opacity: 0.6; }
+.block-col { position: absolute; border-left: 1px solid rgba(255, 211, 107, 0.35); border-right: 1px solid rgba(255, 211, 107, 0.35); background: rgba(255, 211, 107, 0.03); pointer-events: none; }
+.block-col.sel { background: rgba(255, 211, 107, 0.08); border-color: rgba(255, 211, 107, 0.8); }
+.block-col.disabled { opacity: 0.4; }
+.block-repeats { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255, 211, 107, 0.5); background: repeating-linear-gradient(-45deg, rgba(255, 211, 107, 0.05) 0 6px, transparent 6px 12px); }
+.clip.iter { opacity: 0.32; pointer-events: none; border-style: dotted; }
+.clip.iter .clip-head { background: transparent; }
+.clip.unrun { opacity: 0.4; border-style: dotted; }
+/* an updater: a rule manim runs on every frame, from where it is set to where it is cleared */
+.rule-bar { position: absolute; border-radius: 6px; background: repeating-linear-gradient(90deg, #2e5f5a 0 6px, #2a5550 6px 12px); border: 1px solid #4f9a90; font: 600 9.5px/11px var(--mono); color: #fff; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.rule-bar.sel { border-color: #fff; box-shadow: 0 0 0 1px #fff; }
+.rule-bar:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }

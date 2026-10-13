@@ -1,5 +1,7 @@
 """manim code -> document -> manim code: the imported scene runs exactly like the original."""
 
+import ast
+import collections
 import json
 
 import numpy as np
@@ -119,9 +121,10 @@ def test_statements_become_steps_objects_and_code():
     assert objs["square"]["chain"] == ".shift(RIGHT * 2).set_fill(RED, opacity=0.5)"
     # Objects are made where the code makes them: dots after the move, t after the Transform.
     kinds = [s["kind"] for s in doc["timeline"]]
-    assert kinds == ["play", "play", "wait", "play", "play", "play", "code", "add", "play", "add", "play", "remove", "play", "wait"]
+    assert kinds == ["play", "play", "wait", "play", "play", "play", "block", "apply", "end", "add", "play", "add", "play", "remove",
+                     "play", "wait"]
     steps = doc["timeline"]
-    assert "after" not in objs["circle"] and objs["dots"]["after"] == steps[3]["id"] and objs["t"]["after"] == steps[8]["id"]
+    assert "after" not in objs["circle"] and objs["dots"]["after"] == steps[3]["id"] and objs["t"]["after"] == steps[10]["id"]
     play = steps[1]
     assert play["args"] == {"run_time": "2"}
     assert [(a["cls"], a["target"], a["args"]) for a in play["anims"]] == [("Create", "circle", {}), ("FadeIn", "square", {"shift": "UP"})]
@@ -132,11 +135,12 @@ def test_statements_become_steps_objects_and_code():
     assert lagged["cls"] == "LaggedStart" and lagged["args"] == {"*": "*[FadeIn(d) for d in dots]", "lag_ratio": "0.2"}
     group = steps[5]["anims"][0]
     assert group["cls"] == "AnimationGroup" and [(c["cls"], c["target"]) for c in group["anims"]] == [("Indicate", "circle"), ("Rotate", "square")]
-    assert steps[6]["code"] == "for d in dots:\n    d.set_color(GREEN)"
-    assert [(a["cls"], a["target"], a["args"]) for a in steps[8]["anims"]] == [("Transform", "circle", {"*": "square"}),
+    # the loop is a block around its body's steps
+    assert (steps[6]["head"], steps[7]["target"], steps[7]["chain"]) == ("for d in dots", "d", ".set_color(GREEN)")
+    assert [(a["cls"], a["target"], a["args"]) for a in steps[10]["anims"]] == [("Transform", "circle", {"*": "square"}),
                                                                                ("LaggedStartMap", "dots", {"*": "FadeOut"})]
     # animations an expression builds are clips of their own, their code as written
-    assert [(a["cls"], a["src"]) for a in steps[12]["anims"]] == [("expr", "*[FadeOut(m) for m in [title, circle]]")]
+    assert [(a["cls"], a["src"]) for a in steps[14]["anims"]] == [("expr", "*[FadeOut(m) for m in [title, circle]]")]
 
 
 def test_codegen_places_objects_where_they_are_made():
@@ -197,17 +201,16 @@ class Demo(Scene):
 def test_comments_at_the_end_of_a_line_stay_with_their_statement():
     res = import_code(TRAILING)
     by_name = {o["name"]: o for o in res.doc["objects"]}
-    assert by_name["circle"]["comment"] == "# the main shape"
-    assert by_name["label"]["comment"] == "# not a comment inside the string"  # the "#" inside the string is text
-    comments = [s.get("comment") for s in res.doc["timeline"]]
+    assert by_name["circle"]["eol"] == "# the main shape" and "comment" not in by_name["circle"]
+    assert by_name["label"]["eol"] == "# not a comment inside the string"  # the "#" inside the string is text
+    comments = [s.get("eol") for s in res.doc["timeline"]]
     assert comments == ["# draw it", "# both together", "# let it sink in", None], comments
-    src = codegen.generate(res.doc).source
-    for text in ["# the main shape", "# draw it", "# both together", "# let it sink in"]:
-        assert src.count(text) == 1, text
+    src = codegen.generate(res.doc, latex=True).source
+    assert src == TRAILING  # at the end of their lines, as written
     assert 'Text("a # b")' in src
 
 
-def test_a_comment_that_moved_above_its_statement_stays_put():
+def test_a_comment_above_its_statement_stays_put():
     first = codegen.generate(import_code(TRAILING).doc).source
     second = codegen.generate(import_code(first).doc).source
     assert first == second
@@ -558,3 +561,86 @@ def test_an_unused_import_at_the_top_stays_as_written():
            "    def construct(self):\n        self.wait()\n")
     doc = import_code(src).doc
     assert codegen.generate(doc, latex=True).source == src
+
+
+BLOCKS = '''from manim import *
+
+
+class B(Scene):
+    def construct(self):
+        dots = VGroup(*[Dot(RIGHT * k) for k in range(3)])
+        # one at a time
+        for i, d in enumerate(dots):  # each dot
+            self.play(FadeIn(d), run_time=0.5)
+            if i == 1:
+                self.play(d.animate.set_color(RED), run_time=0.5)
+            elif i == 2:
+                pass
+            else:
+                self.wait(0.25)
+
+        with open("/dev/null") as f:
+            self.wait(0.1)
+        try:
+            self.play(FadeOut(dots[0]))
+        except Exception as e:
+            self.wait()
+        finally:
+            k = 1
+        while k < 3:
+            k += 1
+        else:
+            self.wait(0.25)
+'''
+
+
+def test_loops_and_branches_are_blocks_on_the_timeline():
+    imp = import_code(BLOCKS)
+    tl = imp.doc["timeline"]
+    assert not [s for s in tl if s["kind"] == "code"]
+    heads = [s.get("head") for s in tl if s["kind"] == "block"]
+    assert heads == ["for i, d in enumerate(dots)", "if i == 1", "elif i == 2", "else", 'with open("/dev/null") as f', "try",
+                     "except Exception as e", "finally", "while k < 3", "else"]
+    assert [s["kind"] for s in tl].count("end") == 5
+    assert (tl[0]["comment"], tl[0]["eol"]) == ("# one at a time", "# each dot")
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == BLOCKS  # as written, comments at the end of lines too
+    again = import_code(out, base=imp.doc)
+    assert again.doc == imp.doc  # the same ids: nothing changed
+    # each body run is measured: the loop's three runs, its branches, the whole loop's time
+    r = runtime.run(imp.doc, render=False)
+    assert r.error is None, r.error
+    runs = collections.Counter(t.id for t in r.steps)
+    opener = tl[0]["id"]
+    end = next(s["id"] for s in reversed(tl[:tl.index(next(s for s in tl if s.get("head", "").startswith("with")))]) if s["kind"] == "end")
+    if_, elif_, else_ = [s["id"] for s in tl if s["kind"] == "block"][1:4]
+    assert runs[opener] == 3 and runs[if_] == 1 and runs[elif_] == 1 and runs[else_] == 1
+    whole = next(t for t in r.steps if t.id == end)
+    assert abs((whole.end - whole.start) - (3 * 0.5 + 0.5 + 0.25)) < 1e-6
+
+
+def test_editing_a_block_keeps_the_code_valid():
+    doc = import_code(BLOCKS).doc
+    tl = doc["timeline"]
+    i = next(k for k, s in enumerate(tl) if s.get("head") == "elif i == 2")
+    body = tl[i + 1:i + 1]  # the elif's body is empty: codegen writes pass
+    assert body == []
+    # a disabled block leaves its whole statement out (its steps too)
+    loop = tl[0]
+    loop["disabled"] = True
+    out = codegen.generate(doc, latex=True).source
+    ast.parse(out)
+    assert "for i, d" not in out and "set_color" not in out and "self.wait(0.1)" in out
+    back = import_code(out, base=doc).doc
+    assert [s["id"] for s in back["timeline"]] == [s["id"] for s in tl]  # it comes back whole, still disabled
+    assert back["timeline"][0].get("disabled")
+    loop.pop("disabled")
+    # unbalanced: a clause with no block and an end too many are left out; an empty body gets pass; an open
+    # block is closed at the end
+    doc["timeline"] = [{"id": "x1", "kind": "block", "head": "else"}, {"id": "x2", "kind": "end"},
+                       {"id": "x3", "kind": "block", "head": "for j in range(2)"},
+                       {"id": "x4", "kind": "block", "head": "if j"}, {"id": "x5", "kind": "end"}]
+    out = codegen.generate(doc, latex=True).source
+    body = out[out.index("def construct"):]
+    assert "else" not in body and "for j in range(2):\n            if j:\n                pass\n" in body, body
+    assert runtime.run(doc, render=False).error is None

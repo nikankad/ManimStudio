@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import catalog, codegen, construct, project, tex
+from . import catalog, codegen, construct, project, tex, timeline
 
 # Lines codegen writes itself; dropped from the header so they aren't written twice.
 _AUTO_IMPORTS = {"from manim import *", "import numpy as np", "import svgelements as se", construct.TERMS_IMPORT}
@@ -212,7 +212,7 @@ class _Importer:
         self.base_doc = base
         self.scene_cls: type | None = None
         self.scene_methods: list[str] = []
-        self.blocks = _base_blocks(base) if base else {}
+        self.blocks, self.base_compounds = _base_blocks(base) if base else ({}, [])
         self.reused_steps: set[str] = set()
         self.gap = False  # a blank line before the statement being read
         self.pending_gap = False
@@ -457,6 +457,90 @@ class _Importer:
             return None
         return {"id": _id("s"), "kind": "assign", "target": target, "op": op, "value": self.s.seg(stmt.value)}  # type: ignore[arg-type]
 
+    def clause_line(self, after: ast.stmt, before: ast.stmt, word: str) -> int:
+        """The line of the ``else:`` / ``finally:`` between two statements (they have no node of their own)."""
+        for k in range((after.end_lineno or after.lineno) + 1, before.lineno + 1):
+            if re.match(rf"\s*{word}\s*:", self.s.lines[k - 1]):
+                return k
+        return before.lineno
+
+    def compound(self, stmt: ast.stmt) -> list[tuple[str, list[ast.stmt], int]] | None:
+        """The clauses of a compound statement: (header without its colon, body, header line). None: not one the
+        timeline shows as a block (function and class definitions, match, async…)."""
+        seg = self.s.seg
+        if isinstance(stmt, (ast.For, ast.While)):
+            head = f"for {seg(stmt.target)} in {seg(stmt.iter)}" if isinstance(stmt, ast.For) else f"while {seg(stmt.test)}"
+            out = [(head, stmt.body, stmt.lineno)]
+            if stmt.orelse:
+                out.append(("else", stmt.orelse, self.clause_line(stmt.body[-1], stmt.orelse[0], "else")))
+            return out
+        if isinstance(stmt, ast.If):
+            out = [(f"if {seg(stmt.test)}", stmt.body, stmt.lineno)]
+            node = stmt
+            while node.orelse:
+                o = node.orelse
+                if len(o) == 1 and isinstance(o[0], ast.If) and self.s.lines[o[0].lineno - 1][o[0].col_offset:].startswith("elif"):
+                    out.append((f"elif {seg(o[0].test)}", o[0].body, o[0].lineno))
+                    node = o[0]
+                else:
+                    out.append(("else", o, self.clause_line(node.body[-1], o[0], "else")))
+                    break
+            return out
+        if isinstance(stmt, ast.With):
+            items = ", ".join(seg(i.context_expr) + (f" as {seg(i.optional_vars)}" if i.optional_vars else "") for i in stmt.items)
+            return [(f"with {items}", stmt.body, stmt.lineno)]
+        if isinstance(stmt, ast.Try):
+            out = [("try", stmt.body, stmt.lineno)]
+            last = stmt.body[-1]
+            for h in stmt.handlers:
+                head = "except" + (f" {seg(h.type)}" if h.type else "") + (f" as {h.name}" if h.name else "")
+                out.append((head, h.body, h.lineno))
+                last = h.body[-1]
+            if stmt.orelse:
+                out.append(("else", stmt.orelse, self.clause_line(last, stmt.orelse[0], "else")))
+                last = stmt.orelse[-1]
+            if stmt.finalbody:
+                out.append(("finally", stmt.finalbody, self.clause_line(last, stmt.finalbody[0], "finally")))
+            return out
+        return None
+
+    def header_comment(self, line: int) -> str:
+        """The comment after a one-line header (``for d in dots:  # each dot``)."""
+        m = re.search(r":\s*(#.*)$", self.s.lines[line - 1])
+        return m.group(1).strip() if m and "#" not in self.s.lines[line - 1][:m.start()] else ""
+
+    def read_compound(self, stmt: ast.stmt, parts: list[tuple[str, list[ast.stmt], int]], comment: str) -> None:
+        """A compound statement as block steps around its bodies' steps, keeping the ids of an unchanged one."""
+        ids = self.compound_ids(stmt, len(parts) - 1)
+        self.flush()
+        prev_end = 0
+        for k, (head, body, line) in enumerate(parts):
+            step = {"id": ids[0][k] if ids else _id("s"), "kind": "block", "head": head}
+            if k == 0:
+                self.add_step(step, comment, self.header_comment(line))
+            else:
+                self.gap = False
+                self.add_step(step, self.s.comments_above(line, prev_end)[1], self.header_comment(line))
+            if ids:
+                self.reused_steps.add(step["id"])
+            if len(body) == 1 and isinstance(body[0], ast.Pass):  # codegen writes it for an empty body
+                body = []
+            self.run(body, line)
+            prev_end = (body[-1].end_lineno or body[-1].lineno) if body else line
+        self.gap = False
+        end = {"id": ids[1] if ids else _id("s"), "kind": "end"}
+        if ids:
+            self.reused_steps.add(end["id"])
+        self.add_step(end, "")
+
+    def compound_ids(self, stmt: ast.stmt, clauses: int) -> tuple[list[str], str] | None:
+        """The ids of the same compound statement in the document the code was generated from."""
+        for k, (key, opener, clause_ids, end) in enumerate(self.base_compounds):
+            if key == _shell(stmt) and len(clause_ids) == clauses:
+                del self.base_compounds[k]
+                return [opener, *clause_ids], end
+        return None
+
     def statement_step(self, stmt: ast.stmt) -> dict | None:
         if (step := self.apply(stmt)) is not None:
             return step
@@ -550,18 +634,18 @@ class _Importer:
     def last_step(self) -> str | None:
         return self.steps[-1]["id"] if self.steps else None
 
-    def add_object(self, obj: dict, comment: str) -> None:
+    def add_object(self, obj: dict, comment: str, eol: str = "") -> None:
         after = self.last_step()
         if after:
             obj["after"] = after
         else:
             obj.pop("after", None)
-        _set_comment(obj, comment)
+        _set_comment(obj, comment, eol)
         _set_gap(obj, self.gap)
         self.objects.append(obj)
 
-    def add_step(self, step: dict, comment: str) -> None:
-        _set_comment(step, comment)
+    def add_step(self, step: dict, comment: str, eol: str = "") -> None:
+        _set_comment(step, comment, eol)
         _set_gap(step, self.gap)
         self.steps.append(step)
 
@@ -589,17 +673,23 @@ class _Importer:
             first, comment = self.s.comments_above(stmt.lineno, prev_end)
             # a blank line before it (and its comments), as the code separates its paragraphs
             self.gap = i > 0 and self.s.blank_between(prev_end, first)
+            parts = self.compound(stmt)
+            if parts is not None:
+                self.read_compound(stmt, parts, comment)
+                prev_end = stmt.end_lineno or stmt.lineno
+                i += 1
+                continue
             # Unchanged statements keep the document element they were generated from.
             hit = self.match_base(texts, i)
             if hit is not None:
                 kind, elem, n = hit
-                comment = _join_comments(comment, self.s.comment_after(body[i + n - 1]))
+                eol = self.s.comment_after(body[i + n - 1])
                 self.flush()
                 if kind == "object":
-                    self.add_object(elem, comment)
+                    self.add_object(elem, comment, eol)
                     self.known[elem["name"]] = self.cls_of(elem["ctor"]) or self.ctor_class(_expr(elem["ctor"]))[1]
                 elif kind == "step":
-                    self.add_step(elem, comment)
+                    self.add_step(elem, comment, eol)
                     self.reused_steps.add(elem["id"])
                 prev_end = body[i + n - 1].end_lineno or body[i + n - 1].lineno
                 i += n
@@ -621,7 +711,7 @@ class _Importer:
                 obj["chain"] += "".join(pieces)
                 self.flush()
                 obj["_src"] = self.s.verbatim(stmt, body[j - 1])
-                self.add_object(obj, _join_comments(comment, self.s.comment_after(body[j - 1])))
+                self.add_object(obj, comment, self.s.comment_after(body[j - 1]))
                 self.known[obj["name"]] = cls
                 prev_end = body[j - 1].end_lineno or body[j - 1].lineno
                 i = j
@@ -630,7 +720,7 @@ class _Importer:
             if step is not None:
                 step["_src"] = self.s.verbatim(stmt, stmt)
                 self.flush()
-                self.add_step(step, _join_comments(comment, self.s.comment_after(stmt)))
+                self.add_step(step, comment, self.s.comment_after(stmt))
             else:
                 if _self_call(stmt, "play") is not None:
                     self.notes.append(f"Line {stmt.lineno}: this self.play is kept as code (its animations are built by "
@@ -705,11 +795,16 @@ def _set_gap(elem: dict, gap: bool) -> None:
         elem.pop("gap", None)
 
 
-def _set_comment(elem: dict, comment: str) -> None:
+def _set_comment(elem: dict, comment: str, eol: str = "") -> None:
+    """The comment lines above an element, and the comment at the end of its (last) line."""
     if comment:
         elem["comment"] = comment
     else:
         elem.pop("comment", None)
+    if eol:
+        elem["eol"] = eol
+    else:
+        elem.pop("eol", None)
 
 
 def _keep_positional(elem: dict, given: dict, values: list[str]) -> None:
@@ -736,42 +831,73 @@ def _positional_names(klass: type) -> list[str]:
     return [p.name for p in params if p.kind is p.POSITIONAL_OR_KEYWORD]
 
 
-def _base_blocks(base: dict) -> dict[str, list[tuple[str, dict, list[str]]]]:
-    """The statements codegen writes for each object and step of ``base``, keyed by the first statement."""
+def _shell(stmt: ast.stmt) -> str:
+    """A compound statement without its bodies: what stays the same while the steps inside it change."""
+    c = copy.copy(stmt)
+    for f in ("body", "orelse", "finalbody"):
+        if getattr(c, f, None):
+            setattr(c, f, [ast.Pass()])
+    if isinstance(c, ast.Try):
+        c.handlers = [ast.ExceptHandler(type=h.type, name=h.name, body=[ast.Pass()]) for h in c.handlers]
+    return ast.unparse(c)
+
+
+_COMPOUND = (ast.For, ast.While, ast.If, ast.With, ast.Try)
+
+
+def _base_blocks(base: dict) -> tuple[dict[str, list[tuple[str, dict, list[str]]]], list[tuple[str, str, list[str], str]]]:
+    """The statements codegen writes for each object and step of ``base``, keyed by the first statement; and its
+    compound statements: (their shell, opener id, clause ids, end id), in order."""
     gen = codegen.generate(base, latex=True)
     try:
         tree = ast.parse(gen.source)
     except SyntaxError:
-        return {}
+        return {}, []
     scene = (base.get("scene") or {}).get("name") or "MainScene"
     cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == scene), None)
     fn = next((n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "construct"), None) if cls else None
     if fn is None:
-        return {}
+        return {}, []
     step_of: dict[str, str] = {}
     steps = {s["id"]: s for s in base.get("timeline") or []}
     for s in steps.values():
         for a in _walk(s.get("anims") or []):
             step_of[a["id"]] = s["id"]
+    shapes = timeline.compounds(base.get("timeline") or [])
     objects = {o["id"]: o for o in base.get("objects") or []}
-    groups: list[tuple[tuple[str, str] | None, list[str]]] = []
-    for stmt in fn.body:
-        ref = gen.linemap.get(stmt.lineno)
-        if ref and ref[0] == "anim":
-            ref = ("step", step_of.get(ref[1], ""))
-        if groups and groups[-1][0] == ref and ref is not None:
-            groups[-1][1].append(ast.unparse(stmt))
-        else:
-            groups.append((ref, [ast.unparse(stmt)]))
     out: dict[str, list[tuple[str, dict, list[str]]]] = {}
-    for ref, texts in groups:
-        if ref is None:
-            continue
-        elem = objects.get(ref[1]) if ref[0] == "object" else steps.get(ref[1]) if ref[0] == "step" else None
-        if elem is None:
-            continue
-        out.setdefault(texts[0], []).append(("object" if ref[0] == "object" else "step", elem, texts))
-    return out
+    compounds: list[tuple[str, str, list[str], str]] = []
+
+    def visit(body: list[ast.stmt]) -> None:
+        groups: list[tuple[tuple[str, str] | None, list[str]]] = []
+        for stmt in body:
+            ref = gen.linemap.get(stmt.lineno)
+            if isinstance(stmt, _COMPOUND):
+                if ref and ref[0] == "step" and ref[1] in shapes and shapes[ref[1]][1]:
+                    clause_ids, end = shapes[ref[1]]
+                    compounds.append((_shell(stmt), ref[1], clause_ids, end))  # type: ignore[arg-type]
+                for f in ("body", "orelse", "finalbody"):
+                    visit(getattr(stmt, f, None) or [])
+                for h in getattr(stmt, "handlers", None) or []:
+                    visit(h.body)
+                groups.append((None, []))
+                continue
+            if ref and ref[0] == "anim":
+                ref = ("step", step_of.get(ref[1], ""))
+            if groups and groups[-1][0] == ref and ref is not None:
+                groups[-1][1].append(ast.unparse(stmt))
+            else:
+                groups.append((ref, [ast.unparse(stmt)]))
+        for ref, texts in groups:
+            if ref is None:
+                continue
+            elem = objects.get(ref[1]) if ref[0] == "object" else steps.get(ref[1]) if ref[0] == "step" else None
+            if elem is None:
+                continue
+            out.setdefault(texts[0], []).append(("object" if ref[0] == "object" else "step", elem, texts))
+
+    visit(fn.body)
+    return out, compounds
 
 
 def _walk(anims: list[dict]):
@@ -781,23 +907,35 @@ def _walk(anims: list[dict]):
 
 
 def _restore_disabled(base: dict, steps: list[dict], reused: set[str]) -> list[dict]:
-    """Disabled steps aren't in the code: put each back after the step it followed, if that step is unchanged."""
+    """Disabled steps aren't in the code: put each back after the step it followed, if that step is unchanged. A
+    disabled block takes its whole compound statement out of the code, so it all comes back."""
     out = list(steps)
     prev: str | None = None
-    for s in base.get("timeline") or []:
+    tl = base.get("timeline") or []
+    shapes = timeline.compounds(tl)
+    index = {s["id"]: k for k, s in enumerate(tl)}
+    k = 0
+    while k < len(tl):
+        s = tl[k]
+        group = [s]
+        if s.get("disabled") and s["id"] in shapes and shapes[s["id"]][1]:
+            group = tl[k:index[shapes[s["id"]][1]] + 1]
+        k += len(group)
         if not s.get("disabled"):
             prev = s["id"]
             continue
         if prev is None:
             if reused:
-                out.insert(0, copy.deepcopy(s))
+                out[0:0] = copy.deepcopy(group)
+                prev = group[-1]["id"]
+                reused = reused | {g["id"] for g in group}
             continue
         if prev in reused:
-            i = next((k for k, x in enumerate(out) if x["id"] == prev), None)
+            i = next((j for j, x in enumerate(out) if x["id"] == prev), None)
             if i is not None:
-                out.insert(i + 1, copy.deepcopy(s))
-                prev = s["id"]
-                reused = reused | {s["id"]}
+                out[i + 1:i + 1] = copy.deepcopy(group)
+                prev = group[-1]["id"]
+                reused = reused | {g["id"] for g in group}
     return out
 
 

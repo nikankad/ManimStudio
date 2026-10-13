@@ -140,6 +140,12 @@ class PreviewMixin:
             timing.state0, timing.state1 = self._me_states.pop(sid)
         self._me_steps.append(timing)
 
+    def _me_enter(self, sid: str) -> None:
+        """A block's body starts (once per run of a loop, when an if's branch is taken…): measuring run only."""
+        if self._me_target is None:
+            t = self.renderer.time
+            self._me_steps.append(StepTiming(sid, t, t))
+
     def _me_state(self, sid: str, mob: Any, which: int) -> None:
         """An apply step's object before (0) and after (1) it: its keyframe (measuring run only)."""
         if self._me_target is None:

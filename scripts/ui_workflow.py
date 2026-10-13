@@ -1514,7 +1514,83 @@ def computed_steps(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def blocks(b):
+    """Loops, ifs, withs and trys are blocks on the timeline: a bar with the header and how many times the body ran,
+    over its first run laid out clip by clip, with the later runs drawn faintly after it. The header is edited in
+    Effect Controls; + else, Unwrap and + Repeat (around the selected clips) change the code's structure."""
+    code = ("from manim import *\n\n\nclass R(Scene):\n    def construct(self):\n        c = Circle()\n"
+            "        for i in range(3):\n            self.play(c.animate.shift(RIGHT), run_time=0.5)\n        self.wait()\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "loop.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        measured = "document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated') && !document.querySelector('.tl-lanes .block-bar.estimated')"
+        pg.wait_for_function(measured, timeout=60000)
+
+        def source():
+            pg.wait_for_timeout(300)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        assert source() == code
+        bar = pg.locator(".tl-lanes .clip.block-bar").first
+        assert bar.get_attribute("aria-label").startswith("for i in range(3), ×3"), bar.get_attribute("aria-label")
+        assert pg.locator(".tl-lanes .clip.anim.iter").count() == 2
+        # the header, edited: the loop runs 4 times once manim has measured it again
+        bar.click()
+        assert pg.locator(".inspector h3", has_text="Block").count() == 1
+        head = pg.get_by_label("Header")
+        head.fill("for i in range(4)")
+        head.press("Enter")
+        assert "        for i in range(4):\n            self.play(c.animate.shift(RIGHT), run_time=0.5)\n" in source()
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.block-bar')?.getAttribute('aria-label').includes('×4') && !document.querySelector('.tl-lanes .block-bar.estimated')", timeout=60000)
+        assert pg.locator(".tl-lanes .clip.anim.iter").count() == 3
+        # + else: an empty clause (pass); Unwrap: the steps run once, in place
+        pg.locator(".tl-lanes .clip.block-bar").first.click()
+        pg.get_by_role("button", name="+ else").click()
+        assert "        else:\n            pass\n" in source()
+        pg.locator(".tl-lanes .clip.block-bar").first.click()
+        pg.get_by_role("button", name="Unwrap").click()
+        src = source()
+        assert "for i" not in src and "else" not in src and "        self.play(c.animate.shift(RIGHT), run_time=0.5)\n        self.wait()\n" in src, src
+        # + Repeat around the selected clip; Delete takes the whole block
+        pg.locator(".tl-lanes .clip.step.pause").click()
+        pg.get_by_role("button", name="+ Repeat").click()
+        assert "        for i in range(2):\n            self.wait()\n" in source()
+        pg.locator(".tl-lanes .clip.block-bar").first.click()
+        pg.keyboard.press("Shift+Delete")
+        src = source()
+        assert "for i" not in src and "self.wait()" not in src, src
+        assert not pg.errors, pg.errors
+
+
+def updaters(b):
+    """A rule manim runs on every frame (add_updater, always_redraw) is a bar over the time it is on: from where it is
+    set to where it is cleared. Clicking it selects what sets it."""
+    code = (
+        "from manim import *\n\n\nclass U(Scene):\n    def construct(self):\n        t = ValueTracker(0)\n        c = Circle()\n"
+        "        c.add_updater(lambda m: m.set_x(t.get_value()))\n        num = always_redraw(lambda: Text(f\"{t.get_value():.2f}\").to_edge(UP))\n"
+        "        self.add(c, num)\n        self.play(t.animate.set_value(3))\n        c.clear_updaters()\n        self.play(c.animate.shift(DOWN))\n"
+        "        self.wait()\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "upd.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        bars = pg.locator(".tl-lanes .rule-bar")
+        assert [bars.nth(k).get_attribute("aria-label") for k in range(bars.count())] == [
+            "Updater on c, 00:00:00:00 to 00:00:01:00", "Updater on num, 00:00:00:00 to 00:00:03:00"]
+        bars.first.click()
+        pg.wait_for_timeout(200)
+        assert pg.locator(".inspector").get_by_text("add_updater", exact=False).count() >= 1
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

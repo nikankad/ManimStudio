@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { api } from '../api';
 import {
-  addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
+  addAnimation, addObject, docLayout, uid, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
   timecode, toast, toggleDisabled, updateDoc, useSignature, useStore, setMarker, deleteMarker,
 } from '../store';
-import { addChild, anchorTo, EPS, findAnim, layout, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { addChild, anchorTo, compoundOf, compounds, EPS, isClause, findAnim, layout, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
 import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
 import { animLabel, markerWhere, stepLabel } from './Timeline';
@@ -17,7 +17,7 @@ import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSe
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
 import { addKey, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
-import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
+import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects, unwrapBlock } from '../store';
 import { keys } from '../keys';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
@@ -541,6 +541,9 @@ function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: 
 /** Hover help for the clip settings that aren't manim arguments. */
 const CLIP_HELP: Record<string, TipContent> = {
   cls: { title: 'Animation', text: 'The manim animation this clip plays. Type or pick another class to switch to it. Arguments the new class doesn’t take must be removed below, or the clip shows an error.' },
+  eol: { title: 'Comment at the end of the line', text: 'Written after the statement on its line, as the code had it: self.play(...)  # the reveal.' },
+  blockHead: { title: 'Header', text: 'The line that opens the block, without its colon: for d in dots, while k < 3, if k > 2, with …, try. Its steps on the timeline are its body.' },
+  repeat: { title: 'Repeat', text: 'How many times the loop runs (range(n)): its steps play again each time.' },
   assignTarget: { title: 'Name', text: 'What gets the value: a variable (k), an attribute (self.count) or an item (values[0]). Several names unpack a tuple (a, b).' },
   assignValue: { title: 'Value', text: 'Any Python expression. It is worked out when the scene runs, at this point in it.' },
   addExpr: { title: 'Expressions', text: 'Anything else the statement passes: *dots spreads a list, VGroup(a, b) builds a group on the spot.' },
@@ -631,6 +634,18 @@ function CommentField({ step }: { step: Step }) {
   );
 }
 
+/** The comment at the end of a step's line in the code (`self.play(...)  # the reveal`). */
+function EolField({ step }: { step: Step }) {
+  return (
+    <label className="param"><span className="pname"><Tip tip={CLIP_HELP.eol}>line end</Tip></span>
+      <Field className="mono" value={step.eol ?? ''} placeholder="# at the end of its line" ariaLabel="Comment at the end of its line" onChange={(v) => setStep(step.id, (s) => {
+        if (v.trim()) s.eol = v.trim().startsWith('#') ? v.trim() : `# ${v.trim()}`;
+        else delete s.eol;
+      }, 'eol')} />
+    </label>
+  );
+}
+
 /** An apply step: methods called on an object at once (`label.next_to(u, UP)`), and that object's keyframes. */
 function ApplySection({ step }: { step: Step }) {
   const target = step.target ?? '';
@@ -668,6 +683,55 @@ function AssignSection({ step }: { step: Step }) {
       </label>
       <h4><Tip tip={CLIP_HELP.assignValue}>Value</Tip></h4>
       <CodeArea value={step.value ?? ''} minLines={1} onChange={(v) => setStep(step.id, (s) => void (s.value = v), 'value')} />
+    </section>
+  );
+}
+
+const REPEAT = /^\s*for\s+(\w+)\s+in\s+range\(\s*(\d+)\s*\)\s*$/;
+
+/** A block step: the header of a compound statement (for, while, if, with, try…), how many times its body ran, and
+ * its clauses. The steps between it and its end are its body: they run each time it does. */
+function BlockSection({ step }: { step: Step }) {
+  const doc = useStore((s) => s.doc);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const opener = compoundOf(doc.timeline, step.id) ?? step.id;
+  const shape = compounds(doc.timeline).get(opener);
+  const b = lay.blocks.find((x) => x.id === opener);
+  const head = step.head ?? '';
+  const rep = head.match(REPEAT);
+  const clause = b?.clauses.find((c) => c.id === step.id);
+  const runs = clause && clause.id !== opener ? clause.runs : b?.runs;
+  const kinds = doc.timeline.filter((x) => x.id === opener || shape?.clauses.includes(x.id)).map((x) => (x.head ?? '').trim().split(/\s/)[0]);
+  const canElse = ['for', 'while', 'if', 'elif', 'except'].includes(kinds[kinds.length - 1]) && !(kinds[0] === 'try' && kinds.includes('finally'));
+  const addClause = (h: string) => updateDoc((d) => {
+    const c = compounds(d.timeline).get(opener);
+    if (!c?.end) return;
+    d.timeline.splice(d.timeline.findIndex((x) => x.id === c.end), 0, { id: uid('s'), kind: 'block', head: h });
+  });
+  return (
+    <section>
+      {step.kind === 'end'
+        ? <p className="muted small">The end of the block: the steps after it run once the block is done.</p>
+        : <p className="muted small">{isClause(step) ? 'This clause’s steps run when the code reaches it.' : 'The steps under it on the timeline, up to its end, are its body: they run each time it does.'}{' '}
+          {runs !== undefined ? (runs === 0 ? 'Its body didn’t run.' : `Its body ran ${runs} time${runs === 1 ? '' : 's'}${b?.estimated ? ' (estimated)' : ''}.`) : ''}</p>}
+      {step.kind === 'block' && (
+        <>
+          <label className="param"><span className="pname"><Tip tip={CLIP_HELP.blockHead}>Header</Tip></span>
+            <Field className="mono" value={head} ariaLabel="Header" onChange={(v) => setStep(step.id, (s) => void (s.head = v.replace(/:\s*$/, '')), 'head')} />
+          </label>
+          {rep && (
+            <div className="fx-row"><Tip tip={CLIP_HELP.repeat}>Repeat</Tip>
+              <ScrubNumber value={+rep[2]} min={0} step={1} precision={0} suffix="×" onChange={(v) => setStep(step.id, (s) => void (s.head = `for ${rep[1]} in range(${Math.max(0, Math.round(v))})`), 'head')} />
+            </div>
+          )}
+        </>
+      )}
+      <div className="row">
+        {step.id !== opener && <button className="ghost small" onClick={() => selectClips([opener])}>Select the block</button>}
+        {!isClause(step) && canElse && shape?.end && <button className="ghost small" title="Add an else: steps that run when the block’s own don’t (or after a loop that wasn’t broken out of)" onClick={() => addClause('else')}>+ else</button>}
+        {kinds[0] === 'if' && !kinds.includes('else') && shape?.end && <button className="ghost small" title="Add an elif: another condition, tried when the ones before it are false" onClick={() => addClause('elif True')}>+ elif</button>}
+        <button className="ghost small" title="Take its steps out of the block: they run once, in place (other clauses go with their steps)" onClick={() => unwrapBlock(step.id)}>Unwrap</button>
+      </div>
     </section>
   );
 }
@@ -719,7 +783,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once', assign: 'Value' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
+      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once', assign: 'Value', block: isClause(step) ? 'Clause' : 'Block', end: 'End of block' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />
@@ -764,6 +828,7 @@ function StepInspector({ step }: { step: Step }) {
 
       {step.kind === 'apply' && <ApplySection step={step} />}
       {step.kind === 'assign' && <AssignSection step={step} />}
+      {(step.kind === 'block' || step.kind === 'end') && <BlockSection step={step} />}
 
       {(step.kind === 'add' || step.kind === 'remove') && (
         <section>
@@ -793,7 +858,7 @@ function StepInspector({ step }: { step: Step }) {
         </section>
       )}
 
-      <section><CommentField step={step} /></section>
+      <section><CommentField step={step} />{step.kind !== 'code' && step.kind !== 'end' && <EolField step={step} />}</section>
       <ClipActions id={step.id} />
     </div>
   );

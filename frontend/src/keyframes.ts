@@ -8,7 +8,7 @@
 import { closing, evalNumber, evalVector, fmtNum, splitTop } from './pyparse';
 import {
   EPS, findAnim, isMeasured, landing, layout, newAnim, numSrc, placeSteps, playStep, removeIds, setAnimDuration,
-  ensureDefined, waitStep, walk, type Layout,
+  ensureDefined, isClause, waitStep, walk, type Layout,
 } from './timeline';
 import type { Anim, Args, RunResult, SceneDoc, SceneObject, Step } from './types';
 
@@ -252,15 +252,24 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
     });
   };
   const stepsMeasured: Measured = new Map((measured?.steps ?? []).map((x) => [x.id, x as MeasuredClip]));
+  let depth = 0; // inside a block (a loop, an if…): the keyframes there are edited by their method's arguments
   for (const s of doc.timeline) {
-    if (s.disabled) continue;
+    const had = keys.length;
+    depth += s.kind === 'block' && !isClause(s) ? 1 : s.kind === 'end' && depth > 0 ? -1 : 0;
+    visit(s);
+    if (depth > 0) for (const k of keys.slice(had)) if (k.editable) Object.assign(k, { editable: false, why: 'It is inside a block that can run several times (a loop, an if…): edit it by its method’s arguments' });
+  }
+  return keys;
+
+  function visit(s: Step) {
+    if (s.disabled) return;
     if (s.kind === 'apply') {
       // methods called on it at once: a keyframe with no time before it (a jump)
       const sp = lay.steps.get(s.id);
       if (sp && s.target === name) read({ id: s.id, chain: s.chain }, sp, isMeasured(s, measured) ? stepsMeasured.get(s.id) : undefined, false);
-      continue;
+      return;
     }
-    if (s.kind !== 'play') continue;
+    if (s.kind !== 'play') return;
     const stepMeasured = isMeasured(s, measured);
     for (const top of s.anims ?? []) {
       for (const a of walk([top])) {
@@ -272,7 +281,6 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       }
     }
   }
-  return keys;
 }
 
 /** Which channels an object has: a ValueTracker has a value; anything else is drawn. */

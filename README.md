@@ -91,6 +91,20 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - **+ Change** adds a *Change at once* step: methods called on an object at that point without animating them
     (`label.next_to(c, UP)`, `g[0].set_color(RED)`, `self.camera.frame.scale(1.5)`). Its methods are edited like
     an object's, and each one is a keyframe with no time before it (a jump).
+  - **Blocks**: a loop, an `if` / `elif` / `else`, a `with` or a `try` is a bar in the Other strip with its header
+    and how many times its body ran (*for d in dots ×5*, *else ×2*, *didn’t run*). Its first run is laid out clip
+    by clip under the bar; the later runs follow it as faint clips, where manim measured them, so the timeline is
+    as long as the scene. A clip that only runs in later runs (an `else` taken on the second pass) shows there.
+    Select a bar to edit the header (`range(3)` loops get a Repeat count), add an `else` / `elif`, or **Unwrap**
+    the steps; **+ Repeat** puts the selected clips in `for i in range(2)`. Deleting, moving, copying or
+    disabling a block takes the whole statement; a clause goes with its steps. The code stays valid whatever the
+    edit: an empty body is written `pass`.
+  - **Values** (`k = 2`, `total += k`, `a, b = f()`) are steps of their own, edited by name, operation and value
+    (**+ Value** adds one). An animation built by an expression (`*[FadeOut(m) for m in dots]`) is a clip named
+    after what it builds, its code edited in Effect Controls. `self.add` / `self.remove` keep expressions
+    (`*row`, `VGroup(a, b)`), and methods called on anything (`VGroup(a, b).arrange()`) are *Change at once* steps.
+  - **Updaters** (`add_updater`, `always_redraw`) are bars over the time manim runs them, from where they are set
+    to `clear_updaters()` / `remove_updater()` (or the end); click one to select what sets it.
   - Drag the line under a track's name (V1, V2…) to change that track's height; double-click it for the usual
     height. Heights are remembered between launches.
   - **+ Add track** under the track names adds empty tracks, and × removes the last one while it's empty. A clip
@@ -166,14 +180,15 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     becomes the project. Each `self.play` becomes clips with their animations, `self.wait`, `self.add` and
     `self.remove` become statements, and `name = SomeMobject(...)` (with the method calls on it right after)
     becomes an object, created at the same point of `construct()` as in the file. Methods called on an object
-    later (`label.next_to(c, UP)`) become *Change at once* steps. Anything else (loops,
-    updaters, helper variables, a `self.play` whose animations come from a list) is kept as a code step. So
-    the scene runs exactly as written. Imports, helpers and custom Mobject classes stay at the top of the file,
+    later (`label.next_to(c, UP)`) become *Change at once* steps, values become value steps, and loops, ifs,
+    withs and trys become blocks around their steps. Only what has no step of its own (a `def` inside
+    `construct()`, a `match`, a bare expression) is kept as code, one step per statement. So the scene runs
+    exactly as written. Imports, helpers and custom Mobject classes stay at the top of the file,
     other methods of the scene class stay in it, and comments stay with their statements.
   - Code that is unchanged keeps what the editor knows about it: constructions, equation terms, disabled clips.
   - Imported code comes back as it was written: the top of the file (its imports and config, nothing added),
     chains inline or one call per line, arguments by position or by keyword, statements wrapped over several
-    lines, blank lines. A statement edited in the app is written the
+    lines, blank lines, comments above a statement or at the end of its line. A statement edited in the app is written the
     usual way again; the rest stays as it was.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track. The *Effects* tab holds
   animations; dropping one on a track targets the selected object. Double-clicking a class adds it too, at the

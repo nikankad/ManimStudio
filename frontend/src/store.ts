@@ -3,7 +3,7 @@ import { api, type AppInfo, type Recovery } from './api';
 import { pref, setPref } from './prefs';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
-import { anchorTo, cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
+import { anchorTo, cloneAnim, cloneStep, compoundOf, compounds, findAnim, withBlocks, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
 import type { Anim, Args, Catalog, CatalogEntry, Job, Link, Marker, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
 
 export interface VideoState {
@@ -708,6 +708,64 @@ export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: s
   return step.id;
 }
 
+/**
+ * Put steps in a block (`for i in range(2)` by default): the selected steps (from the first to the last, whole blocks
+ * included), or an empty one at the playhead. Returns the block's id.
+ */
+export function wrapInBlock(ids: string[], head = 'for i in range(2)'): string | null {
+  const opener: Step = { id: uid('s'), kind: 'block', head };
+  const end: Step = { id: uid('s'), kind: 'end' };
+  const doc = state.doc;
+  const steps = withBlocks(doc, ids.map((id) => (findStep(doc, id) ? id : findAnim(doc, id)?.step.id ?? '')).filter(Boolean));
+  const at = doc.timeline.map((s, i) => (steps.has(s.id) ? i : -1)).filter((i) => i >= 0);
+  if (!at.length) {
+    updateDoc((d) => void placeStepAt(d, [opener, end]));
+    selectClips([opener.id]);
+    return opener.id;
+  }
+  let from = at[0], to = at[at.length - 1];
+  // the range must hold whole blocks, and sit in one body
+  const shapes = compounds(doc.timeline);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of shapes.values()) {
+      const within = (i: number) => i >= from && i <= to;
+      const crosses = within(c.from) !== within(c.to) || (!within(c.from) && c.clauses.some((id) => within(doc.timeline.findIndex((x) => x.id === id))));
+      if (crosses) {
+        [from, to] = [Math.min(from, c.from), Math.max(to, c.to)];
+        grew = true;
+      }
+    }
+  }
+  updateDoc((d) => {
+    d.timeline.splice(to + 1, 0, end);
+    d.timeline.splice(from, 0, opener);
+  });
+  selectClips([opener.id]);
+  return opener.id;
+}
+
+/** Take the steps out of a block (its header and end go; a clause goes with its body). */
+export function unwrapBlock(id: string) {
+  const opener = compoundOf(state.doc.timeline, id);
+  if (!opener) return;
+  updateDoc((d) => {
+    const c = compounds(d.timeline).get(opener);
+    if (!c) return;
+    const gone = new Set([opener, ...(c.end ? [c.end] : [])]);
+    // other clauses' bodies (else, except…) would run as well once unwrapped: they go with their clause
+    const drop = withBlocks(d, c.clauses);
+    for (const s of d.timeline) if (gone.has(s.id) || drop.has(s.id)) for (const o of d.objects) if (o.after === s.id) {
+      const i = d.timeline.indexOf(s);
+      const prev = d.timeline.slice(0, i).reverse().find((x) => !gone.has(x.id) && !drop.has(x.id));
+      if (prev) o.after = prev.id;
+      else delete o.after;
+    }
+    d.timeline = d.timeline.filter((s) => !gone.has(s.id) && !drop.has(s.id));
+  });
+  selectClips([]);
+}
+
 /** The manim Scene class the scene is built on (its methods are what a statement can call). */
 export function sceneBase(doc: SceneDoc = state.doc): string {
   const names = doc.scene.base.split(',').map((b) => b.trim());
@@ -722,6 +780,8 @@ export function sceneCalls(doc: SceneDoc = state.doc): string[] {
 /** Turn steps and animations on or off (a disabled one is left out of the code). */
 export function toggleDisabled(ids: string[]) {
   const doc = state.doc;
+  // a block is switched on or off whole: its clauses and end stand for it
+  ids = [...new Set(ids.map((id) => { const s = findStep(doc, id); return s?.kind === 'block' || s?.kind === 'end' ? compoundOf(doc.timeline, id) ?? id : id; }))];
   const first = findStep(doc, ids[0]) ?? findAnim(doc, ids[0])?.anim;
   const off = !first?.disabled;
   updateDoc((d) => {
@@ -1104,7 +1164,7 @@ export function animateParam(name: string, to: number, duration = 1) {
 let clipboard: { steps: Step[]; anims: Anim[] } = { steps: [], anims: [] };
 export function copyClips() {
   if (state.selection?.kind !== 'clips') return;
-  const ids = new Set(state.selection.ids);
+  const ids = withBlocks(state.doc, state.selection.ids);
   const steps = state.doc.timeline.filter((s) => ids.has(s.id));
   const anims = [...ids].map((id) => findAnim(state.doc, id)).filter((r) => r && !ids.has(r.step.id)).map((r) => r!.anim);
   clipboard = structuredClone({ steps, anims });
