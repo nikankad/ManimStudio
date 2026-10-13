@@ -226,3 +226,40 @@ def test_methods_called_later_are_keyframes_that_jump():
     assert "c.set_color(RED).shift(LEFT * 2 + UP)" in roundtrip(move["doc"])
     gone = edit(doc, measured, {"op": "delete", "name": "c", "channel": "color", "index": 0})[0]
     assert "        c.shift(LEFT)\n" in roundtrip(gone["doc"])
+
+
+@needs_node
+def test_expressions_and_relative_keyframes_are_edited_by_their_arguments():
+    src = '''from manim import *
+
+
+class K(Scene):
+    def construct(self):
+        a = Dot()
+        b = Square(color=BLUE).shift(LEFT)
+        self.play(FadeIn(b))
+        self.play(b.animate.move_to(a.get_center()).set_opacity(0.5))
+        self.play(b.animate.next_to(a, UP))
+        self.play(Rotate(b, angle=a.get_x() + PI))
+        b.to_edge(LEFT, buff=1)
+'''
+    doc = import_code(src).doc
+    measured = measure(doc)
+    expr, nxt, rot, bad, pin, pin_jump = edit(doc, measured,
+        {"op": "args", "name": "b", "channel": "position", "index": 0, "value": "a.get_center() + UP"},
+        {"op": "args", "name": "b", "channel": "position", "index": 1, "value": "a, DOWN, buff=0.5"},
+        {"op": "args", "name": "b", "channel": "rotation", "index": 0, "value": "PI / 3"},
+        {"op": "args", "name": "b", "channel": "position", "index": 1, "value": "a, DOWN)"},
+        {"op": "pin", "name": "b", "channel": "position", "index": 1},
+        {"op": "pin", "name": "b", "channel": "position", "index": 2})
+    keys = expr["keys"]
+    assert [k["args"] for k in keys] == ["a.get_center()", "a, UP", "LEFT, buff=1"]
+    assert not keys[1]["editable"] and keys[1]["relative"] and not keys[0].get("relative")
+    assert "b.animate.move_to(a.get_center() + UP).set_opacity(0.5)" in roundtrip(expr["doc"])
+    assert "b.animate.next_to(a, DOWN, buff=0.5)" in roundtrip(nxt["doc"])
+    assert "Rotate(b, angle=PI / 3)" in roundtrip(rot["doc"])
+    assert "brackets" in bad["error"] and bad["doc"] == doc
+    # pinned: where next_to put it (measured), as a plain point
+    assert keys[1]["value"] == [0, 1.33]
+    assert "self.play(b.animate.move_to(UP * 1.33))" in roundtrip(pin["doc"])
+    assert "        b.move_to(LEFT * 5.111 + UP * 1.33)\n" in roundtrip(pin_jump["doc"])  # the to_edge step, pinned

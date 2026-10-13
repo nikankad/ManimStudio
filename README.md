@@ -86,8 +86,11 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     the group lasts as long as its longest animation. Clips read object first (*circle · Create*). A **hatched
     block** across the tracks is a pause (`self.wait`). `AnimationGroup`, `LaggedStart` and `Succession` show their
     animations inside the clip, at the times manim plays them. Times are measured by running the scene with manim.
-  - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, and anything
-    disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
+  - Steps that aren't animations (`self.add` / `self.remove`, code, couple / uncouple, scene calls, changes, and
+    anything disabled) sit in a slim **Other** strip under the ruler, shown only when the scene has some.
+  - **+ Change** adds a *Change at once* step: methods called on an object at that point without animating them
+    (`label.next_to(c, UP)`, `g[0].set_color(RED)`, `self.camera.frame.scale(1.5)`). Its methods are edited like
+    an object's, and each one is a keyframe with no time before it (a jump).
   - Drag the line under a track's name (V1, V2…) to change that track's height; double-click it for the usual
     height. Heights are remembered between launches.
   - **+ Add track** under the track names adds empty tracks, and × removes the last one while it's empty. A clip
@@ -112,9 +115,12 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
       right after is the same undo step. ◆ on a keyframe removes it (only that method, or the whole clip when that
       was all it did).
     - Changing a value off a keyframe adds one there; with no keyframes yet it changes the object as created.
-    - Where manim can't do it, it says why instead: at a time the object is already being animated (manim plays one
-      animation of an object at a time), or for keyframes written as expressions or placed relative to something
-      else (`next_to`, `to_edge`…), which are shown and edited in the code.
+    - A keyframe written as an expression (`move_to(a.get_center())`) or placed relative to something else
+      (`next_to(label, RIGHT)`, `to_edge(LEFT)`…) shows its method's arguments instead of a value, edited as code
+      (`label, LEFT, buff=0.5`), so it keeps following what it was placed by. **Pin** turns a relative one into
+      `.move_to(…)` where it is now, as an undoable edit; nothing is turned into a fixed point otherwise.
+    - At a time the object is already being animated, ◆ says why instead (manim plays one animation of an object at
+      a time).
   - Click a group's shading to select it (Effect Controls show its animations and the settings it gives them all,
     such as `run_time`, which also appear in the corner of the shading). With it selected, drag any of its clips to
     move the whole group; drag the shading's right edge to retime it; right-click the shading for disable / delete.
@@ -155,11 +161,15 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - **Paste a whole manim file** (or *Open manim file…* on Home, or `manim-studio scene.py`) and its scene
     becomes the project. Each `self.play` becomes clips with their animations, `self.wait`, `self.add` and
     `self.remove` become statements, and `name = SomeMobject(...)` (with the method calls on it right after)
-    becomes an object, created at the same point of `construct()` as in the file. Anything else (loops,
+    becomes an object, created at the same point of `construct()` as in the file. Methods called on an object
+    later (`label.next_to(c, UP)`) become *Change at once* steps. Anything else (loops,
     updaters, helper variables, a `self.play` whose animations come from a list) is kept as a code step. So
     the scene runs exactly as written. Imports, helpers and custom Mobject classes stay at the top of the file,
     other methods of the scene class stay in it, and comments stay with their statements.
   - Code that is unchanged keeps what the editor knows about it: constructions, equation terms, disabled clips.
+  - Imported code comes back as it was written: chains inline or one call per line, arguments by position or by
+    keyword, statements wrapped over several lines, blank lines. A statement edited in the app is written the
+    usual way again; the rest stays as it was.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track. The *Effects* tab holds
   animations; dropping one on a track targets the selected object. Double-clicking a class adds it too, at the
   centre or the first free spot beside what is already there, so adding several doesn't pile them up. `/` jumps to

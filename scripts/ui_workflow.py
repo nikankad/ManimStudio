@@ -1336,7 +1336,63 @@ def keyframe_controls(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def relative_keys(b):
+    """Keyframes the code places relative to something (next_to, to_edge) or with an expression are edited by their
+    method's arguments, as code; Pin turns one into .move_to where it is now. Later method calls (label.next_to(c, UP)
+    after c is made) are 'Change at once' steps with their own methods and keyframes."""
+    code = ("from manim import *\n\nclass K(Scene):\n    def construct(self):\n        c = Square(color=BLUE)\n"
+            "        label = Text(\"hi\")\n        self.play(Create(c))\n        label.next_to(c, UP)\n"
+            "        self.play(c.animate.next_to(label, RIGHT))\n        self.wait()\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "rel.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        pg.get_by_role("button", name="Program").click()
+
+        def saved():
+            pg.wait_for_timeout(300)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        # the later next_to is a step of its own, not code
+        step = pg.locator(".tl-lanes .clip.step.apply")
+        assert step.count() == 1, pg.locator(".tl-lanes .clip.step").all_inner_texts()
+        step.click()
+        assert pg.locator(".inspector h3", has_text="Change at once").count() == 1
+
+        # the .animate.next_to keyframe: its arguments, edited as code
+        pg.locator(".tl-lanes .clip.anim", has_text="next_to").first.click()
+        row = pg.locator('.kf-channel[data-channel="position"]')
+        pg.locator(".tl-header .timecode").click()
+        pg.locator(".tl-header input.timecode").fill("00:00:02:00")
+        pg.keyboard.press("Enter")
+        pg.wait_for_timeout(300)
+        args = row.locator(".kf-args input")
+        assert args.input_value() == "label, RIGHT", args.input_value()
+        args.fill("label, LEFT, buff=0.5")
+        args.press("Enter")
+        src = saved()
+        assert "self.play(c.animate.next_to(label, LEFT, buff=0.5))" in src, src
+        assert "        label.next_to(c, UP)\n" in src, src
+
+        # Pin: where it is now, as a point; one undo puts next_to back
+        pg.wait_for_function("!document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        pg.wait_for_timeout(1500)
+        row.locator(".kf-pin").click()
+        src = saved()
+        assert "self.play(c.animate.move_to(" in src and "next_to(label" not in src, src
+        pg.keyboard.press("Control+z")
+        pg.wait_for_timeout(300)
+        assert "c.animate.next_to(label, LEFT, buff=0.5)" in saved()
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

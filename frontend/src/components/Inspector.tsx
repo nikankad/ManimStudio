@@ -16,7 +16,7 @@ import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
-import { addKey, CHANNELS, channelsOf, deleteKey, keyframes, setBaseValue, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
+import { addKey, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
 import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
 import { keys } from '../keys';
 
@@ -1047,7 +1047,8 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         };
         const num = typeof value === 'number' ? value : null;
         let editor;
-        if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
+        if (on && !on.editable && !redraw) editor = <KeyArgs k={on} label={label} />;
+        else if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
         else if (ch === 'position') {
           const p = Array.isArray(value) ? value : null;
           editor = <>
@@ -1083,6 +1084,28 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         );
       })}
     </section>
+  );
+}
+
+/**
+ * A keyframe whose value is an expression or relative to something else (`.next_to(g, UP)`): its method's arguments,
+ * edited as code, and (relative ones) Pin, which makes it `.move_to(…)` where it is now.
+ */
+function KeyArgs({ k, label }: { k: Key; label: string }) {
+  const call = k.method === 'Rotate' ? 'Rotate(…, ' : `.${k.method}(`;
+  const tip = `${k.why ?? ''}${k.value !== undefined ? ` — now ${fmtKey(k.value)}` : ''}. Edit its arguments here.`;
+  return (
+    <span className="kf-args" title={tip}>
+      <span className="mono small">{call}</span>
+      <Field className="mono" value={k.args} ariaLabel={`Arguments of ${keyCode(k)} for ${label}`} onChange={() => {}}
+        onBlur={(v) => kfEdit((d) => setKeyArgs(d, k, v))} />
+      <span className="mono small">)</span>
+      {k.relative && (
+        <button className="x-btn kf-pin" disabled={!Array.isArray(k.value)}
+          title={Array.isArray(k.value) ? `Pin it where it is now: .${k.method}(…) becomes .move_to(${fmtKey(k.value)}), and it stops following what it was placed by` : 'Where it ends up is not measured yet'}
+          aria-label={`Pin ${label} where it is now`} onClick={() => kfEdit((d) => fixKey(d, k))}>Pin</button>
+      )}
+    </span>
   );
 }
 

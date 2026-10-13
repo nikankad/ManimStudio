@@ -80,8 +80,10 @@ export interface Key {
   start: number; // the clip's start and end (the keyframe)
   t: number;
   value?: KeyValue; // the channel's value at the keyframe (unknown: an expression, or not measured yet)
-  editable: boolean;
-  why?: string; // why it can't be edited here
+  editable: boolean; // its value can be set here (else its arguments can, as code: setKeyArgs)
+  why?: string; // why its value can't be set here
+  args: string; // the method's arguments as written (Rotate: its angle)
+  relative?: boolean; // it places the object relative to something else (next_to, to_edge…): fixKey can pin it
 }
 
 /** What a channel's value is made of before its first keyframe (the object as created). */
@@ -173,9 +175,9 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       if (ch === 'value' && from && typeof from.value === 'number') return from.value;
       return cur[ch];
     };
-    const push = (k: Omit<Key, 'start' | 't' | 'anim'>) => {
-      const key: Key = { ...k, anim: a.id, start: sp.start, t: sp.end };
-      if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…): edit it there' });
+    const push = (k: Omit<Key, 'start' | 't' | 'anim' | 'args'>, args: string) => {
+      const key: Key = { ...k, args: args.trim(), anim: a.id, start: sp.start, t: sp.end };
+      if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…), so its timing is the group\'s' });
       keys.push(key);
       cur[k.channel] = key.value;
     };
@@ -185,8 +187,8 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       push({
         channel: 'rotation', call: -1, method: 'Rotate',
         value: deg !== null && typeof b === 'number' ? b + toDeg(deg) : undefined,
-        editable: deg !== null && typeof b === 'number', why: deg === null ? `The angle is an expression (${rotateAngle(a as Anim)}): edit it in the code` : undefined,
-      });
+        editable: deg !== null && typeof b === 'number', why: deg === null ? `The angle is an expression (${rotateAngle(a as Anim)})` : undefined,
+      }, rotateAngle(a as Anim));
       return;
     }
     const calls = chainCalls(a.chain ?? '');
@@ -195,7 +197,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       const info = METHODS[c.name];
       if (!info) return;
       const ch = info.channel;
-      const expr = (src: string) => `The value is an expression (${src.trim().slice(0, 40)}): edit it in the code`;
+      const expr = (src: string) => `The value is an expression (${src.trim().slice(0, 40)})`;
       let value: KeyValue | undefined;
       let editable = true;
       let why: string | undefined;
@@ -203,7 +205,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       if (info.kind === 'other') {
         value = after(ch);
         editable = false;
-        why = `.${c.name}(…) places it relative to something else: edit it in the code`;
+        why = `.${c.name}(…) places it relative to something else`;
       } else if (ch === 'position') {
         const p = arg ? vec2(arg.src) : null;
         const b = before('position');
@@ -242,7 +244,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         if (v === null) [editable, why] = [false, expr(arg?.src ?? '')];
         else if (info.kind === 'rel' && typeof b !== 'number') [editable, why] = [false, 'Measuring where it starts…'];
       }
-      push({ channel: ch, call: i, method: c.name, value, editable, why });
+      push({ channel: ch, call: i, method: c.name, value, editable, why, relative: info.kind === 'other' && ch === 'position' }, c.args);
     });
   };
   const stepsMeasured: Measured = new Map((measured?.steps ?? []).map((x) => [x.id, x as MeasuredClip]));
@@ -366,13 +368,7 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
   if (key.method === 'Rotate' && 'cls' in a) {
     const b = before();
     if (typeof b !== 'number' || typeof value !== 'number') return 'Its angle before this is not known';
-    const src = angleSrc(value - b, rotateAngle(a));
-    if (a.args.angle !== undefined) a.args = { ...a.args, angle: src };
-    else if (a.args['*']) {
-      const parts = splitTop(a.args['*']);
-      parts[0] = src;
-      a.args = { ...a.args, '*': parts.map((p) => p.trim()).join(', ') };
-    } else a.args = { ...a.args, angle: src };
+    setAngle(a, angleSrc(value - b, rotateAngle(a)));
     return null;
   }
   const chain = a.chain ?? '';
@@ -412,6 +408,56 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
     return at(arg, num(value - b));
   }
   return 'Not editable';
+}
+
+/** Rotate's angle, where the code gives it (by keyword or first by position). */
+function setAngle(a: Anim, src: string) {
+  if (a.args.angle !== undefined) a.args = { ...a.args, angle: src };
+  else if (a.args['*']) {
+    const parts = splitTop(a.args['*']);
+    parts[0] = src;
+    a.args = { ...a.args, '*': parts.map((p) => p.trim()).join(', ') };
+  } else a.args = { ...a.args, angle: src };
+}
+
+/**
+ * Set a keyframe's method arguments as code (`g, UP, buff=0.5`; Rotate: its angle): for a keyframe whose value is an
+ * expression or relative to something else, this is how it is edited. Only that call changes.
+ */
+export function setKeyArgs(d: SceneDoc, key: Key, text: string): string | null {
+  const a = clipOf(d, key.anim);
+  if (!a) return 'Its clip is gone';
+  const t = text.trim();
+  if (t === key.args) return null;
+  const one = chainCalls(`.${key.method}(${t})`);
+  if (!one || one.length !== 1 || one[0].args !== t) return "Its brackets or quotes don't match";
+  if (key.call < 0) {
+    if (!('cls' in a) || a.cls !== 'Rotate') return 'The clip changed: try again';
+    if (!t) return 'Rotate needs an angle';
+    setAngle(a, t);
+    return null;
+  }
+  const chain = a.chain ?? '';
+  const call = chainCalls(chain)?.[key.call];
+  if (!call || call.name !== key.method) return 'The clip changed: try again';
+  a.chain = splice(chain, call.argStart, call.argEnd, t);
+  return null;
+}
+
+/**
+ * Pin a relative keyframe (`.next_to(g, UP)`, `.to_edge(LEFT)`…) where it puts the object now: its call becomes
+ * `.move_to(…)` at that point, and the object no longer follows what it was placed by.
+ */
+export function fixKey(d: SceneDoc, key: Key): string | null {
+  if (!key.relative) return 'It is not placed relative to something';
+  if (!Array.isArray(key.value)) return 'Where it ends up is not measured yet';
+  const a = clipOf(d, key.anim);
+  if (!a) return 'Its clip is gone';
+  const chain = a.chain ?? '';
+  const call = chainCalls(chain)?.[key.call];
+  if (!call || call.name !== key.method) return 'The clip changed: try again';
+  a.chain = splice(chain, call.at, call.end, `.move_to(${pointSrc(key.value, '')})`);
+  return null;
 }
 
 /** Remove a keyframe: the method that sets it (the whole clip when that was all it did; its time stays as a pause). */

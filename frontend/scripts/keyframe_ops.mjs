@@ -1,5 +1,5 @@
 // Applies keyframe edits (frontend/src/keyframes.ts) for tests/test_keyframes.py (run from here so vite resolves): reads
-// {doc, measured, cases: [{op, name, channel, index?, t?, value}]} from stdin and prints, for each case, the edited
+// {doc, measured, cases: [{op: set|delete|add|base|args|pin, name, channel, index?, t?, value}]} from stdin and prints, for each case, the edited
 // document (or the error) and the object's keyframes before the edit. Each case starts from the same document.
 import { createServer } from 'vite';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,9 @@ try {
       const r = kf.addKey(d, measured, c.name, c.channel, c.t, c.value);
       error = r.error ?? null;
       id = r.id ?? null;
-    } else if (c.op === 'base') kf.setBaseValue(d.objects.find((o) => o.name === c.name), c.channel, c.value);
+    } else if (c.op === 'args') error = kf.setKeyArgs(d, mine[c.index], c.value);
+    else if (c.op === 'pin') error = kf.fixKey(d, mine[c.index]);
+    else if (c.op === 'base') kf.setBaseValue(d.objects.find((o) => o.name === c.name), c.channel, c.value);
     return { doc: d, error, id, keys: mine };
   });
   process.stdout.write(JSON.stringify(out));
