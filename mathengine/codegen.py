@@ -431,7 +431,7 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         # the top of the file as the code had it (its imports, config, helpers, blank lines)
         for line in written.get("as", "").split("\n"):
             emit(line, ("header", "header"))
-        if not latex:
+        if not latex and tex.NUMBERS_SOURCE.strip("\n") not in written.get("as", ""):
             emit(tex.NUMBERS_SOURCE.strip("\n"))
             emit("")
             emit("")
@@ -628,7 +628,7 @@ def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> li
         bg = cfg.get("background_color")
         if bg:
             emit(f"config.background_color = {bg!r}")
-    if not latex:
+    if not latex and tex.NUMBERS_SOURCE.strip("\n") not in (doc.get("header") or ""):
         emit("")
         emit(tex.NUMBERS_SOURCE.strip("\n"))
     comp = defs.compile_defs(doc.get("defs") or [], defs.manim_names())

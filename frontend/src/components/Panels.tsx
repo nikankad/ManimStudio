@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
   addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, isOwnRecovery, loadDoc, selectedObjectIds,
-  pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
+  pasteClips, projectEpoch, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
 import { noteTry } from './TryThis';
 import { zoomBy, zoomToFit } from './Timeline';
@@ -22,15 +22,30 @@ const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
 const PYTHON_FILES = 'manim code (*.py)';
 const PROJECT_EXT = /\.(manimstudio|mathengine)$/;
 
-export async function saveProject(saveAs = false) {
+// Keep writes in invocation order: a slow earlier save must not overwrite a newer one.
+let saving: Promise<void> = Promise.resolve();
+
+export function saveProject(saveAs = false): Promise<void> {
+  const opened = projectEpoch();
+  const next = saving.then(() => saveCurrentProject(saveAs, opened));
+  saving = next.catch(() => undefined);
+  return next;
+}
+
+async function saveCurrentProject(saveAs: boolean, opened: number) {
+  if (projectEpoch() !== opened) return;
   const s = getState();
   let path = s.path;
   const suggested = `${s.doc.scene.name.replace(/Scene$/, '') || 'scene'}.manimstudio`;
   if (!path || saveAs) path = await askPath('save', suggested, [PROJECT_FILES], 'Save project to path:');
-  if (!path) return;
+  if (!path || projectEpoch() !== opened) return;
   if (!PROJECT_EXT.test(path)) path += '.manimstudio'; // projects from earlier versions keep their .mathengine name
-  await api.saveProject(path, s.doc);
-  setState({ path, dirty: false });
+  // A native file chooser is asynchronous; include any edits made while it was open.
+  const snapshot = getState().doc;
+  await api.saveProject(path, snapshot);
+  if (projectEpoch() !== opened) return;
+  // Only this snapshot reached disk. Keep later edits dirty, and keep their recovery copy.
+  setState({ path, dirty: getState().doc !== snapshot });
   toast(`Saved ${path}`);
 }
 

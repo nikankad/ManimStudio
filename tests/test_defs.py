@@ -49,6 +49,22 @@ def test_compile_and_evaluate():
     assert info["d3"]["length"] == 3
 
 
+def test_function_without_inputs_can_be_called():
+    found = [{"id": "f", "name": "f", "kind": "function", "params": [], "expr": "2 pi"},
+             {"id": "a", "name": "a", "kind": "value", "expr": "f()"}]
+    assert not defs.compile_defs(found).errors
+    assert defs.namespace(found)["a"] == pytest.approx(2 * math.pi)
+    assert defs.evaluate(found)["a"]["value"] == pytest.approx(2 * math.pi)
+    with pytest.raises(M.ExprError, match="takes 3 inputs"):
+        M.parse("if()", allow_x=False)
+
+
+@pytest.mark.parametrize("index", ["for", "np", "sum", "isprime", "int", "range", "all"])
+def test_invalid_sum_index_is_explained(index):
+    with pytest.raises(M.ExprError, match="name of an index"):
+        M.parse(f"sum({index}, 1, 3, 1)", allow_x=False)
+
+
 @pytest.mark.parametrize("d,fragment", [
     ({"id": "a", "name": "sin", "kind": "value", "expr": "1"}, "already"),
     ({"id": "a", "name": "Circle", "kind": "value", "expr": "1"}, "manim"),
@@ -85,6 +101,15 @@ def test_graph_uses_a_definition_and_round_trips():
 def test_shown_as_math():
     r = M.analyze_function("y = if(x < 0, 0, x^2) + sum(k, 1, 3, sin(k x)/k)", None, (-3, 3))
     assert r["ok"] and r["normalized"] == "if(x < 0, 0, x ^ 2) + sum(k, 1, 3, sin(k * x) / k)"
+
+
+@pytest.mark.parametrize("comparison,expected", [("<=", 1), (">=", 1), ("==", 1), ("!=", 2)])
+@pytest.mark.parametrize("prefix", ["", "y = "])
+def test_graph_comparisons_are_not_mistaken_for_assignment(comparison, expected, prefix):
+    expr = M.parse_function(f"{prefix}if(x {comparison} 0, 1, 2)")
+    assert M.evaluate(expr.ast, 0, {}) == expected
+    result = M.analyze_function(f"{prefix}if(x {comparison} 0, 1, 2)", None, (-2, 2))
+    assert result["ok"], result
 
 
 @pytest.mark.parametrize("r,head", [

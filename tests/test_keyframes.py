@@ -266,9 +266,168 @@ class K(Scene):
 
 
 @needs_node
+@pytest.mark.parametrize("duration", [0.5, 2])
+@pytest.mark.parametrize("mode", ["clip", "shared", "shared_with_clip_override"])
+def test_key_added_at_group_end_uses_the_entire_group_duration(duration, mode):
+    shared = mode != "clip"
+    create = "Create(c)" if shared else f"Create(c, run_time={duration})"
+    if mode == "shared_with_clip_override":
+        create = f"Create(c, run_time={duration * 2})"
+    timing = f", run_time={duration}" if shared else ""
+    doc = import_code(f'''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Square()
+        t = ValueTracker(0)
+        self.play({create}{timing})
+''').doc
+    added = edit(doc, measure(doc), {"op": "add", "name": "t", "channel": "value", "t": duration, "value": 5})[0]
+    assert added["error"] is None
+    roundtrip(added["doc"])
+    measured = measure(added["doc"])
+    new = next(a for a in measured["anims"] if a["id"] == added["id"])
+    assert (new["start"], new["end"], new["to"]) == (0, duration, {"value": 5})
+    assert measured["duration"] == duration
+
+
+@needs_node
+@pytest.mark.parametrize("name,channel,chain,before,desired,fragment,state", [
+    ("c", "position", ".shift(RIGHT).shift(RIGHT * 2)", [3, 0], [4, 1],
+     ".shift(RIGHT).shift(RIGHT * 3 + UP)", {"center": [4, 1]}),
+    ("c", "position", ".move_to(LEFT).shift(RIGHT * 2).shift(RIGHT * 2)", [3, 0], [4, 0],
+     ".move_to(LEFT).shift(RIGHT * 2).shift(RIGHT * 3)", {"center": [4, 0]}),
+    ("c", "scale", ".scale(2).scale(3)", 6, 9, ".scale(2).scale(4.5)", {"width": 27}),
+    ("c", "rotation", ".rotate(PI / 4).rotate(PI / 4)", 90, 180,
+     ".rotate(PI / 4).rotate(3 * PI / 4)", {"width": 3, "height": 1}),
+    ("t", "value", ".increment_value(2).increment_value(3)", 6, 10,
+     ".increment_value(2).increment_value(7)", {"value": 10}),
+    ("t", "value", ".set_value(2).increment_value(3).increment_value(4)", 9, 10,
+     ".set_value(2).increment_value(3).increment_value(5)", {"value": 10}),
+    ("c", "color", ".set_color(YELLOW).set_color(GREEN)", "GREEN", "RED",
+     ".set_color(YELLOW).set_color(RED)", {"color": "#FC6255"}),
+    ("c", "opacity", ".set_opacity(0.2).set_opacity(0.7)", 0.7, 0.5,
+     ".set_opacity(0.2).set_opacity(0.5)", {"opacity": 0.5}),
+])
+def test_chained_methods_have_one_editable_endpoint(name, channel, chain, before, desired, fragment, state):
+    doc = import_code(f'''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Rectangle(width=3, height=1)
+        t = ValueTracker(1)
+        self.play(Create(c))
+        self.play({name}.animate{chain})
+''').doc
+    changed = edit(doc, measure(doc), {"op": "set", "name": name, "channel": channel, "index": 0, "value": desired})[0]
+    assert changed["error"] is None, changed["error"]
+    assert len(changed["keys"]) == 1
+    key = changed["keys"][0]
+    assert key["value"] == (before if isinstance(before, str) else pytest.approx(before))
+    assert key["call"] == chain.count("(") - 1
+    assert fragment in roundtrip(changed["doc"])
+    aid = doc["timeline"][-1]["anims"][0]["id"]
+    after = anim_state(measure(changed["doc"]), aid)
+    for field, expected in state.items():
+        assert after[field] == (expected if isinstance(expected, str) else pytest.approx(expected))
+
+
+@needs_node
+def test_deleting_a_chained_endpoint_removes_all_writers_of_its_channel():
+    doc = import_code('''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Square()
+        self.play(Create(c))
+        self.play(c.animate.shift(RIGHT).set_color(RED).shift(RIGHT * 2))
+''').doc
+    deleted = edit(doc, measure(doc), {"op": "delete", "name": "c", "channel": "position", "index": 0})[0]
+    assert deleted["error"] is None
+    assert "c.animate.set_color(RED)" in roundtrip(deleted["doc"])
+    assert "shift(" not in roundtrip(deleted["doc"])
+    measured = measure(deleted["doc"])
+    aid = doc["timeline"][-1]["anims"][0]["id"]
+    assert anim_state(measured, aid)["center"] == [0, 0]
+    assert measured["duration"] == 2
+
+
+@needs_node
+@pytest.mark.parametrize("shared", [False, True])
+@pytest.mark.parametrize("measured", [False, True])
+def test_returning_easing_uses_the_real_endpoint_for_later_keys(shared, measured):
+    rate = ", rate_func=there_and_back" if shared else ""
+    animate = "c.animate" if shared else "c.animate(rate_func=there_and_back)"
+    doc = import_code(f'''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Square()
+        self.play(Create(c))
+        self.play({animate}.move_to(RIGHT * 2).scale(2){rate})
+        self.wait(2)
+''').doc
+    original = measure(doc) if measured else None
+    added, scale, position, args = edit(doc, original,
+        {"op": "add", "name": "c", "channel": "scale", "t": 3, "value": 3},
+        {"op": "set", "name": "c", "channel": "scale", "index": 0, "value": 3},
+        {"op": "set", "name": "c", "channel": "position", "index": 0, "value": [3, 0]},
+        {"op": "args", "name": "c", "channel": "scale", "index": 0, "value": "3"})
+    assert added["error"] is None
+    assert added["keys"][0]["value"] == 1  # returns from scale 2 to scale 1
+    assert not added["keys"][0]["editable"]
+    assert "returns to the starting value" in scale["error"] and scale["doc"] == doc
+    assert "returns to the starting value" in position["error"] and position["doc"] == doc
+    if measured:
+        assert position["keys"][0]["value"] == [0, 0]
+    assert ".scale(3)" in roundtrip(args["doc"])  # target arguments remain editable
+    assert ".scale(3)" in roundtrip(added["doc"])
+    assert anim_state(measure(added["doc"]), added["id"])["width"] == 6
+
+
+@needs_node
+def test_custom_easing_endpoint_is_measured_instead_of_assumed():
+    doc = import_code('''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Square()
+        t = ValueTracker(0)
+        self.play(Create(c))
+        self.play(c.animate(rate_func=lambda t: t / 2).shift(RIGHT * 4),
+                  t.animate(rate_func=lambda t: t / 2).set_value(8))
+''').doc
+    position, tracker = edit(doc, measure(doc),
+        {"op": "set", "name": "c", "channel": "position", "index": 0, "value": [4, 0]},
+        {"op": "set", "name": "t", "channel": "value", "index": 0, "value": 8})
+    assert position["keys"][0]["value"] == [2, 0]
+    assert tracker["keys"][0]["value"] == 4
+    for changed in (position, tracker):
+        assert "ends before or beyond" in changed["error"] and changed["doc"] == doc
+
+
+@needs_node
+def test_position_edit_uses_arguments_when_a_later_method_rotates_the_translation():
+    doc = import_code('''from manim import *
+
+class K(Scene):
+    def construct(self):
+        c = Square()
+        self.play(Create(c))
+        self.play(c.animate.shift(RIGHT).rotate(PI / 2, about_point=ORIGIN))
+''').doc
+    changed, args = edit(doc, measure(doc),
+        {"op": "set", "name": "c", "channel": "position", "index": 0, "value": [2, 0]},
+        {"op": "args", "name": "c", "channel": "position", "index": 0, "value": "RIGHT * 2"})
+    assert changed["keys"][0]["value"] == [0, 1]
+    assert "Later methods" in changed["error"] and changed["doc"] == doc
+    assert args["error"] is None
+    assert "shift(RIGHT * 2).rotate(PI / 2, about_point=ORIGIN)" in roundtrip(args["doc"])
+
+
+@needs_node
 def test_a_call_after_another_in_one_clip_starts_where_that_one_ends():
-    src = \
-'''from manim import *
+    src = '''from manim import *
 
 
 class K(Scene):
@@ -280,9 +439,10 @@ class K(Scene):
 '''
     doc = import_code(src).doc
     measured = measure(doc)
-    edited, base = edit(doc, measured, {"op": "set", "name": "c", "channel": "position", "index": 1, "value": [0, 2]},
+    edited, base = edit(doc, measured, {"op": "set", "name": "c", "channel": "position", "index": 0, "value": [0, 2]},
                         {"op": "base", "name": "t", "channel": "value", "value": 5})
-    assert edited["keys"][1]["value"] == [0, 1]  # after move_to(ORIGIN), not from where c started
+    assert len(edited["keys"]) == 1
+    assert edited["keys"][0]["value"] == [0, 1]  # after move_to(ORIGIN), not from where c started
     assert "c.animate.move_to(ORIGIN).shift(UP * 2)" in roundtrip(edited["doc"])
     assert "t = ValueTracker(value=5)" in roundtrip(base["doc"])  # not ValueTracker(5, value=3)
 
@@ -318,6 +478,29 @@ def test_stroke_width_is_a_keyframe_channel():
     assert "c.animate.set_stroke(width=1)" in roundtrip(added["doc"])
     play = [s for s in doc["timeline"] if s["kind"] == "play"][2]
     assert anim_state(measured, play["anims"][0]["id"])["stroke"] == 10
+
+
+@needs_node
+@pytest.mark.parametrize("channel,fragment,color,width", [
+    ("stroke", ".set_stroke(RED, None)", "#FC6255", 2),
+    ("color", ".set_stroke(None, 6)", "#58C4DD", 6),
+])
+def test_deleting_one_stroke_property_preserves_the_others(channel, fragment, color, width):
+    doc = import_code('''from manim import *
+class S(Scene):
+    def construct(self):
+        c = Square(color=BLUE, stroke_width=2)
+        self.play(Create(c))
+        self.play(c.animate.set_stroke(RED, 6))
+''').doc
+    removed = edit(doc, measure(doc), {"op": "delete", "name": "c", "channel": channel, "index": 0})[0]
+    assert removed["error"] is None
+    assert fragment in roundtrip(removed["doc"])
+    remaining = edit(removed["doc"], measure(removed["doc"]), {"op": "list", "name": "c", "channel": channel})[0]
+    assert not remaining["keys"]
+    state = anim_state(measure(removed["doc"]), doc["timeline"][-1]["anims"][0]["id"])
+    assert state["stroke"] == width
+    assert state["color"] == color
 
 
 CAMERA = '''from manim import *

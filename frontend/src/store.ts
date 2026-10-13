@@ -264,6 +264,8 @@ export function toast(msg: string) {
 
 // Each opened project is a new epoch: a frame, timeline or render asked for an earlier one never shows in this one.
 let epoch = 0;
+/** Identifies an opened project even if its path or document later changes. */
+export const projectEpoch = () => epoch;
 let frameBusy = false;
 let frameWanted = false;
 export let previewWidth = 960;

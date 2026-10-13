@@ -823,7 +823,8 @@ export function setAnimDuration(d: SceneDoc, id: string, seconds: number) {
     }
     const old = r.step.args.run_time;
     delete r.step.args.run_time;
-    for (const a of r.step.anims ?? []) if (a !== r.anim && a.args.run_time === undefined) a.args.run_time = old;
+    // The group's duration overrode explicit sibling durations too.
+    for (const a of r.step.anims ?? []) if (a !== r.anim) a.args.run_time = old;
   }
   r.anim.args = { ...r.anim.args, run_time: v };
 }

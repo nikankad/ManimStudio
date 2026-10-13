@@ -6,6 +6,112 @@ import pytest
 
 from conftest import anim, doc, obj, play
 from mathengine import render
+from mathengine.importer import import_code
+
+
+def test_concurrent_project_renders_keep_their_own_script_and_video(tmp_path, monkeypatch):
+    import threading
+    import av
+
+    monkeypatch.setattr(render, "cache_root", lambda: tmp_path / "cache")
+
+    def scene(color, duration):
+        return import_code(f"""from manim import *
+class S(Scene):
+    def construct(self):
+        square = Square(color={color}, fill_opacity=1)
+        self.add(square)
+        self.wait({duration})
+""").doc
+
+    first = render.RenderJob(scene("RED", 0.2), "preview", None, "same-project")
+    second = render.RenderJob(scene("BLUE", 0.4), "preview", None, "same-project")
+    started, release, attempted = threading.Event(), threading.Event(), threading.Event()
+    pump = render.RenderJob._pump
+
+    def hold_first(job, proc):
+        if job is first:
+            started.set()
+            assert release.wait(30)
+        pump(job, proc)
+
+    monkeypatch.setattr(render.RenderJob, "_pump", hold_first)
+    a = threading.Thread(target=first._run_registered)
+
+    def run_second():
+        attempted.set()
+        second._run_registered()
+
+    b = threading.Thread(target=run_second)
+    a.start()
+    try:
+        assert started.wait(30)
+        b.start()
+        assert attempted.wait(5)
+        b.join(0.5)
+        assert second.state == "queued", "same-project jobs must wait before touching the shared script/cache"
+    finally:
+        release.set()
+        a.join(60)
+        if b.ident is not None:
+            b.join(60)
+        if a.is_alive() or b.is_alive():
+            first.cancel()
+            second.cancel()
+    assert first.state == second.state == "done", (first.message, second.message)
+    assert first.result != second.result
+    for job, frames, dominant in [(first, 6, 0), (second, 12, 2)]:
+        with av.open(str(job.result)) as movie:
+            images = [f.to_ndarray(format="rgb24") for f in movie.decode(video=0)]
+        assert len(images) == frames
+        pixel = images[-1][240, 427]
+        assert int(pixel[dominant]) > int(pixel[2 - dominant]) + 50
+
+
+def test_cancel_before_start_does_not_launch_or_revive_job(tmp_path, monkeypatch):
+    monkeypatch.setattr(render, "cache_root", lambda: tmp_path / "cache")
+    def unexpected_spawn(*args, **kwargs):
+        pytest.fail("a cancelled job launched Manim")
+    monkeypatch.setattr(render.subprocess, "Popen", unexpected_spawn)
+    job = render.RenderJob(doc([]), "preview", None, "cancelled-project")
+    job.cancel()
+    job._run_registered()
+    assert job.state == "cancelled"
+    assert not job.workdir.exists()
+
+
+@pytest.mark.parametrize('quality,expected', [('preview', (854, 480, 30)), ('project', (400, 300, 15))])
+def test_selected_quality_overrides_imported_python_config(tmp_path, monkeypatch, quality, expected):
+    """An imported module runs after manim parses its CLI flags; it must not undo the export dialog."""
+    import av
+
+    monkeypatch.setattr(render, 'cache_root', lambda: tmp_path / 'cache')
+    source = '''from manim import *
+config.pixel_width = 320
+config.pixel_height = 240
+config.frame_rate = 12
+
+class S(Scene):
+    def construct(self):
+        square = Square()
+        self.play(FadeIn(square), run_time=0.2)
+
+config.frame_rate = 10
+'''
+    d = import_code(source).doc
+    d['config'].update(pixel_width=400, pixel_height=300, frame_rate=15)
+    # Keep the original top-level Python intact, as the importer normally does.
+    job = render.RenderJob(d, quality, None, 'quality-test')
+    job.start()
+    deadline = time.monotonic() + 120
+    while job.state in ('queued', 'running') and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if job.state in ('queued', 'running'):
+        job.cancel()
+    assert job.state == 'done', job.message + '\n' + job.log
+    with av.open(str(job.result)) as movie:
+        video = movie.streams.video[0]
+        assert (video.width, video.height, float(video.average_rate)) == expected
 
 
 def write_movie(path, frames=5):

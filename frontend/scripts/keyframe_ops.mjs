@@ -1,5 +1,5 @@
 // Applies keyframe edits (frontend/src/keyframes.ts) for tests/test_keyframes.py (run from here so vite resolves): reads
-// {doc, measured, cases: [{op: set|delete|add|base|args|pin, name, channel, index?, t?, value}]} from stdin and prints, for each case, the edited
+// {doc, measured, cases: [{op: list|set|delete|add|base|args|pin, name, channel, index?, t?, value}]} from stdin and prints, for each case, the edited
 // document (or the error) and the object's keyframes before the edit. Each case starts from the same document.
 import { createServer } from 'vite';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,8 @@ try {
     const mine = keys.filter((k) => k.channel === c.channel);
     let error = null;
     let id = null;
-    if (c.op === 'set') error = kf.setKeyValue(d, lay, measured, mine[c.index], c.value);
+    if (c.op === 'list') { /* Only read the current endpoints. */ }
+    else if (c.op === 'set') error = kf.setKeyValue(d, lay, measured, mine[c.index], c.value);
     else if (c.op === 'delete') error = kf.deleteKey(d, lay, mine[c.index]);
     else if (c.op === 'add') {
       const r = kf.addKey(d, measured, c.name, c.channel, c.t, c.value);

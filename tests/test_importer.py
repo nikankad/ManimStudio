@@ -7,7 +7,7 @@ import json
 import numpy as np
 import pytest
 
-from mathengine import codegen, importer, runtime, samples
+from mathengine import codegen, importer, runtime, samples, tex
 from mathengine.importer import CodeError, import_code
 
 SCENE = '''
@@ -385,7 +385,7 @@ def _construct(src: str) -> str:
     return src[src.index("def construct"):]
 
 
-def test_imported_code_comes_back_as_it_was_written():
+def test_imported_code_comes_back_as_it_was_written(monkeypatch):
     doc = import_code(STYLE).doc
     out = codegen.generate(doc).source
     assert _construct(out) == _construct(STYLE), out  # inline chains, lines of calls, positional args, blank lines
@@ -394,11 +394,27 @@ def test_imported_code_comes_back_as_it_was_written():
     top = "from manim import *\n\nclass S(Scene):\n    def construct(self):\n        self.wait()\n"
     doc = import_code(top).doc
     assert codegen.generate(doc, latex=True).source == top
-    for latex in (True, False):  # without LaTeX the number helper is added below it, and taken out when read back
+    for latex in (True, False):  # the importer removes helpers it will regenerate in the same environment
+        monkeypatch.setattr(tex, "latex_available", lambda: latex)
         assert import_code(codegen.generate(doc, latex=latex).source, base=doc).doc == doc
     doc["config"]["background_color"] = "#222222"  # changed in the app: written the usual way
     out = codegen.generate(doc, latex=True).source
     assert "config.background_color = '#222222'" in out and "import numpy as np" in out, out
+
+
+def test_number_fallback_survives_import_into_a_latex_environment(monkeypatch):
+    """Import must keep the original number rendering when the receiving machine has LaTeX."""
+    monkeypatch.setattr(tex, "latex_available", lambda: False)
+    doc = import_code("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        self.wait()\n").doc
+    fallback = codegen.generate(doc, latex=False).source
+    monkeypatch.setattr(tex, "latex_available", lambda: True)
+    imported = import_code(fallback, base=doc).doc
+    assert tex.NUMBERS_SOURCE.strip() in imported["header"]
+    for latex in (True, False):
+        generated = codegen.generate(imported, latex=latex).source
+        assert generated.count(tex.NUMBERS_SOURCE.strip()) == 1
+    imported["config"]["background_color"] = "#222222"  # changing the header also keeps exactly one helper
+    assert codegen.generate(imported, latex=False).source.count(tex.NUMBERS_SOURCE.strip()) == 1
 
 
 def test_edited_code_falls_back_to_the_usual_style():
