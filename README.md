@@ -157,7 +157,11 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
 - **Code** (the **</> Code** tab next to the program monitor): the scene as a manim file, both ways.
   - Edit the code and the timeline, canvas and inspector follow (as you type, after a short pause; turn off
     *Live* to apply with ⌘/Ctrl+Enter). Edit those and the code follows.
-  - Clicking a line selects what it makes, and selecting a clip or object highlights its lines.
+  - With the Code tab open, click anything on the timeline (a clip, an animation inside a `LaggedStart`, a group's
+    shading, a pause, a change, a marker) and the block of code that makes it lights up as one box (an animation:
+    its whole `self.play`, with the animation's own expression marked inside it), and faintly the lines where the
+    object it animates is made. Clicking in the
+    code does the reverse: it selects the innermost animation (or the object, or the statement) under the caret.
   - **Paste a whole manim file** (or *Open manim file…* on Home, or `manim-studio scene.py`) and its scene
     becomes the project. Each `self.play` becomes clips with their animations, `self.wait`, `self.add` and
     `self.remove` become statements, and `name = SomeMobject(...)` (with the method calls on it right after)

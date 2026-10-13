@@ -335,7 +335,7 @@ const TOPICS: Topic[] = [
         <ul>
           <li>Every field accepts Python: click <code>{'{}'}</code> next to a field to type any expression manim accepts (<code>BLUE</code>, <code>UP * 2</code>, <code>lambda x: x**2</code>).</li>
           <li><b>Code</b> steps (<i>+ Code</i> on the timeline) run any manim code inside <code>construct()</code>.</li>
-          <li>The <b>&lt;/&gt; Code</b> tab is the whole scene as a manim file, and it works both ways. Edit it and the timeline, canvas and inspector follow; edit those and the code follows. Clicking a line selects what it makes, and selecting a clip highlights its line.</li>
+          <li>The <b>&lt;/&gt; Code</b> tab is the whole scene as a manim file, and it works both ways. Edit it and the timeline, canvas and inspector follow; edit those and the code follows. Click anything on the timeline and the block of code that makes it lights up (for an animation, its whole <code>self.play</code> with the animation marked inside, and faintly where its object is made); click in the code to select the animation or object under the caret.</li>
           <li>Paste a whole manim file into it (or use <i>Open manim file…</i> on Home, or <code>manim-studio scene.py</code>) and its scene becomes the timeline. Each <code>self.play</code> becomes clips, objects are created where the code creates them, and anything else (loops, updaters, helper variables) is kept as code, so the scene runs exactly as written. Imports, helpers and custom classes stay at the top of the file, and other methods of the scene class stay in it.</li>
           <li><i>Save .py</i> writes a standalone manim file.</li>
           <li><b>Export video</b> renders with manim at the quality you choose.</li>

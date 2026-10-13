@@ -25,6 +25,7 @@ export interface ValueCheck {
 
 /** What a line of the generated code comes from. */
 export type LineKind = 'object' | 'step' | 'anim' | 'header';
+export type CodeSpan = [number, number, number, number];
 
 export type ImportResult =
   | { ok: true; doc: SceneDoc; scenes: string[]; notes: string[] }
@@ -104,7 +105,8 @@ export const api = {
     post<Signature>('/api/signature', { expr, header, object_classes }),
   run: (doc: SceneDoc, t: number | null, render: boolean, width = 960) =>
     post<RunResult>('/api/run', { doc, t, render, width }),
-  code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]> }>('/api/code', { doc }),
+  // spans: where each element's code is, [line, col, end line, end col] (an animation: its exact expression)
+  code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]>; spans?: Record<string, CodeSpan[]> }>('/api/code', { doc }),
   importCode: (code: string, base: SceneDoc | null, scene?: string) => post<ImportResult>('/api/import_code', { code, base, scene }),
   exportCode: (doc: SceneDoc, path: string) => post<{ path: string }>('/api/export_code', { doc, path }),
   render: (doc: SceneDoc, quality: string, output?: string) => post<Job>('/api/render', { doc, quality, output }),

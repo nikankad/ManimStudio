@@ -1392,7 +1392,67 @@ def relative_keys(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def code_highlight(b):
+    """With the Code tab open, clicking something on the timeline highlights the block of code that makes it (an
+    animation: its whole self.play, with its own expression marked inside, also inside LaggedStart…; a group, a
+    pause, a change: their statement), and faintly where the object it animates is made. Clicking in the code selects the innermost animation there."""
+    code = ("from manim import *\n\n\nclass Multi(Scene):\n    def construct(self):\n        a = Circle()\n"
+            "        b = Text(\"é b\")\n        self.play(FadeIn(a), Write(b))\n        self.play(\n"
+            "            LaggedStart(FadeOut(a), b.animate.shift(UP), lag_ratio=0.5),\n            run_time=2,\n        )\n"
+            "        self.wait()\n        b.set_color(RED)\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "multi.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated')", timeout=60000)
+        pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+        pg.wait_for_timeout(800)
+        ta = pg.locator(".code-monitor textarea")
+        assert ta.input_value() == code, ta.input_value()
+
+        def lit():  # highlighted lines, related lines, and the exact text each mark covers
+            return pg.evaluate("""() => {
+              const ln = (e) => e.innerText.trim();
+              const marks = [...document.querySelectorAll('.code-mark')].map((m) => {
+                const row = m.closest('.code-ln'), text = row.querySelector('span').innerText;
+                const ch = parseFloat(m.style.width) ? m.getBoundingClientRect().width / parseFloat(m.style.width) : 1;
+                const left = Math.round((m.getBoundingClientRect().left - row.querySelector('span').getBoundingClientRect().left) / ch);
+                return text.slice(left, left + Math.round(parseFloat(m.style.width)));
+              });
+              return { sel: [...document.querySelectorAll('.code-ln.sel')].map(ln), rel: [...document.querySelectorAll('.code-ln.rel')].map(ln), marks };
+            }""")
+
+        pg.locator('.tl-lanes .clip.anim[aria-label^="Write b"]').click()
+        pg.wait_for_timeout(300)
+        r = lit()
+        assert r == {"sel": ["self.play(FadeIn(a), Write(b))"], "rel": ['b = Text("é b")'], "marks": ["Write(b)"]}, r
+        pg.locator(".tl-lanes .kid", has_text=".animate").dispatch_event("pointerdown", {"button": 0})
+        pg.wait_for_timeout(300)
+        r = lit()
+        assert r["marks"] == ["b.animate.shift(UP)"] and r["rel"] == ['b = Text("é b")'], r
+        assert r["sel"][0] == "self.play(" and r["sel"][-1] == ")" and len(r["sel"]) == 4, r  # the whole block
+        pg.locator(".play-band").nth(1).focus()
+        pg.keyboard.press("Enter")
+        pg.wait_for_timeout(300)
+        r = lit()
+        assert r["sel"][0] == "self.play(" and r["sel"][-1] == ")" and len(r["sel"]) == 4 and not r["marks"], r
+        pg.locator(".tl-lanes .clip.step.pause").click()
+        pg.wait_for_timeout(300)
+        assert lit()["sel"] == ["self.wait()"]
+        pg.locator(".tl-lanes .clip.step.apply").click()
+        pg.wait_for_timeout(300)
+        assert lit()["sel"] == ["b.set_color(RED)"]
+
+        # the other way: the caret on FadeOut(a) selects that animation inside the LaggedStart
+        pos = code.index("FadeOut(a)") + 3
+        ta.evaluate(f"(t) => {{ t.focus(); t.setSelectionRange({pos}, {pos}); }}")
+        ta.dispatch_event("click")
+        pg.wait_for_timeout(300)
+        assert pg.locator(".tl-lanes .kid.sel").all_inner_texts() == ["FadeOut"]
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

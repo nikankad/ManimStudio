@@ -259,7 +259,8 @@ class Handler(BaseHTTPRequestHandler):
         """The document as manim code, and which element each line comes from (written as if LaTeX is installed,
         so the code is the document's, wherever it's shown)."""
         gen = codegen.generate(body["doc"], latex=True)
-        return {"code": gen.source, "linemap": {str(k): list(v) for k, v in gen.linemap.items()}}
+        return {"code": gen.source, "linemap": {str(k): list(v) for k, v in gen.linemap.items()},
+                "spans": {k: [list(x) for x in v] for k, v in gen.spans.items()}}
 
     def api_import_code(self, _q: dict, body: dict) -> dict:
         """manim code -> a document. ``base``: the document the code was generated from (unchanged parts keep it)."""

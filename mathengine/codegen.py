@@ -45,6 +45,9 @@ class Generated:
     diagnostics: list[dict] = field(default_factory=list)
     # equation object id -> term id -> submobject index
     part_index: dict[str, dict[str, int]] = field(default_factory=dict)
+    # element id (object, step, animation) -> where its code is: (line, col, end line, end col), 1-based lines,
+    # 0-based columns in characters, end exclusive. An animation's is its exact expression inside the self.play.
+    spans: dict[str, list[tuple[int, int, int, int]]] = field(default_factory=dict)
 
 
 def is_valid_name(name: str) -> bool:
@@ -376,13 +379,25 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     # Objects are created where the code creates them: at the top, or right after the step they follow.
     full = doc.get("timeline") or []
     groups = placement_groups(doc)
+    spans: dict[str, list[tuple[int, int, int, int]]] = {}
+
+    def placed(elem: dict, start: int, step: dict | None = None) -> None:
+        if not preview:
+            _spans(w.lines, start, len(w.lines), elem["id"], step, skip, spans)
+
     for obj in groups.get(-1, []):
+        at = len(w.lines)
         _emit_object(obj, emit, B, preview, plan)
+        placed(obj, at)
     for i, step in enumerate(full):
         if not step.get("disabled"):
+            at = len(w.lines)
             _emit_step(step, emit, B, preview, doc, plan, skip)
+            placed(step, at, step)
         for obj in groups.get(i, []):
+            at = len(w.lines)
             _emit_object(obj, emit, B, preview, plan)
+            placed(obj, at)
 
     if len(w.lines) == start_len:
         emit("pass", None, B)
@@ -395,7 +410,48 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         emit("")
         emit("")
         emit(footer, ("header", "header"))
-    return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
+    return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index, spans)
+
+
+def _spans(lines: list[str], start: int, end: int, eid: str, step: dict | None, skip: set[str],
+           out: dict[str, list[tuple[int, int, int, int]]]) -> None:
+    """Where an element's code is, in ``lines[start:end]`` (what was just written for it): the statement, without its
+    comment and blank lines; for a self.play, each animation's own expression too (found in the code's syntax, so it
+    holds for code kept as it was written)."""
+    code = [i for i in range(start, end) if lines[i].strip() and not lines[i].lstrip().startswith("#")]
+    if not code:
+        return
+    first, last = code[0], code[-1]
+    top = next(i for i in range(start, end) if lines[i].strip())  # its comment above it is part of its block
+    out[eid] = [(top + 1, len(lines[top]) - len(lines[top].lstrip()), last + 1, len(lines[last]))]
+    if not step or step.get("kind") != "play":
+        return
+    block = lines[first:last + 1]
+    text = textwrap.dedent("\n".join(block))
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return
+    shift = [len(a) - len(b) for a, b in zip(block, text.split("\n"))]
+    call = next((n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == "play" and isinstance(n.func.value, ast.Name) and n.func.value.id == "self"), None)
+    if call is None:
+        return
+
+    def col(line: int, byte: int) -> int:  # ast columns are utf-8 bytes
+        src = text.split("\n")[line - 1]
+        return len(src.encode()[:byte].decode(errors="ignore")) + shift[line - 1]
+
+    def place(anims: list[dict], nodes: list[ast.expr]) -> None:
+        live = [a for a in anims if not a.get("disabled") and a["id"] not in skip]
+        if len(nodes) < len(live) or any(isinstance(n, ast.Starred) for n in nodes[:len(live)]):
+            return  # not one argument per animation: the statement stands for them
+        for a, n in zip(live, nodes):
+            out[a["id"]] = [(first + n.lineno, col(n.lineno, n.col_offset), first + n.end_lineno, col(n.end_lineno, n.end_col_offset))]
+            if a.get("anims") and isinstance(n, ast.Call):
+                place(a["anims"], list(n.args))
+
+    place(step.get("anims") or [], list(call.args))
 
 
 def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> list[tuple[str, tuple[str, str] | None]]:

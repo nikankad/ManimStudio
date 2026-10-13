@@ -471,3 +471,43 @@ def test_statements_written_over_several_lines_come_back_the_same():
     out = codegen.generate(doc).source
     assert "self.play(Write(a), run_time=3)" in out, out
     assert 'a = Text(\n            "long",\n            font_size=30,\n        )\n' in out, out
+
+
+SPANS = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        a = Circle()
+        b = Text("é b")
+        self.play(FadeIn(a), Write(b))
+        self.play(
+            LaggedStart(FadeOut(a), b.animate.shift(UP), lag_ratio=0.5),
+            run_time=2,
+        )
+        self.wait()
+'''
+
+
+def test_each_element_knows_where_its_code_is():
+    doc = import_code(SPANS).doc
+    gen = codegen.generate(doc, latex=True)
+    lines = gen.source.split("\n")
+
+    def text(eid):
+        (l, c, el, ec), = gen.spans[eid]
+        return lines[l - 1][c:ec] if l == el else "\n".join([lines[l - 1][c:], *lines[l:el - 1], lines[el - 1][:ec]])
+
+    by = {o["name"]: o["id"] for o in doc["objects"]}
+    assert text(by["b"]) == 'b = Text("é b")'
+    one, lagged, wait = doc["timeline"]
+    assert [text(a["id"]) for a in one["anims"]] == ["FadeIn(a)", "Write(b)"]  # characters, not utf-8 bytes
+    assert text(lagged["id"]).startswith("self.play(\n") and text(lagged["id"]).endswith(")")
+    group = lagged["anims"][0]
+    assert text(group["id"]) == "LaggedStart(FadeOut(a), b.animate.shift(UP), lag_ratio=0.5)"
+    assert [text(a["id"]) for a in group["anims"]] == ["FadeOut(a)", "b.animate.shift(UP)"]
+    assert text(wait["id"]) == "self.wait()"
+    wait["comment"] = "# rest"  # a statement's block starts at its comment
+    gen = codegen.generate(doc, latex=True)
+    lines = gen.source.split("\n")
+    assert text(wait["id"]) == "# rest\n        self.wait()"

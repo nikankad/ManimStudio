@@ -674,8 +674,13 @@ span.tab-btn.on { color: #e4e4e8; font-weight: 600; }
 .code-back, .code-text { position: absolute; inset: 0; margin: 0; padding: 8px 12px; font: inherit; white-space: pre; tab-size: 4; }
 .code-back { overflow: hidden; color: #d4d4d8; pointer-events: none; }
 .code-lines { min-width: max-content; }
-.code-ln { height: 19px; padding-right: 40px; margin: 0 -12px; padding-left: 12px; }
-.code-ln.sel { background: rgba(61, 155, 255, 0.13); box-shadow: inset 2px 0 0 var(--blue); }
+.code-ln { --code-pad: 12px; position: relative; height: 19px; padding-right: 40px; margin: 0 -12px; padding-left: var(--code-pad); }
+.code-ln.rel { background: rgba(61, 155, 255, 0.05); box-shadow: inset 2px 0 0 rgba(61, 155, 255, 0.35); }
+.code-mark { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; background: rgba(61, 155, 255, 0.28); box-shadow: 0 0 0 1px rgba(150, 200, 255, 0.85); pointer-events: none; }
+.code-ln.sel { background: rgba(61, 155, 255, 0.2); box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55); }
+.code-ln.sel-top { box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55), inset 0 1px 0 rgba(110, 180, 255, 0.55); border-top-right-radius: 4px; }
+.code-ln.sel-bottom { box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55), inset 0 -1px 0 rgba(110, 180, 255, 0.55); border-bottom-right-radius: 4px; }
+.code-ln.sel-top.sel-bottom { box-shadow: inset 3px 0 0 var(--blue), inset 0 0 0 1px rgba(110, 180, 255, 0.55); }
 .code-ln.err { background: rgba(252, 98, 85, 0.18); box-shadow: inset 2px 0 0 var(--err); }
 .code-text { color: transparent; caret-color: #fff; background: transparent; border: none; outline: none; resize: none; overflow: auto; user-select: text; }
 .code-text::selection { background: rgba(88, 140, 230, 0.4); color: transparent; }
@@ -704,7 +709,7 @@ select.scene-call { max-width: 130px; }
 button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
 .code-area-small { position: relative; font: 12px/18px var(--mono); background: #0f0f11; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
 .code-area-small .code-back, .code-area-small .code-text { padding: 6px 8px; }
-.code-area-small .code-ln { height: 18px; margin: 0 -8px; padding-left: 8px; }
+.code-area-small .code-ln { --code-pad: 8px; height: 18px; margin: 0 -8px; }
 .code-area-small:focus-within { border-color: var(--blue); }
 
 /* People who ask their system for less motion get none: the tour spotlight, hover lifts and progress easing */
