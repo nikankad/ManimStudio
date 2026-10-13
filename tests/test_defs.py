@@ -186,3 +186,25 @@ def test_text_with_values():
 def test_text_template_errors(template, fragment):
     r = runtime.run(text_doc(template), 0, render=False)
     assert any(fragment in x["message"] for x in r.diagnostics if x["id"] == "or"), r.diagnostics
+
+
+def test_fade_out_the_rest():
+    """Everything on screen goes but the kept object, loop-made objects included; constructions keep updating."""
+    d = repeat_doc()
+    d["objects"].insert(0, obj("oT", "title", "Text", args={"*": '"RH"'}))
+    d["timeline"].insert(0, {"id": "s9", "kind": "add", "targets": ["title"]})
+    d["timeline"].append({"id": "pf", "kind": "play", "args": {}, "anims": [
+        {"id": "af", "cls": "expr", "target": "", "args": {},
+         "src": "*[FadeOut(m) for m in self.mobjects if m is not title and type(m) is not Mobject]"}]})
+    src = codegen.generate(d).source
+    r = runtime.run(d, 100, render=False)
+    assert r.error is None, r.error and r.error["trace"]
+    from manim import tempconfig
+
+    ns = {}
+    with tempconfig({"dry_run": True, "disable_caching": True, "verbosity": "ERROR"}):
+        exec(compile(src, "scene", "exec"), ns)
+        scene = ns["MainScene"]()
+        scene.render()
+        left = sorted(type(m).__name__ for m in scene.mobjects)
+    assert left == ["Mobject", "Text"], left

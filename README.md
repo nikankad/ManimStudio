@@ -107,7 +107,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     the field says so and offers **Create it in the loop**.
   - **Values** (`k = 2`, `total += k`, `a, b = f()`) are steps of their own, edited by name, operation and value
     (**+ Value** adds one). An animation built by an expression (`*[FadeOut(m) for m in dots]`) is a clip named
-    after what it builds, its code edited in Effect Controls. `self.add` / `self.remove` keep expressions
+    after what it builds, its code edited in Effect Controls; an object's **Fade out the rest** makes one
+    (`*[FadeOut(m) for m in self.mobjects if m is not title …]`), which takes what loops made too. `self.add` / `self.remove` keep expressions
     (`*row`, `VGroup(a, b)`), and methods called on anything (`VGroup(a, b).arrange()`) are *Change at once* steps.
   - **Updaters** (`add_updater`, `always_redraw`) are bars over the time manim runs them, from where they are set
     to `clear_updaters()` / `remove_updater()` (or the end); click one to select what sets it.
@@ -326,8 +327,8 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
 
   Parameters are ValueTrackers. Graphs, constrained points and number labels share them. A slider sets a
   parameter's starting value. To animate one, use *Animate to… → Add clip*, or drag a point bound to it on the
-  canvas in Record mode; either adds `.animate.set_value(…)` at the playhead. The *Scene* inspector lists every
-  parameter as a slider.
+  canvas in Record mode; either adds `.animate.set_value(…)` at the playhead. *Animate to* takes math too
+  (`2 pi`, `ZEROS[k]` in a loop). The *Scene* inspector lists every parameter as a slider.
 - **Definitions** (*Scene* inspector, with nothing selected): named values, lists and functions written in math,
   not Python. `+ value` (`period = 2 pi`), `+ list` (`ZEROS = 14.134725, 21.02204, …`, used as `ZEROS[1]`
   counting from 1 and `len(ZEROS)`) and `+ function` (inputs, optional *where* names worked out first, and what

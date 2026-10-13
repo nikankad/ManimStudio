@@ -1173,8 +1173,20 @@ export function setParamValue(name: string, v: number) {
 }
 
 /** Animate a parameter to a value at the playhead (target.animate.set_value(…) on the timeline). */
-export function animateParam(name: string, to: number, duration = 1) {
-  const a: Anim = { ...newAnim('animate', name), chain: `.set_value(${Math.round(to * 1000) / 1000})` };
+/** One clip at the playhead fading out everything on screen except `keep` (objects made in loops included). */
+export function fadeOutRest(keep: string[]): string {
+  // the bare Mobject left out is the invisible helper that keeps constructions updated (Constraints)
+  const conds = [...keep.map((k) => `m is not ${k}`), 'type(m) is not Mobject'];
+  const a: Anim = { ...newAnim('expr', ''), src: `*[FadeOut(m) for m in self.mobjects if ${conds.join(' and ')}]` };
+  let start = 0;
+  updateDoc((d) => void (start = placeAt(d, [a])));
+  setState({ selection: { kind: 'clips', ids: [a.id] }, time: frameSnap(start + animEstimate(a)) });
+  return a.id;
+}
+
+/** A clip animating a parameter to `to`: a number, or Python (a math value the backend compiled). */
+export function animateParam(name: string, to: number | string, duration = 1) {
+  const a: Anim = { ...newAnim('animate', name), chain: `.set_value(${typeof to === 'number' ? Math.round(to * 1000) / 1000 : to})` };
   if (duration !== 1) a.args = { run_time: String(duration) };
   let start = 0;
   updateDoc((d) => void (start = placeAt(d, [a])));

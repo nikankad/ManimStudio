@@ -20,6 +20,7 @@ export interface ValueCheck {
   error?: string;
   hint?: string;
   params?: string[];
+  python?: string; // what the math becomes in the code
   literal?: number | null;
 }
 

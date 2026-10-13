@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api';
-import {
+import { fadeOutRest,
   addAnimation, addObject, docLayout, uid, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
   timecode, toast, toggleDisabled, updateDoc, useSignature, useStore, setMarker, deleteMarker,
 } from '../store';
@@ -299,6 +299,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         <h4>Animate at playhead</h4>
         <div className="chips">
           {QUICK_ANIMS.map((a) => <button key={a} className="chip" onClick={() => addAnimation(a, obj.name)}>{a}</button>)}
+          <button className="chip" title={`Fade out everything on screen at the playhead except ${obj.name} (what loops made included)`} onClick={() => fadeOutRest([obj.name])}>Fade out the rest</button>
           <button className="chip" onClick={() => addAnimation('animate', obj.name)}>.animate</button>
           {obj.eq?.parts?.length ? <button className="chip" title="Transform into another equation term by term" onClick={() => addTermsTransform(obj)}>Transform terms…</button> : null}
         </div>

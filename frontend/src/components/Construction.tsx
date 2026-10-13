@@ -525,14 +525,20 @@ export function ParamSection({ obj }: { obj: SceneObject }) {
       <div className="fx-row"><span>Step</span><ScrubNumber value={meta.step} min={0.0001} step={0.01} precision={4} onChange={(v) => setMeta({ step: v })} /></div>
       <div className="row">
         <span className="muted small">Animate to</span>
-        <input className="field num narrow" value={to} onChange={(e) => setTo(e.target.value)} />
+        <input className="field num narrow mono" aria-label="Animate to" title="A number, or math: 2 pi, ZEROS[k] (a definition, a loop's counter)" value={to} onChange={(e) => setTo(e.target.value)} />
         <span className="muted small">over</span>
-        <input className="field num narrow" value={dur} onChange={(e) => setDur(e.target.value)} />
+        <input className="field num narrow" aria-label="Duration" value={dur} onChange={(e) => setDur(e.target.value)} />
         <span className="muted small">s</span>
-        <button className="ghost small" onClick={() => {
-          const v = Number(to), d = Number(dur);
-          if (Number.isNaN(v) || !(d > 0)) return toast('Enter a number and a duration');
-          animateParam(obj.name, v, d);
+        <button className="ghost small" onClick={async () => {
+          const d = Number(dur);
+          if (!(d > 0)) return toast('Enter a duration');
+          if (to.trim() !== '' && !Number.isNaN(Number(to))) return animateParam(obj.name, Number(to), d);
+          // math: worked out where the clip runs (a loop's counter is known there)
+          const s = getState().doc;
+          const counters = [...new Set(s.timeline.map(loopVar).filter((v): v is string => !!v))];
+          const r = await api.checkValue(to, params(s).map((p) => p.name), s.defs, counters).catch(() => null);
+          if (!r?.ok || !r.python) return toast(r?.error ? `${r.error}${r.hint ? ` ${r.hint}` : ''}` : 'Enter a number or a math value');
+          animateParam(obj.name, r.python, d);
         }}>Add at playhead</button>
       </div>
       {users.length > 0 ? <p className="muted small">Used by {users.map((u) => u.name).join(', ')}.</p> : <p className="muted small">Not used yet. Use its name in expressions, e.g. <code>{obj.name}*x^2</code>.</p>}
