@@ -511,3 +511,10 @@ def test_each_element_knows_where_its_code_is():
     gen = codegen.generate(doc, latex=True)
     lines = gen.source.split("\n")
     assert text(wait["id"]) == "# rest\n        self.wait()"
+
+
+def test_an_unused_import_at_the_top_stays_as_written():
+    src = ("from manim import *\nfrom manim.utils.rate_functions import ease_in_sine\n\nclass S(Scene):\n"
+           "    def construct(self):\n        self.wait()\n")
+    doc = import_code(src).doc
+    assert codegen.generate(doc, latex=True).source == src

@@ -170,8 +170,9 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       if (ch === 'color' && typeof to.color === 'string') return to.color;
       return undefined;
     };
+    const touched = new Set<Channel>(); // channels an earlier call of this chain set: measured `from` is before those
     const before = (ch: Channel): KeyValue | undefined => {
-      const from = m?.from as Record<string, unknown> | undefined;
+      const from = touched.has(ch) ? undefined : (m?.from as Record<string, unknown> | undefined);
       if (ch === 'position' && from && Array.isArray(from.center)) return [from.center[0] as number, from.center[1] as number];
       if (ch === 'value' && from && typeof from.value === 'number') return from.value;
       return cur[ch];
@@ -181,6 +182,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…), so its timing is the group\'s' });
       keys.push(key);
       cur[k.channel] = key.value;
+      touched.add(k.channel);
     };
     if (a.cls === 'Rotate') {
       const deg = evalNumber(rotateAngle(a as Anim));
@@ -360,7 +362,8 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
   const i = keys.findIndex((k) => k.anim === key.anim && k.call === key.call && k.channel === key.channel);
   const prev = i > 0 ? keys.slice(0, i).filter((k) => k.channel === key.channel).pop() : undefined;
   const before = (): KeyValue | undefined => {
-    if (key.channel === 'position' || key.channel === 'value') {
+    // measured from where the clip starts, unless an earlier call of the same clip set it (.move_to(…).shift(…))
+    if ((key.channel === 'position' || key.channel === 'value') && prev?.anim !== key.anim) {
       const m = [...(measured?.anims ?? []), ...(measured?.steps ?? [])].find((x) => x.id === key.anim) as { from?: { center?: number[]; value?: number } } | undefined;
       if (key.channel === 'position' && m?.from?.center) return [m.from.center[0], m.from.center[1]];
       if (key.channel === 'value' && typeof m?.from?.value === 'number') return m.from.value;
@@ -553,7 +556,11 @@ export function setBaseValue(obj: SceneObject, channel: Channel, value: KeyValue
   if (channel === 'position' && Array.isArray(value)) obj.pos = [Math.round(value[0] * 1000) / 1000, Math.round(value[1] * 1000) / 1000];
   else if (channel === 'scale' && typeof value === 'number') obj.scale = Math.round(value * 1000) / 1000;
   else if (channel === 'rotation' && typeof value === 'number') obj.rotation = Math.round(value * 1000) / 1000;
-  else if (channel === 'value' && typeof value === 'number') obj.args = { ...obj.args, '*': num(value) };
+  else if (channel === 'value' && typeof value === 'number') {
+    // where the code gives it: ValueTracker(3) or ValueTracker(value=3) (both would pass it twice)
+    const k = obj.args['*'] === undefined && obj.args.value !== undefined ? 'value' : '*';
+    obj.args = { ...obj.args, [k]: num(value) };
+  }
   else if (channel === 'opacity' || channel === 'color') {
     const method = channel === 'opacity' ? 'set_opacity' : 'set_color';
     const text = channel === 'opacity' ? num(Number(value)) : String(value).trim();

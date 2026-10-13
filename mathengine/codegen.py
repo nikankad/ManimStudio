@@ -467,11 +467,13 @@ def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> li
     if plan.uses_terms:
         emit(construct.TERMS_IMPORT)
     # ease_* rate functions aren't in manim's star export; import the ones this scene uses.
-    eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", json.dumps(doc))))
+    # (not in the top as the code had it: what it imports must not decide whether it is still what codegen writes)
+    text = json.dumps({k: v for k, v in doc.items() if k != "top_written"})
+    eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", text)))
     if eases:
         emit(f"from manim.utils.rate_functions import {', '.join(eases)}")
     emit("import numpy as np")
-    if "se.Path(" in json.dumps(doc):
+    if "se.Path(" in text:
         emit("import svgelements as se")
     if not preview:
         bg = cfg.get("background_color")

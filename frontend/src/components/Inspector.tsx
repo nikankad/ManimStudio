@@ -221,7 +221,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
       <div className="insp-head">
         <Field value={obj.name} onChange={() => undefined} onBlur={commitName} className="mono name" ariaLabel="Object name" />
         <span className="muted">=</span>
-        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => void (o.ctor = v), 'ctor')} list="me-mobjects" className="mono" ariaLabel="manim class" />
+        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => { o.ctor = v; delete o.positional; }, 'ctor')} list="me-mobjects" className="mono" ariaLabel="manim class" />
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       {sig?.unknown && !obj.link && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
@@ -695,7 +695,7 @@ function StepInspector({ step }: { step: Step }) {
         <>
           <section>
             <h4>Method</h4>
-            <select className="field mono" aria-label="Scene method" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; }, 'method')}>
+            <select className="field mono" aria-label="Scene method" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; delete s.positional; }, 'method')}>
               {(calls ?? []).filter((m) => !['play', 'wait', 'add', 'remove'].includes(m)).map((m) => <option key={m} value={m}>self.{m}</option>)}
               {step.method && !calls?.includes(step.method) && <option value={step.method}>self.{step.method}</option>}
             </select>
@@ -834,7 +834,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
   return (
     <div className="pad">
       <div className="insp-head">
-        <Tip tip={CLIP_HELP.cls}><Field className="mono" value={anim.cls} list="me-animations" onChange={(v) => setAnim(anim.id, (a) => void (a.cls = v), 'cls')} /></Tip>
+        <Tip tip={CLIP_HELP.cls}><Field className="mono" value={anim.cls} list="me-animations" onChange={(v) => setAnim(anim.id, (a) => { a.cls = v; delete a.positional; }, 'cls')} /></Tip>
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       <Diagnostics id={anim.id} />

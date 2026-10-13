@@ -44,7 +44,7 @@ def save(rid: str, path: str | None, doc: dict) -> None:
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps({"id": rid, "path": path, "saved": time.time(), "doc": doc}), encoding="utf-8")
     tmp.replace(p)
-    _prune()
+    _prune(p)
 
 
 def clear(rid: str) -> None:
@@ -86,12 +86,19 @@ def _same(path: str | Path) -> str:
         return str(path)
 
 
-def _prune() -> None:
+def _prune(newest: Path) -> None:
+    """Runs at every autosave (``newest`` was just written): by the files' times, without reading the documents."""
     now = time.time()
-    entries = listing()
-    for i, e in enumerate(entries):
-        if i >= LIMIT or now - e["saved"] > MAX_AGE:
-            clear(e["id"])
+    entries = []
+    for p in _dir().glob("*.json"):
+        try:
+            entries.append((p == newest, p.stat().st_mtime, p))
+        except OSError:
+            continue
+    entries.sort(key=lambda e: e[:2], reverse=True)  # the one just written, then newest first
+    for i, (_, mtime, p) in enumerate(entries):
+        if i >= LIMIT or now - mtime > MAX_AGE:
+            p.unlink(missing_ok=True)
     for tmp in _dir().glob("*.tmp"):  # left by a write that was cut off
         if now - tmp.stat().st_mtime > 3600:
             tmp.unlink(missing_ok=True)

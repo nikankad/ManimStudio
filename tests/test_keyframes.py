@@ -263,3 +263,25 @@ class K(Scene):
     assert keys[1]["value"] == [0, 1.33]
     assert "self.play(b.animate.move_to(UP * 1.33))" in roundtrip(pin["doc"])
     assert "        b.move_to(LEFT * 5.111 + UP * 1.33)\n" in roundtrip(pin_jump["doc"])  # the to_edge step, pinned
+
+
+@needs_node
+def test_a_call_after_another_in_one_clip_starts_where_that_one_ends():
+    src = \
+'''from manim import *
+
+
+class K(Scene):
+    def construct(self):
+        c = Dot().shift(RIGHT * 3)
+        t = ValueTracker(value=3)
+        self.add(c, t)
+        self.play(c.animate.move_to(ORIGIN).shift(UP))
+'''
+    doc = import_code(src).doc
+    measured = measure(doc)
+    edited, base = edit(doc, measured, {"op": "set", "name": "c", "channel": "position", "index": 1, "value": [0, 2]},
+                        {"op": "base", "name": "t", "channel": "value", "value": 5})
+    assert edited["keys"][1]["value"] == [0, 1]  # after move_to(ORIGIN), not from where c started
+    assert "c.animate.move_to(ORIGIN).shift(UP * 2)" in roundtrip(edited["doc"])
+    assert "t = ValueTracker(value=5)" in roundtrip(base["doc"])  # not ValueTracker(5, value=3)

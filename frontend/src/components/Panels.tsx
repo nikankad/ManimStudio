@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
+  addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, isOwnRecovery, loadDoc, selectedObjectIds,
   pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
 import { noteTry } from './TryThis';
@@ -57,7 +57,8 @@ function LeaveDialog() {
     box.current?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') leave.resolve('cancel');
-      else if (e.key === 'Enter') leave.resolve('save');
+      else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) leave.resolve('save');
+      else if (e.key === 'Enter') e.stopPropagation(); // on a button (Tab moved there), Enter presses that button
       else return;
       e.preventDefault();
       e.stopPropagation();
@@ -88,7 +89,9 @@ export async function openPath(path: string) {
   try {
     const res = await api.openProject(path);
     loadDoc(res.doc, res.path);
-    if (res.recovery?.length) setState({ restore: res.recovery[0] });
+    // (not this window's own copy: its changes were just saved or discarded, and its clearing may not have landed yet)
+    const lost = res.recovery?.filter((r) => !isOwnRecovery(r.id));
+    if (lost?.length) setState({ restore: lost[0] });
     if (res.imported) {
       setState({ centerTab: 'code', dirty: true });
       toast(`Opened ${res.imported.split(/[\\/]/).pop()} as a new project${res.notes?.length ? `. ${res.notes.length} statement${res.notes.length === 1 ? ' is' : 's are'} kept as code` : ''}`);

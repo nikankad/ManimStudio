@@ -219,6 +219,9 @@ let recoveryId = newRecoveryId();
 /** The recovery copy of the project being edited now (Home must not offer it back as lost work). */
 export const currentRecoveryId = () => recoveryId;
 let recoveryTouched = false; // a copy under this id may exist on the backend
+const ownRecovery = new Set<string>(); // every copy this window has written (saved or dropped since, or still current)
+/** Whether a copy of unsaved work is this window's own: never offered back as work lost in an earlier session. */
+export const isOwnRecovery = (id: string) => ownRecovery.has(id);
 let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
 let recoveryChain: Promise<unknown> = Promise.resolve(); // requests go in order, so a late write can't undo a clear
 
@@ -231,6 +234,7 @@ function syncRecovery() {
       if (!d || !h) return;
       recoveryTouched = true;
       const id = recoveryId;
+      ownRecovery.add(id);
       recoveryChain = recoveryChain.then(() => api.saveRecovery(id, path, doc)).catch(() => undefined); // best effort
     }, RECOVERY_DELAY);
   } else forgetRecovery();
@@ -526,7 +530,11 @@ export async function renderPreview(retry = false) {
   if (!doc.timeline.length || sequenceEnd(doc, state.timeline) <= 0) return; // nothing plays: no video to make
   try {
     const job = await api.render(doc, 'preview');
-    if (ep !== epoch || docKey(state.doc) !== key) return; // another project (or another edit) by now
+    if (ep !== epoch || docKey(state.doc) !== key) {
+      // another project (or another edit) by now: nobody will show this render, so it must not keep manim busy
+      if (job.id && (job.state === 'running' || job.state === 'queued')) api.cancelJob(job.id).catch(() => undefined);
+      return;
+    }
     if (job.state === 'error' || !job.id) {
       setState({ video: { jobId: null, key, state: 'error', progress: 0, message: job.message, url: null } });
       return;

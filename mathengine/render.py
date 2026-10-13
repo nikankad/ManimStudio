@@ -62,11 +62,25 @@ def partial_movie_readable(path: Path) -> bool:
         return False
 
 
+# partial movies already found readable, as (mtime, size): a piece manim finished doesn't change, so it is opened once
+_readable: dict[str, tuple[int, int]] = {}
+
+
 def purge_broken_partials(media: Path) -> int:
     """Delete the cached partial movies that can't be read (the next render makes them again); how many went."""
     gone = 0
     for movie in media.glob("videos/**/partial_movie_files/**/*.mp4"):
-        if not partial_movie_readable(movie):
+        try:
+            st = movie.stat()
+        except OSError:
+            continue
+        stamp = (st.st_mtime_ns, st.st_size)
+        if _readable.get(str(movie)) == stamp:
+            continue
+        if partial_movie_readable(movie):
+            _readable[str(movie)] = stamp
+        else:
+            _readable.pop(str(movie), None)
             movie.unlink(missing_ok=True)
             gone += 1
     return gone
@@ -104,6 +118,11 @@ def prune_cache(media: Path, max_age: float = CACHE_MAX_AGE, max_bytes: int = CA
     return gone
 
 
+# render jobs working in each project's folder: a job tidies the shared cache only while no other job is writing to it
+_active: dict[Path, set["RenderJob"]] = {}
+_active_lock = threading.Lock()
+
+
 class RenderJob:
     def __init__(self, doc: dict, quality: str, output: str | None, project_key: str, plays: int = 1):
         self.id = uuid.uuid4().hex[:12]
@@ -131,7 +150,21 @@ class RenderJob:
         }
 
     def start(self) -> None:
-        threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._run_registered, daemon=True).start()
+
+    def _run_registered(self) -> None:
+        with _active_lock:
+            _active.setdefault(self.workdir, set()).add(self)
+        try:
+            self._run()
+        finally:
+            with _active_lock:
+                _active.get(self.workdir, set()).discard(self)
+
+    def _alone(self) -> bool:
+        """No other job is rendering into this project's cache (a cancelled one's manim is already killed)."""
+        with _active_lock:
+            return not any(j is not self and j.state != "cancelled" for j in _active.get(self.workdir, ()))
 
     def cancel(self) -> None:
         self.state = "cancelled"
@@ -156,8 +189,9 @@ class RenderJob:
             # self.play makes no video at all).
             for old in media.glob(f"videos/**/{out_name}.mp4"):
                 old.unlink(missing_ok=True)
-            purge_broken_partials(media)  # left by a render that was cancelled or killed
-            prune_cache(media)
+            if self._alone():  # another render's pieces still being written aren't broken, nor stale
+                purge_broken_partials(media)  # left by a render that was cancelled or killed
+                prune_cache(media)
             cmd = [
                 *manim_command(), "render", str(script), scene_name,
                 "--media_dir", str(media), "-o", out_name,
@@ -173,7 +207,7 @@ class RenderJob:
             code = self._proc.wait()
             if self.state == "cancelled":
                 return
-            if code != 0 and not self._retried and "Invalid data found" in self.log and purge_broken_partials(media):
+            if code != 0 and not self._retried and "Invalid data found" in self.log and self._alone() and purge_broken_partials(media):
                 self._retried = True  # a cached piece was damaged after all: it is gone now, so once more
                 self.log = ""
                 self.progress = 0.0
