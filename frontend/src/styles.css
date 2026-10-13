@@ -661,39 +661,41 @@ button.brand:hover { background: var(--panel-2); }
 /* ---------------------------------------------------------------- code tab */
 .tab-btn { font-size: 11.5px; color: var(--muted); }
 span.tab-btn.on { color: #e4e4e8; font-weight: 600; }
-.code-monitor { background: #0f0f11; }
+.code-monitor { background: #282c34; }
 .code-status { font-size: 11px; color: #6fcf97; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-status.pending { color: var(--muted); }
 .code-status.error { color: var(--err); }
 .code-wrap { flex: 1; min-height: 0; display: flex; position: relative; font: 12.5px/19px var(--mono); }
-.code-gutter { width: 44px; flex: none; overflow: hidden; padding: 8px 0; color: #8a8c97; text-align: right; background: #121214; border-right: 1px solid #222226; user-select: none; }
+.code-gutter { width: 44px; flex: none; overflow: hidden; padding: 8px 0; color: #636d83; text-align: right; background: #282c34; border-right: 1px solid #21252b; user-select: none; }
 .code-gutter > div { padding-right: 8px; height: 19px; }
-.code-gutter > .sel { color: #9ec9ff; background: rgba(61, 155, 255, 0.12); }
-.code-gutter > .err { color: #fff; background: rgba(252, 98, 85, 0.45); }
+.code-gutter > .sel { color: #abb2bf; background: rgba(97, 175, 239, 0.14); }
+.code-gutter > .err { color: #fff; background: rgba(224, 108, 117, 0.45); }
 .code-area { position: relative; flex: 1; min-width: 0; }
 .code-back, .code-text { position: absolute; inset: 0; margin: 0; padding: 8px 12px; font: inherit; white-space: pre; tab-size: 4; }
-.code-back { overflow: hidden; color: #d4d4d8; pointer-events: none; }
+.code-back { overflow: hidden; color: #abb2bf; pointer-events: none; }
 .code-lines { min-width: max-content; }
 .code-ln { --code-pad: 12px; position: relative; height: 19px; padding-right: 40px; margin: 0 -12px; padding-left: var(--code-pad); }
-.code-ln.rel { background: rgba(61, 155, 255, 0.05); box-shadow: inset 2px 0 0 rgba(61, 155, 255, 0.35); }
-.code-mark { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; background: rgba(61, 155, 255, 0.28); box-shadow: 0 0 0 1px rgba(150, 200, 255, 0.85); pointer-events: none; }
-.code-ln.sel { background: rgba(61, 155, 255, 0.2); box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55); }
-.code-ln.sel-top { box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55), inset 0 1px 0 rgba(110, 180, 255, 0.55); border-top-right-radius: 4px; }
-.code-ln.sel-bottom { box-shadow: inset 3px 0 0 var(--blue), inset -1px 0 0 rgba(110, 180, 255, 0.55), inset 0 -1px 0 rgba(110, 180, 255, 0.55); border-bottom-right-radius: 4px; }
-.code-ln.sel-top.sel-bottom { box-shadow: inset 3px 0 0 var(--blue), inset 0 0 0 1px rgba(110, 180, 255, 0.55); }
-.code-ln.err { background: rgba(252, 98, 85, 0.18); box-shadow: inset 2px 0 0 var(--err); }
-.code-text { color: transparent; caret-color: #fff; background: transparent; border: none; outline: none; resize: none; overflow: auto; user-select: text; }
-.code-text::selection { background: rgba(88, 140, 230, 0.4); color: transparent; }
-.code-text::placeholder { color: #55565e; }
-.t-kw { color: #c792ea; }
-.t-str { color: #c3e88d; }
-.t-num { color: #f78c6c; }
-.t-com { color: #6a737d; font-style: italic; }
-.t-self { color: #f07178; }
-.t-def { color: #82aaff; font-weight: 600; }
-.t-cls { color: #ffcb6b; }
-.t-fn { color: #82aaff; }
-.t-const { color: #89ddff; }
+.code-ln.rel { background: rgba(97, 175, 239, 0.05); box-shadow: inset 2px 0 0 rgba(97, 175, 239, 0.35); }
+.code-mark { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; background: rgba(97, 175, 239, 0.22); box-shadow: 0 0 0 1px rgba(97, 175, 239, 0.9); pointer-events: none; }
+.code-ln.sel { background: rgba(97, 175, 239, 0.13); box-shadow: inset 3px 0 0 #61afef, inset -1px 0 0 rgba(97, 175, 239, 0.5); }
+.code-ln.sel-top { box-shadow: inset 3px 0 0 #61afef, inset -1px 0 0 rgba(97, 175, 239, 0.5), inset 0 1px 0 rgba(97, 175, 239, 0.5); border-top-right-radius: 4px; }
+.code-ln.sel-bottom { box-shadow: inset 3px 0 0 #61afef, inset -1px 0 0 rgba(97, 175, 239, 0.5), inset 0 -1px 0 rgba(97, 175, 239, 0.5); border-bottom-right-radius: 4px; }
+.code-ln.sel-top.sel-bottom { box-shadow: inset 3px 0 0 #61afef, inset 0 0 0 1px rgba(97, 175, 239, 0.5); }
+.code-ln.err { background: rgba(224, 108, 117, 0.18); box-shadow: inset 2px 0 0 #e06c75; }
+.code-text { color: transparent; caret-color: #528bff; background: transparent; border: none; outline: none; resize: none; overflow: auto; user-select: text; }
+.code-text::selection { background: rgba(103, 118, 150, 0.5); color: transparent; }
+.code-text::placeholder { color: #5c6370; }
+.t-kw { color: #c678dd; }
+.t-str { color: #98c379; }
+.t-num { color: #d19a66; }
+.t-com { color: #5c6370; font-style: italic; }
+.t-self { color: #e06c75; font-style: italic; }
+.t-def { color: #61afef; }
+.t-cls { color: #e5c07b; }
+.t-fn { color: #61afef; }
+.t-const { color: #d19a66; }
+.t-lit { color: #d19a66; }
+.t-op { color: #56b6c2; }
 .code-pip { position: absolute; right: 18px; bottom: 14px; width: 220px; padding: 0; border: 1px solid #3a3a41; border-radius: 6px; overflow: hidden; background: #000; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); opacity: 0.92; }
 .code-pip:hover { opacity: 1; border-color: var(--blue); }
 .code-pip img { display: block; width: 100%; }
@@ -707,7 +709,7 @@ div.anim-row.off .anim-name { opacity: 0.5; text-decoration: line-through; }
 .x-btn:disabled { opacity: 0.25; }
 select.scene-call { max-width: 130px; }
 button.lib-item { text-align: left; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
-.code-area-small { position: relative; font: 12px/18px var(--mono); background: #0f0f11; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.code-area-small { position: relative; font: 12px/18px var(--mono); background: #282c34; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
 .code-area-small .code-back, .code-area-small .code-text { padding: 6px 8px; }
 .code-area-small .code-ln { --code-pad: 8px; height: 18px; margin: 0 -8px; }
 .code-area-small:focus-within { border-color: var(--blue); }
