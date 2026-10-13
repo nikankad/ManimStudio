@@ -143,3 +143,46 @@ def test_counter_outside_its_loop_is_explained():
     d = repeat_doc(after=None)
     r = runtime.run(d, 0, render=False)
     assert any("counter of a Repeat" in x["message"] for x in r.diagnostics), r.diagnostics
+
+
+def text_doc(template="t = {t:2}"):
+    d = doc([obj("ot", "t", "ValueTracker", args={"*": "10"}, param={"min": 0, "max": 50, "step": 0.1}),
+             obj("ox", "axes", "Axes", args={"x_range": "[10, 50, 10]"}),
+             obj("or", "readout", "Text", args={"*": '"old"', "font_size": "24"}, chain=".next_to(axes, DOWN)",
+                 link={"kind": "text", "template": template}),
+             obj("og", "tag", "Text", pos=[1, 2], link={"kind": "text", "template": "½ + {ZEROS[2]:3}i, {{braces}}"})])
+    d["defs"] = [ZEROS]
+    d["timeline"] = [{"id": "s0", "kind": "add", "targets": ["axes", "readout", "tag"]},
+                     {"id": "p", "kind": "play", "anims": [{"id": "a", "cls": "animate", "target": "t", "chain": ".set_value(20)", "args": {}}], "args": {}}]
+    return d
+
+
+def test_text_with_values():
+    """A value of a definition is written once; a parameter's is kept up to date as it changes."""
+    d = text_doc()
+    src = codegen.generate(d).source
+    assert 'tag = Text(f"½ + {ZEROS[1]:.3f}i, {{braces}}")' in src
+    assert 'readout = constraints.redraw(lambda: Text(f"t = {t.get_value():.2f}", font_size=24).next_to(axes, DOWN), t)' in src
+    from manim import tempconfig
+
+    ns = {}
+    with tempconfig({"dry_run": True, "disable_caching": True, "verbosity": "ERROR"}):
+        exec(compile(src, "scene", "exec"), ns)
+        scene = ns["MainScene"]()
+        scene.render()
+        Text = ns["Text"]
+        readout = min((m for m in scene.mobjects if type(m).__name__ == "Text"), key=lambda m: m.get_center()[1])  # the one under the axes
+        glyphs = lambda m: [float(v) for g in m.submobjects for v in (g.width, g.height)]  # noqa: E731
+        shapes = {v: glyphs(Text(f"t = {v}", font_size=24)) for v in ("10.00", "20.00")}
+        now = glyphs(readout)
+    assert shapes["10.00"] != pytest.approx(shapes["20.00"], abs=1e-3)
+    assert now == pytest.approx(shapes["20.00"], abs=1e-3)  # redrawn for the value t reached
+    back = importer.import_code(src, base=d).doc
+    assert codegen.generate(back).source == src
+    assert next(o for o in back["objects"] if o["name"] == "readout")["link"]["template"] == "t = {t:2}"
+
+
+@pytest.mark.parametrize("template,fragment", [("t = {t", "no }"), ("a } b", "no {"), ("x {} y", "empty"), ("{q}", "q")])
+def test_text_template_errors(template, fragment):
+    r = runtime.run(text_doc(template), 0, render=False)
+    assert any(fragment in x["message"] for x in r.diagnostics if x["id"] == "or"), r.diagnostics

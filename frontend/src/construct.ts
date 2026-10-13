@@ -158,6 +158,22 @@ export function sortByDependencies(doc: SceneDoc): void {
   doc.objects = out;
 }
 
+/** A text template with `fn` applied to the math in each {…} (not to the words around them, nor to {{ and }}). */
+export function mapPlaceholders(template: string, fn: (math: string) => string): string {
+  return template.replace(/\{\{|\}\}|\{([^{}]*)\}/g, (m, inner?: string) => (inner === undefined ? m : `{${fn(inner)}}`));
+}
+
+/** The math in each {…} of a text template, with its decimals (`{t:2}`: "t", 2). */
+export function placeholders(template: string): { math: string; digits?: number }[] {
+  const out: { math: string; digits?: number }[] = [];
+  mapPlaceholders(template, (inner) => {
+    const m = /^([\s\S]*?)(?::\s*(\d+))?\s*$/.exec(inner)!;
+    out.push({ math: m[1], digits: m[2] === undefined ? undefined : +m[2] });
+    return inner;
+  });
+  return out;
+}
+
 /** Rename references to objects in Python fields and link expressions (never inside string literals). */
 export function renameRefs(o: SceneObject, names: Map<string, string>): void {
   if (!names.size) return;
@@ -169,6 +185,7 @@ export function renameRefs(o: SceneObject, names: Map<string, string>): void {
   if (o.link) {
     const l = o.link as Record<string, unknown>;
     for (const f of EXPR_FIELDS[o.link.kind] ?? []) if (typeof l[f] === 'string') l[f] = rep(l[f] as string);
+    if (o.link.kind === 'text') o.link.template = mapPlaceholders(o.link.template, rep);
   }
 }
 
@@ -188,7 +205,7 @@ export const standsAlone = (o: SceneObject) => !!o.link?.off && STANDALONE_KINDS
 export type LinkState = 'coupled' | 'uncoupled' | 'frozen';
 export const linkState = (o: SceneObject): LinkState | null => (!o.link ? null : o.link.off ? 'uncoupled' : o.link.frozen ? 'frozen' : 'coupled');
 export const isFollow = (o: SceneObject) => isCoupled(o) && FOLLOW_KINDS.has(o.link!.kind);
-export const isRedraw = (o: SceneObject) => isCoupled(o) && !FOLLOW_KINDS.has(o.link!.kind);
+export const isRedraw = (o: SceneObject) => isCoupled(o) && !FOLLOW_KINDS.has(o.link!.kind) && o.link!.kind !== 'text'; // a text with values is placed and styled like any other
 /** Whether the construction decides where the object is (a value label without an anchor keeps its own position). */
 export const ownsPosition = (o: SceneObject) => isRedraw(o) || (isFollow(o) && !(o.link!.kind === 'measure' && !o.link!.of));
 
@@ -219,6 +236,7 @@ export function describeLink(o: SceneObject, doc: SceneDoc): string {
     case 'riemann': return `Riemann rectangles under ${n(l.graph)} from ${l.a} to ${l.b}`;
     case 'brace': return `brace on ${n(l.target)}`;
     case 'highlight': return `highlight on ${n(l.target)}`;
+    case 'text': return `shows “${l.template}”`;
   }
 }
 
@@ -270,6 +288,7 @@ export const SOURCE_FIELDS: Record<Link['kind'], [string, string, GeoType[] | nu
   riemann: [['graph', 'graph', ['graph'], true], ['bounded', 'down to graph', ['graph'], false]],
   brace: [['target', 'on', null, true]],
   highlight: [['target', 'on', null, true]],
+  text: [],
 };
 
 export const EXPR_LABELS: Record<string, string> = {
@@ -282,4 +301,5 @@ export const CONTROLLED_ARGS: Partial<Record<Link['kind'], string[]>> = {
   graph: ['function', 'x_range', 'discontinuities', 'dt'], tangent: ['start', 'end', '*'], secant: ['start', 'end', '*'],
   area: ['graph', 'x_range', 'bounded_graph'], riemann: ['graph', 'x_range', 'dx', 'input_sample_type', 'bounded_graph'],
   brace: ['mobject', 'direction'], highlight: ['mobject', '*'], perpendicular: ['start', 'end', '*'], parallel: ['start', 'end', '*'],
+  text: ['*'],
 };

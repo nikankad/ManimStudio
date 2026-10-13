@@ -52,7 +52,10 @@ TEXT_CTORS = {"Text", "MarkupText", "DecimalNumber", "Integer", "Paragraph"}
 FOLLOW_KINDS = {"attach", "midpoint", "on_graph", "on_circle", "coords", "measure", "intersection", "projection"}
 REDRAW_KINDS = {"segment", "circle2", "polygon", "angle", "graph", "tangent", "secant", "area", "riemann", "brace", "highlight",
                 "perpendicular", "parallel"}
-KINDS = FOLLOW_KINDS | REDRAW_KINDS
+# A text whose string shows values: "t = {t:2}" (mathengine.construct._text_lines). Rebuilt when a parameter it
+# shows changes; with none, an ordinary Text.
+TEXT_KINDS = {"text"}
+KINDS = FOLLOW_KINDS | REDRAW_KINDS | TEXT_KINDS
 # Kinds whose object is an ordinary one while uncoupled (a point at its position, a line with its own ends…);
 # the others are built once from their sources while uncoupled.
 STANDALONE_KINDS = FOLLOW_KINDS | {"segment", "circle2", "polygon", "perpendicular", "parallel", "tangent", "secant"}
@@ -95,6 +98,7 @@ SOURCES: dict[str, list[tuple[str, set[str] | None, bool]]] = {
     "riemann": [("graph", {"graph"}, True), ("bounded", {"graph"}, False)],
     "brace": [("target", None, True)],
     "highlight": [("target", None, True)],
+    "text": [],
 }
 # Expression fields (math text over parameters) of each kind.
 EXPRS: dict[str, list[str]] = {
@@ -892,7 +896,7 @@ def plan(doc: dict) -> Plan:
                     p.switchable.add(obj["name"])
                 continue
             except mathexpr.ExprError as exc:
-                why = exc.message
+                why = f"{exc.message} {exc.hint}".strip()
             except KeyError as exc:
                 why = f"Missing source ({exc})."
         if off and link.get("kind") in STANDALONE_KINDS:
@@ -1044,6 +1048,8 @@ def _build_link(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     p = ctx.plan
     frozen = bool(link.get("frozen"))
     off = bool(link.get("off")) and not frozen
+    if kind == "text":
+        return _text_lines(obj, ctx, still=frozen or off)
     uses: list[str] = []  # parameters read
     srcs = [ctx.name(s) for s in link_sources(obj)]
     args = obj.get("args") or {}
@@ -1083,6 +1089,55 @@ def _build_link(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     if off:
         return [f"{name} = {cvar}.redraw(lambda: {build}{deps()}, paused=True)"]
     return [f"{name} = {cvar}.redraw(lambda: {build}{deps()})"]
+
+
+_PLACEHOLDER_NAME = re.compile(r"[A-Za-z_][\w.]*(\(\)|\[\d+\])?")
+
+
+def template_source(obj: dict, ctx: _Ctx, uses: list[str]) -> str:
+    """The f-string of a text template. ``{expr}`` shows a math value (6 significant digits), ``{expr:2}`` with 2
+    decimals; ``{{`` and ``}}`` are braces themselves."""
+    text = str((obj.get("link") or {}).get("template") or "")
+    out, i = "", 0
+    while i < len(text):
+        ch = text[i]
+        if text.startswith("{{", i) or text.startswith("}}", i):
+            out += ch * 2
+            i += 2
+        elif ch == "{":
+            j = text.find("}", i)
+            if j < 0:
+                raise mathexpr.ExprError("A { in the text has no } to close it.", "Write {{ for a brace itself.")
+            m = re.fullmatch(r"(.*?)(?::\s*(\d+))?\s*", text[i + 1:j], re.S)
+            expr, digits = m.group(1), m.group(2)
+            if not expr.strip():
+                raise mathexpr.ExprError("There is an empty {} in the text.", "Put a value in it, like {t:2}.")
+            py = _expr(ctx, obj, expr, "0", uses)
+            if not _PLACEHOLDER_NAME.fullmatch(py):
+                py = f"({py})"
+            out += "{" + py + (f":.{int(digits)}f" if digits else ":g") + "}"
+            i = j + 1
+        elif ch == "}":
+            raise mathexpr.ExprError("A } in the text has no { before it.", "Write }} for a brace itself.")
+        else:
+            out += ch
+            i += 1
+    return f'f"{out}"' if not re.search(r'["\\\n]', out) else "f" + repr(out)
+
+
+def _text_lines(obj: dict, ctx: _Ctx, still: bool) -> list[str]:
+    """A Text showing values: built once where it is created, or rebuilt (keeping its place, size and the style
+    animations gave it) whenever a parameter it shows changes."""
+    name = obj["name"]
+    uses: list[str] = []
+    made = f"{base_ctor(obj)}({_with(template_source(obj, ctx, uses), _call_kwargs(obj.get('args') or {}, {'*'}))})"
+    after = _transforms(obj, name, with_pos=True)
+    if still or not uses:
+        return [f"{name} = {made}"] + after
+    p = ctx.plan
+    p.uses_constraints = True
+    build = made + "".join(line[len(name):] for line in after)  # each is name.method(…): chained on the new one
+    return [f"{name} = {p.constraints_var}.redraw(lambda: {build}{''.join(f', {u}' for u in uses)})"]
 
 
 def _offset(link: dict) -> str:

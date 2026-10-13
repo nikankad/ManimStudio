@@ -243,6 +243,7 @@ const TOPICS: Topic[] = [
           <li>Discontinuities (like those of <code>tan(x)</code>) are found automatically, and the curve isn't drawn across them.</li>
           <li>Also: <code>if(x &lt; 0, 0, x^2)</code> for pieces, <code>sum(k, 1, n, 1/k^2)</code> and <code>prod(…)</code>, <code>mod min max atan2 round isprime</code>, and the scene's <b>definitions</b>.</li>
           <li><b>Definitions</b> (Scene inspector, nothing selected): <b>+ value</b>, <b>+ list</b> and <b>+ function</b> name things written in math, such as <code>period = 2 pi</code>, a list of numbers used as <code>ZEROS[1]</code> (counting from 1), or <code>Z(t)</code> with <i>where</i> names worked out first. Each is checked as you type. Graphs and every math field use them by name, renaming one renames its uses, and the code has them as Python above the scene.</li>
+          <li><b>Text with values</b>: a parameter's <i>Show as text</i>, or <i>Show values in it</i> on any Text, puts math in braces in its words: <code>{'t = {t:2}'}</code> (2 decimals), <code>{'½ + {ZEROS[k]:3}i'}</code>. With a parameter in it, the text follows the parameter as it changes.</li>
           <li>Not supported yet: implicit equations (<code>x^2 + y^2 = 1</code>), parametric or polar curves. The builder explains what it can't read.</li>
           <li>To animate a parameter, select it and use <b>Animate to… → Add clip</b>; its sliders appear in the inspector when nothing is selected.</li>
         </ul>

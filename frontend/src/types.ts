@@ -75,7 +75,8 @@ type LinkSpec =
   | { kind: 'area'; graph: string; a: string; b: string; bounded?: string; frozen?: boolean }
   | { kind: 'riemann'; graph: string; a: string; b: string; dx: string; sample?: 'left' | 'right' | 'center'; bounded?: string; frozen?: boolean }
   | { kind: 'brace'; target: string; parts?: string[]; direction?: string; frozen?: boolean }
-  | { kind: 'highlight'; target: string; parts?: string[]; style?: 'box' | 'background' | 'underline'; frozen?: boolean };
+  | { kind: 'highlight'; target: string; parts?: string[]; style?: 'box' | 'background' | 'underline'; frozen?: boolean }
+  | { kind: 'text'; template: string; off?: boolean; frozen?: boolean }; // a Text showing values: "t = {t:2}"
 
 export type LinkKind = Link['kind'];
 

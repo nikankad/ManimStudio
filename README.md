@@ -336,6 +336,11 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   and every math field use them by name; renaming one renames its uses. In the code they are ordinary Python
   above the scene class (`period = 2 * np.pi`, `def Z(t): …`), and reading the code back keeps them as
   definitions while it is what they generate (edited by hand, they become code above the scene).
+- **Text with values**: a parameter's *Show as text*, or *Show values in it* on any Text, makes its words hold
+  math in braces: `t = {t:2}` (2 decimals), `½ + {ZEROS[k]:3}i`, `{2 pi}`; `{{` and `}}` are braces themselves.
+  Each value is checked as you type. A text showing a parameter follows it as it changes
+  (`constraints.redraw(lambda: Text(f"t = {t.get_value():.2f}"), t)`); one showing only definitions or a loop's
+  counter is an ordinary `Text(f"…")`, written where it is created.
 - **Annotations offered for each kind of object**:
   - segment: *Show length*;
   - two lines: *Mark angle*;

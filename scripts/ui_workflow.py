@@ -1769,7 +1769,36 @@ def repeat_loops(b):
         ctx.close()
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def text_values(b):
+    """A parameter's "Show as text" makes a Text that follows it ("a = {a:2}"); its words and values are edited in
+    one field, and a value it can't work out is pointed at."""
+    code = "from manim import *\n\n\nclass T(Scene):\n    def construct(self):\n        self.wait()\n"
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "text.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_selector(".tl-lanes .clip", timeout=60000)
+        pg.get_by_role("button", name="+ parameter").click()
+        pg.wait_for_timeout(300)
+        insp = pg.locator(".inspector")
+        insp.locator(".chip", has_text="Show as text").click()
+        pg.wait_for_timeout(300)
+        field = insp.get_by_label("Text with values")
+        assert field.input_value() == "a = {a:2}"
+        field.fill("a is {a:1} and {q}")
+        insp.locator(".expr-err", has_text="{q}").wait_for(timeout=10000)
+        field.fill("a is {a:1}, twice {2a:1}")
+        pg.wait_for_timeout(800)
+        assert not insp.locator(".expr-err").count()
+        pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+        pg.wait_for_timeout(700)
+        src = pg.locator(".code-monitor textarea").first.input_value()
+        assert 'a_text = constraints.redraw(lambda: Text(f"a is {a.get_value():.1f}, twice {(2 * a.get_value()):.1f}", font_size=32)' in src, src
+        assert not pg.errors, pg.errors
+        ctx.close()
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, text_values, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
