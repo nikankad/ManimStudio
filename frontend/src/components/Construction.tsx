@@ -94,15 +94,25 @@ function loopFor(doc: SceneDoc, v: string, name: string): string | null {
   return (around ?? blocks[0])[0].id;
 }
 
+/** Offered when a field uses a loop's counter but its object is made outside the loop. */
+function InLoop({ obj, loop }: { obj: SceneObject; loop: string }) {
+  return <button className="ghost small" title="Each run of the loop then makes its own, using its counter" onClick={() => updateDoc((d) => {
+    const o = d.objects.find((x) => x.id === obj.id);
+    if (o) o.after = loop;
+  })}>Create it in the loop</button>;
+}
+
 /** The words of a text with values: math in braces, each checked by the backend like an expression field. */
 function TemplateField({ obj, template, onChange }: { obj: SceneObject; template: string; onChange: (v: string) => void }) {
   const doc = useStore((s) => s.doc);
   const [problem, setProblem] = useState<string | null>(null);
+  const [counter, setCounter] = useState<string | null>(null); // an undefined name that is a loop's counter
   const names = params(doc).map((p) => p.name);
   const vars = loopsAround(doc.timeline, obj.after);
   useEffect(() => {
     const parts = placeholders(template);
     const open = template.replace(/\{\{|\}\}/g, '').replace(/\{[^{}]*\}/g, '');
+    setCounter(null);
     if (/[{}]/.test(open)) return setProblem('A brace has no partner. Write {{ or }} for a brace itself.');
     if (parts.some((p) => !p.math.trim())) return setProblem('There is an empty {}: put a value in it, like {t:2}.');
     let live = true;
@@ -111,7 +121,10 @@ function TemplateField({ obj, template, onChange }: { obj: SceneObject; template
         if (literal(p.math) !== null) continue;
         const r = await api.checkValue(p.math, names, getState().doc.defs, vars).catch(() => null);
         if (!live) return;
-        if (r && !r.ok) return setProblem(`{${p.math}}: ${r.error}${r.hint ? ` ${r.hint}` : ''}`);
+        if (r && !r.ok) {
+          setCounter(r.error?.startsWith('Undefined parameter') ? r.error.match(/'([^']+)'/)?.[1] ?? null : null);
+          return setProblem(`{${p.math}}: ${r.error}${r.hint ? ` ${r.hint}` : ''}`);
+        }
       }
       if (live) setProblem(null);
     }, 250);
@@ -120,12 +133,13 @@ function TemplateField({ obj, template, onChange }: { obj: SceneObject; template
       clearTimeout(t);
     };
   }, [template, names.join(','), vars.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loop = counter ? loopFor(doc, counter, obj.name) : null;
   return (
     <>
       <label className="param"><span className="pname">text</span>
         <Field className={`mono ${problem ? 'bad' : ''}`} value={template} ariaLabel="Text with values" placeholder="t = {t:2}" onChange={onChange} />
       </label>
-      {problem ? <div className="expr-err">{problem}</div>
+      {problem ? <div className="expr-err">{problem}{loop && <InLoop obj={obj} loop={loop} />}</div>
         : <p className="muted small">Math in braces shows its value: <code>{'{t:2}'}</code> with 2 decimals, <code>{'{ZEROS[k]:3}'}</code>, <code>{'{2 pi}'}</code>. With a parameter in it, the text follows it as it changes.</p>}
     </>
   );
@@ -152,10 +166,7 @@ export function ExprField({ value, onChange, placeholder, vars = [], obj }: { va
         <div className="expr-err">
           {check.error}{check.hint ? ` ${check.hint}` : ''}
           {missing && <button className="ghost small" onClick={() => updateDoc((d) => void createParam(d, missing!, 1, { min: -5, max: 5, step: 0.1 }))}>Create parameter {missing}</button>}
-          {loop && obj && <button className="ghost small" title="Each run of the loop then makes its own, using its counter" onClick={() => updateDoc((d) => {
-            const o = d.objects.find((x) => x.id === obj.id);
-            if (o) o.after = loop;
-          })}>Create it in the loop</button>}
+          {loop && obj && <InLoop obj={obj} loop={loop} />}
         </div>
       )}
     </div>

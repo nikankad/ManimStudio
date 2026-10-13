@@ -201,7 +201,8 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const terms = useStore((s) => (s.selection?.kind === 'object' && s.selection.id === obj.id ? s.selection.terms : undefined));
   const isVector = sig?.vector ?? true;
   const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
-  const styleKeys = STYLE_KEYS.filter((k) => paramNames.has(k) || obj.args[k] !== undefined);
+  // every vector shape takes these (VMobject's own arguments), even when its signature only says **kwargs (Polygon…)
+  const styleKeys = STYLE_KEYS.filter((k) => isVector || paramNames.has(k) || obj.args[k] !== undefined);
   // Arguments the construction supplies (a segment's start/end, a brace's mobject…) aren't edited here.
   const controlled = new Set(obj.link && !standsAlone(obj) ? CONTROLLED_ARGS[obj.link.kind] ?? [] : []);
 

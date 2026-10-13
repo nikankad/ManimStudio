@@ -237,7 +237,24 @@ def repeat_head(r: dict, sc: dict) -> str:
             raise mathexpr.ExprError(f"{lst or 'That'!r} isn't a list.", "Make one in Scene › Definitions (+ list).")
         return f"for {var} in {lst}"
     lo, hi = _bound(r.get("from", "1") or "1", sc), _bound(r.get("to", "1") or "1", sc, " + 1")
-    return f"for {var} in range({lo}, {hi})"
+    return f"for {var} in range({hi})" if lo == "0" else f"for {var} in range({lo}, {hi})"
+
+
+def guess_repeat(head: str, sc: dict) -> dict | None:
+    """The Repeat a ``for`` header written in code is, when it is exactly what that Repeat writes: ``range`` with whole
+    numbers (``for i in range(5)`` counts 0 to 4) or each item of a list definition."""
+    m = re.fullmatch(r"for (\w+) in range\((-?\d+)(?:, (-?\d+))?\)", head.strip())
+    r = None
+    if m:
+        lo, hi = (m.group(2), m.group(3)) if m.group(3) else ("0", m.group(2))
+        if int(hi) > int(lo):
+            r = {"var": m.group(1), "from": lo, "to": str(int(hi) - 1)}
+    elif m := re.fullmatch(r"for (\w+) in (\w+)", head.strip()):
+        r = {"var": m.group(1), "each": m.group(2)}
+    try:
+        return r if r and repeat_head(r, sc) == head.strip() else None
+    except mathexpr.ExprError:
+        return None
 
 
 def block_head(step: dict, sc: dict | None) -> str:

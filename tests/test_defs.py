@@ -208,3 +208,17 @@ def test_fade_out_the_rest():
         scene.render()
         left = sorted(type(m).__name__ for m in scene.mobjects)
     assert left == ["Mobject", "Text"], left
+
+
+def test_loops_in_code_import_as_repeats():
+    """A loop over whole numbers or a list definition reads back as a Repeat; any other loop keeps its header."""
+    sc = defs.scope([ZEROS])
+    assert defs.guess_repeat("for i in range(200)", sc) == {"var": "i", "from": "0", "to": "199"}
+    assert defs.guess_repeat("for k in range(1, 7)", sc) == {"var": "k", "from": "1", "to": "6"}
+    assert defs.guess_repeat("for z in ZEROS", sc) == {"var": "z", "each": "ZEROS"}
+    for head in ("for i in range(0, 5)", "for i in range(len(v))", "for z in colors", "for i, z in enumerate(ZEROS)"):
+        assert defs.guess_repeat(head, sc) is None
+    src = "from manim import *\n\n\nclass S(Scene):\n    def construct(self):\n        for i in range(3):\n            self.play(Create(Circle().shift(i * RIGHT)))\n"
+    d = importer.import_code(src).doc
+    assert d["timeline"][0]["repeat"] == {"var": "i", "from": "0", "to": "2"}
+    assert codegen.generate(d).source.endswith(src.split("construct(self):\n")[1])

@@ -566,6 +566,9 @@ class _Importer:
                 was = next((s for s in self.base_doc.get("timeline") or [] if s["id"] == step["id"]), None)
                 if was and was.get("repeat") and defs.block_head(was, defs.loop_scope(self.base_doc)) == head.strip():
                     step["repeat"] = copy.deepcopy(was["repeat"])
+            if k == 0 and "repeat" not in step and isinstance(stmt, ast.For):  # a loop counting whole numbers is a Repeat
+                if r := defs.guess_repeat(head, defs.loop_scope(self.base_doc or {})):
+                    step["repeat"] = r
             if k == 0:
                 self.add_step(step, comment, self.header_comment(line))
             else:

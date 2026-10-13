@@ -101,6 +101,7 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     edit: an empty body is written `pass`.
     A loop's **Loop** menu writes it in math instead of a header: a counter (`k` from `1` to `len(ZEROS)`, both
     ends included: `for k in range(1, len(ZEROS) + 1)`) or each item of a list definition (`for z in ZEROS`).
+    Loops in code that are already one of these (`for i in range(5)`, a counter from 0 to 4) open as one.
     What is created in the loop (an object whose intro is added with the playhead in it, or one set to be
     created there) is made anew on each run, and its math fields can use the counter: a point at coordinates
     `(0.5, ZEROS[k])` lands on each zero in turn (its updater keeps its own run's `k`). Used outside its loop,
