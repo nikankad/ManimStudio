@@ -453,10 +453,11 @@ def report(results: list[dict], sources: dict) -> str:
                 editable[k["channel"]] += bool(k["editable"])
                 if not k["editable"]:
                     why[re.sub(r"\(.*\)", "(…)", k.get("why") or "?")] += 1
-    lines += ["## Keyframes (all imported scenes)", "", "| Channel | Keyframes | Editable in Effect Controls |", "|---|---|---|"]
+    lines += ["## Keyframes (all imported scenes)", "", "| Channel | Keyframes | Value set directly in Effect Controls |", "|---|---|---|"]
     for ch in ["position", "scale", "rotation", "opacity", "color", "value"]:
         lines.append(f"| {ch} | {per[ch]} | {pct(editable[ch], per[ch])} ({editable[ch]}) |")
-    lines += ["", "Why a keyframe is read-only:", ""] + [f"- {n}× {w}" for w, n in why.most_common(8)] + [""]
+    lines += ["", "Every keyframe can be edited in Effect Controls; the others are edited by their method's arguments, as code "
+              "(relative ones can also be pinned to a point), because:", ""] + [f"- {n}× {w}" for w, n in why.most_common(8)] + [""]
 
     # what stays code
     notes = collections.Counter()
