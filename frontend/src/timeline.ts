@@ -606,8 +606,10 @@ export function removeIds(d: SceneDoc, lay: Layout, ids: Set<string>, mode: 'lif
   if (d.timeline.some((s) => ids.has(s.id) && (s.kind === 'block' || s.kind === 'end'))) {
     ids = withBlocks(d, ids);
     // A whole compound statement goes as one step (its time left as a gap by 'lift'); a clause goes with its body.
-    for (const [opener, c] of compounds(d.timeline)) {
-      if (!ids.has(opener)) continue;
+    // (the shapes are read again for each: taking one block's steps out moves the ones after it)
+    for (const opener of [...compounds(d.timeline).keys()]) {
+      const c = ids.has(opener) ? compounds(d.timeline).get(opener) : undefined; // gone: it was inside one taken out
+      if (!c) continue;
       for (const x of d.timeline.slice(c.from + 1, c.to + 1)) {
         ids.delete(x.id);
         reanchor(d, x.id, opener);
@@ -726,7 +728,11 @@ export function moveAnims(d: SceneDoc, measured: RunResult | null, ids: string[]
 /** Move (or copy) whole steps to time `t`: the old place becomes a gap, the new one takes a gap's place. */
 export function moveSteps(d: SceneDoc, measured: RunResult | null, ids: string[], t: number, copy: boolean): string[] {
   const lay0 = layout(d, measured);
-  ids = [...withBlocks(d, ids)];
+  // a clause (else, except…) can't stand on its own elsewhere: it moves with its whole statement
+  ids = [...withBlocks(d, ids.map((id) => {
+    const s = d.timeline.find((x) => x.id === id);
+    return s && isClause(s) ? compoundOf(d.timeline, id) ?? id : id;
+  }))];
   const list = d.timeline.filter((s) => ids.includes(s.id));
   if (!list.length) return [];
   // the steps inside a moving block move with it, in its time (its span covers all its runs)
@@ -947,7 +953,8 @@ export function forgetObjects(d: SceneDoc, lay: Layout, names: Set<string>, ids:
     if (s.kind === 'apply' && names.has(rootName(s.target ?? ''))) gone.add(s.id);
     if (s.targets) {
       const had = s.targets.length;
-      s.targets = s.targets.filter((t) => !names.has(t));
+      // a target is a name or an expression (`*dots`, `VGroup(a, b)`): one that uses a removed object goes
+      s.targets = s.targets.filter((t) => !(t.replace(STRING, '').match(/[A-Za-z_]\w*/g) ?? []).some((w) => names.has(w)));
       if (had && !s.targets.length) gone.add(s.id);
     }
   }

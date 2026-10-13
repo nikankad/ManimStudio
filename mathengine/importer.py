@@ -208,8 +208,6 @@ class _Importer:
         self.objects: list[dict] = []
         self.steps: list[dict] = []
         self.known: dict[str, type | None] = {}  # object name -> its class (None: unknown)
-        self.pending: list[ast.stmt] = []  # statements of the code step being collected
-        self.pending_from = 0  # first line of that code step (its comments included)
         self.notes: list[str] = []
         self.base_doc = base
         self.scene_cls: type | None = None
@@ -218,7 +216,6 @@ class _Importer:
         self.blocks, self.base_compounds = _base_blocks(base) if base else ({}, [])
         self.reused_steps: set[str] = set()
         self.gap = False  # a blank line before the statement being read
-        self.pending_gap = False
 
     # ---- helpers
     def cls_of(self, name: str) -> type | None:
@@ -541,14 +538,27 @@ class _Importer:
         return None
 
     def header_comment(self, line: int) -> str:
-        """The comment after a one-line header (``for d in dots:  # each dot``)."""
-        m = re.search(r":\s*(#.*)$", self.s.lines[line - 1])
-        return m.group(1).strip() if m and "#" not in self.s.lines[line - 1][:m.start()] else ""
+        """The comment after a header's colon (``for d in dots:  # each dot``), read as tokens so a ``#`` inside a
+        string of the header (``with self.voiceover(text="Step #1"):``) isn't taken for it."""
+        text = "\n".join([self.s.lines[line - 1].lstrip(), *self.s.lines[line:]])
+        depth, colon = 0, None
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                if colon is not None:
+                    return tok.string.strip() if tok.type == tokenize.COMMENT and tok.start[0] == colon else ""
+                if tok.type == tokenize.OP and tok.string in "([{":
+                    depth += 1
+                elif tok.type == tokenize.OP and tok.string in ")]}":
+                    depth -= 1
+                elif tok.type == tokenize.OP and tok.string == ":" and depth == 0:
+                    colon = tok.start[0]
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            pass
+        return ""
 
     def read_compound(self, stmt: ast.stmt, parts: list[tuple[str, list[ast.stmt], int]], comment: str) -> None:
         """A compound statement as block steps around its bodies' steps, keeping the ids of an unchanged one."""
         ids = self.compound_ids(stmt, len(parts) - 1)
-        self.flush()
         prev_end = 0
         for k, (head, body, line) in enumerate(parts):
             step = {"id": ids[0][k] if ids else _id("s"), "kind": "block", "head": head}
@@ -687,20 +697,12 @@ class _Importer:
         _set_gap(step, self.gap)
         self.steps.append(step)
 
-    def flush(self) -> None:
-        if not self.pending:
-            return
-        code = self.s.block(self.pending_from, self.pending[-1].end_lineno or self.pending[-1].lineno)
-        step = {"id": _id("s"), "kind": "code", "code": code}
-        _set_gap(step, self.pending_gap)
-        self.steps.append(step)
-        self.pending = []
-
     def keep_as_code(self, stmt: ast.stmt, first_line: int) -> None:
-        if not self.pending:
-            self.pending_from = first_line
-            self.pending_gap = self.gap
-        self.pending.append(stmt)
+        """A statement kept as written, from ``first_line`` (its comments above it): a code step of its own, so it
+        can be moved, disabled and timed."""
+        step = {"id": _id("s"), "kind": "code", "code": self.s.block(first_line, stmt.end_lineno or stmt.lineno)}
+        _set_gap(step, self.gap)
+        self.steps.append(step)
 
     def run(self, body: list[ast.stmt], floor: int) -> None:
         texts = [ast.unparse(s) for s in body]
@@ -722,7 +724,6 @@ class _Importer:
             if hit is not None:
                 kind, elem, n = hit
                 eol = self.s.comment_after(body[i + n - 1])
-                self.flush()
                 if kind == "object":
                     self.add_object(elem, comment, eol)
                     self.known[elem["name"]] = self.cls_of(elem["ctor"]) or self.ctor_class(_expr(elem["ctor"]))[1]
@@ -749,7 +750,6 @@ class _Importer:
                 if obj["chain"] or len(pieces) > 1:
                     obj["chain_layout"] = [obj["chain"], *pieces]
                 obj["chain"] += "".join(pieces)
-                self.flush()
                 obj["_src"] = self.s.verbatim(stmt, body[j - 1])
                 self.add_object(obj, comment, self.s.comment_after(body[j - 1]))
                 self.known[obj["name"]] = cls
@@ -759,17 +759,14 @@ class _Importer:
             step = self.statement_step(stmt)
             if step is not None:
                 step["_src"] = self.s.verbatim(stmt, stmt)
-                self.flush()
                 self.add_step(step, comment, self.s.comment_after(stmt))
             else:
                 if _self_call(stmt, "play") is not None:
                     self.notes.append(f"Line {stmt.lineno}: this self.play is kept as code (its animations are built by "
                                       "an expression, such as a list or a variable).")
                 self.keep_as_code(stmt, first)
-                self.flush()  # each statement is a step of its own: it can be moved, disabled, timed
             prev_end = stmt.end_lineno or stmt.lineno
             i += 1
-        self.flush()
 
     def match_base(self, texts: list[str], i: int) -> tuple[str, dict, int] | None:
         for kind, elem, block in sorted(self.blocks.get(texts[i], []), key=lambda b: -len(b[2])):
@@ -785,10 +782,6 @@ def _expr(src: str) -> ast.AST:
         return ast.parse(src, mode="eval").body
     except SyntaxError:
         return ast.Constant(None)
-
-
-def _join_comments(above: str, trailing: str) -> str:
-    return "\n".join(c for c in (above, trailing) if c)
 
 
 def _keep_written(doc: dict, plan: construct.Plan) -> None:
@@ -814,7 +807,8 @@ def _keep_top(code: str, scene: ast.ClassDef, doc: dict, plan: construct.Plan) -
     """The top of the file (above the scene class) as the code has it, while codegen would write it differently:
     codegen writes it as it was for as long as what it is made from (imports, config, header) is unchanged."""
     lines = code.split("\n")
-    at = next((i for i, ln in enumerate(lines) if re.match(rf"class\s+{re.escape(scene.name)}\b", ln)), None)
+    inside = codegen.string_lines(code)  # a line of a docstring that reads "class …" isn't the class
+    at = next((i for i, ln in enumerate(lines) if i not in inside and re.match(rf"class\s+{re.escape(scene.name)}\b", ln)), None)
     if at is None:
         return
     while at > 0 and lines[at - 1].startswith("@"):  # its decorators are written with the class

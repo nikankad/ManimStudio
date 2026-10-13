@@ -86,7 +86,7 @@ def purge_broken_partials(media: Path) -> int:
     return gone
 
 
-CACHE_MAX_AGE = 14 * 86400  # seconds: a cached piece nobody has rendered for two weeks is not worth keeping
+CACHE_MAX_AGE = 14 * 86400  # seconds: a cached piece no render has used for two weeks is not worth keeping
 CACHE_MAX_BYTES = 2 * 1024**3  # per project; 4K renders cache pieces of tens of megabytes
 
 
@@ -103,8 +103,10 @@ def prune_cache(media: Path, max_age: float = CACHE_MAX_AGE, max_bytes: int = CA
             st = movie.stat()
         except OSError:
             continue
-        pieces.append((st.st_mtime, st.st_size, movie))
-    pieces.sort()  # oldest first
+        # last used: manim reuses a cached piece without writing it, but reading it to assemble the video marks its
+        # access time (where the file system keeps one), so a piece every render needs isn't taken for an old one
+        pieces.append((max(st.st_mtime, st.st_atime), st.st_size, movie))
+    pieces.sort()  # least recently used first
     total = sum(size for _, size, _ in pieces)
     gone = 0
     for mtime, size, movie in pieces:

@@ -115,3 +115,54 @@ def test_moving_a_block_moves_it_whole(loop):
     body = ops(doc, measured, {"op": "move", "ids": [tl[2]["id"]], "t": 9})[0]["doc"]
     code = code_of(body)
     assert code.index("self.play(FadeIn(d), run_time=0.5)") > code.index("self.play(FadeOut(title))")
+
+
+TWO = '''from manim import *
+
+
+class T(Scene):
+    def construct(self):
+        c = Circle()
+        for i in range(2):
+            self.play(c.animate.shift(RIGHT))
+        x = 1
+        for j in range(2):
+            self.play(c.animate.shift(UP))
+        y = 2
+        try:
+            self.wait()
+        except Exception:
+            self.wait(2)
+        z = 3
+'''
+
+
+def test_deleting_two_blocks_keeps_the_steps_after_them():
+    doc = import_code(TWO).doc
+    tl = doc["timeline"]
+    loops = [s["id"] for s in tl if (s.get("head") or "").startswith("for")]
+    for op in ("remove", "ripple"):
+        out = ops(doc, None, {"op": op, "ids": loops})[0]["doc"]
+        code = code_of(out)
+        assert "for " not in code and "shift" not in code
+        assert all(f"{v}\n" in code for v in ("x = 1", "y = 2", "z = 3")) and "try:" in code, code
+
+
+def test_a_moved_clause_takes_its_statement_and_a_try_never_loses_its_handler():
+    doc = import_code(TWO).doc
+    tl = doc["timeline"]
+    except_ = next(s for s in tl if s.get("head") == "except Exception")
+    moved, removed = ops(doc, None, {"op": "move", "ids": [except_["id"]], "t": 0}, {"op": "ripple", "ids": [except_["id"]]})
+    code = code_of(moved["doc"])
+    assert code.index("try:") < code.index("except Exception:") < code.index("x = 1"), code  # whole, at the start
+    code = code_of(removed["doc"])
+    assert "try:\n            self.wait()\n        finally:\n            pass\n" in code, code
+
+
+def test_clauses_that_dont_fit_their_block_are_left_out():
+    doc = import_code(TWO).doc
+    for s in doc["timeline"]:
+        if s.get("head") == "try":
+            s["head"] = "with c.animate:"[:-1]  # a with can't have an except
+    code = code_of(doc)
+    assert "except" not in code and "self.wait(2)" in code

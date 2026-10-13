@@ -277,6 +277,33 @@ def _playable(step: dict, skip: set[str]) -> list[dict]:
     return [a for a in step.get("anims") or [] if not a.get("disabled") and a["id"] not in skip]
 
 
+def _keyword(step: dict) -> str:
+    """The keyword a block's header starts with (``for``, ``elif``, ``except``…; ``async for`` is ``for``)."""
+    words = (step.get("head") or "").split()
+    words = words[1:] if words[:1] == ["async"] else words
+    return re.split(r"\W", words[0], maxsplit=1)[0] if words else "if"
+
+
+def _fits(opener: str, seen: list[str], clause: str) -> bool:
+    """Whether a compound statement that starts with ``opener`` and has the clauses ``seen`` can take ``clause``."""
+    if opener == "if":
+        return clause in ("elif", "else") and "else" not in seen
+    if opener in ("for", "while"):
+        return clause == "else" and not seen
+    if opener == "try":
+        if clause == "except":
+            return not {"else", "finally"} & set(seen)
+        if clause == "else":
+            return "except" in seen and not {"else", "finally"} & set(seen)
+        return clause == "finally" and "finally" not in seen
+    return False
+
+
+def _target_names(step: dict) -> list[str]:
+    """The names an add step shows: its targets are names or expressions (``*dots``, ``VGroup(a, b)``)."""
+    return [w for t in step.get("targets") or [] for w in _WORD.findall(_STRING.sub("", t))]
+
+
 def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> None:
     """What manim will do that the author may not expect, statement by statement.
 
@@ -290,7 +317,7 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
     # objects brought on screen on purpose later (an intro, self.add): animating one before that is a mistake
     introduced_at: dict[str, int] = {}
     for i, step in enumerate(steps):
-        names: list[str] = list(step.get("targets") or []) if step.get("kind") == "add" else []
+        names: list[str] = _target_names(step) if step.get("kind") == "add" else []
         for a in timeline.walk(_playable(step, skip)) if step.get("kind") == "play" else []:
             if (a.get("cls") or "").strip() == "Add" or _flag((a.get("cls") or "").strip(), "is_introducer"):
                 names += [t.strip() for t in (a.get("target") or "").split(",") if t.strip()]
@@ -299,9 +326,9 @@ def _check_timeline(steps: list[dict], plan: construct.Plan, skip: set[str]) -> 
     for i, step in enumerate(steps):
         kind = step.get("kind")
         if kind == "add":
-            shown.update(step.get("targets") or [])
+            shown.update(_target_names(step))
         elif kind == "remove":
-            shown.difference_update(step.get("targets") or [])
+            shown.difference_update(t.lstrip("*").strip() for t in step.get("targets") or [])
         elif kind == "call":  # bring_to_front, add_foreground_mobjects…: trust it with the objects it names
             shown.update(w for v in (step.get("args") or {}).values() for w in _WORD.findall(_STRING.sub("", str(v))))
         elif kind == "code":
@@ -438,8 +465,10 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         _emit_object(obj, emit, B, preview, plan)
         placed(obj, at)
     # Compound statements (block … end): their bodies are indented one level more. What doesn't balance is
-    # repaired so the code always runs: a clause or end with no open block is left out, an empty body gets
-    # `pass`, a block left open is closed at the end. A disabled block leaves its whole statement out.
+    # repaired so the code always runs: a clause or end with no open block is left out, and so is a clause its
+    # block can't have there (an else after a with, an except after a for, a second else; its steps stay in the
+    # clause before it); an empty body gets `pass`, a try left without except or finally gets `finally: pass`,
+    # a block left open is closed at the end. A disabled block leaves its whole statement out.
     shapes = timeline.compounds(full)
     open_: list[dict] = []  # {"id", "end", "at": line of its header, "clause": (id, line) of the open clause, "body"}
     hidden: list[int] = []  # depth of a disabled block being skipped
@@ -455,6 +484,9 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
 
     def close(frame: dict) -> None:
         close_body(frame)
+        if frame["kw"] == "try" and not {"except", "finally"} & set(frame["seen"]):
+            emit("finally:", None, indent() - 4)
+            emit("pass", None, indent())
         open_.pop()
         if preview and frame["end"]:
             emit(f"self._me_step_end({frame['end']!r})", ("step", frame["end"]), indent())
@@ -479,8 +511,9 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
                 if hidden[-1] < 0:
                     hidden.pop()
         elif kind == "block" and timeline.is_clause(step):
-            if open_:
+            if open_ and _fits(open_[-1]["kw"], open_[-1]["seen"], _keyword(step)):
                 frame = open_[-1]
+                frame["seen"].append(_keyword(step))
                 close_body(frame)
                 header(step, len(open_) - 1)
                 frame["clause"], frame["body"] = (step["id"], len(w.lines) - 1), len(w.lines)
@@ -495,7 +528,8 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
                     emit(f"self._me_step({end!r})", ("step", end), indent())
                 at = len(w.lines)
                 header(step, len(open_))
-                open_.append({"id": step["id"], "end": end, "at": at, "clause": (step["id"], at), "body": len(w.lines)})
+                open_.append({"id": step["id"], "end": end, "at": at, "clause": (step["id"], at), "body": len(w.lines),
+                              "kw": _keyword(step), "seen": []})
                 if preview:
                     emit(f"self._me_enter({step['id']!r})", ("step", step["id"]), indent())
         elif kind == "end":

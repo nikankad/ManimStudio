@@ -59,7 +59,8 @@ export function useAutoLabels() {
         // text that changed inside a row (a label now reads differently): redo that row
         const t = r.target instanceof Element ? r.target : r.target.parentElement;
         const row = t && !t.closest('svg, .stage') ? t.closest(ROW) : null;
-        if (row && r.type === 'characterData') dirty.add(row);
+        // (only a row with names made here: values ticking during playback don't relabel rows that need nothing)
+        if (row && r.type === 'characterData' && !dirty.has(row) && row.querySelector('[data-auto-label]')) dirty.add(row);
       }
       if (dirty.size && !queued) {
         queued = true;

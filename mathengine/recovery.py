@@ -63,12 +63,16 @@ def listing() -> list[dict]:
         data = _read(p)
         if not data or not _ID.fullmatch(str(data.get("id", ""))):
             continue
+        try:
+            saved = data.get("saved") or p.stat().st_mtime
+        except OSError:  # pruned meanwhile
+            continue
         path = data.get("path")
         out.append({
             "id": data["id"], "path": path,
             "name": Path(path).stem if path else "Untitled",
             "scene": (data["doc"].get("scene") or {}).get("name", ""),
-            "saved": data.get("saved") or p.stat().st_mtime,
+            "saved": saved,
         })
     return sorted(out, key=lambda e: e["saved"], reverse=True)
 
@@ -100,5 +104,8 @@ def _prune(newest: Path) -> None:
         if i >= LIMIT or now - mtime > MAX_AGE:
             p.unlink(missing_ok=True)
     for tmp in _dir().glob("*.tmp"):  # left by a write that was cut off
-        if now - tmp.stat().st_mtime > 3600:
-            tmp.unlink(missing_ok=True)
+        try:
+            if now - tmp.stat().st_mtime > 3600:
+                tmp.unlink(missing_ok=True)
+        except OSError:  # gone meanwhile (another save just renamed it into place)
+            continue

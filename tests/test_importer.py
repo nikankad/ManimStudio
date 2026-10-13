@@ -695,3 +695,41 @@ b""")
     again = import_code(out, base=imp.doc)
     assert [s["id"] for s in again.doc["timeline"]] == [s["id"] for s in imp.doc["timeline"]]
     assert codegen.generate(again.doc, latex=True).source == src
+
+
+def test_header_comments_and_a_docstring_that_mentions_the_class():
+    src = '''"""Demo.
+
+class S(Scene) is below.
+"""
+from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        for s in ["a#b", "c"]:  # each
+            self.add(Text(s))
+        if (
+            True
+        ):  # multi
+            self.wait()
+'''
+    imp = import_code(src)
+    heads = [(s["head"], s.get("eol")) for s in imp.doc["timeline"] if s["kind"] == "block"]
+    assert heads == [('for s in ["a#b", "c"]', "# each"), ("if (\n    True\n)", "# multi")], heads
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+
+
+def test_an_object_added_by_an_expression_counts_as_shown():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        c = Circle()
+        self.add(*[c])
+        self.play(c.animate.shift(UP))
+'''
+    gen = codegen.generate(import_code(src).doc, latex=True)
+    assert not [d for d in gen.diagnostics if "on screen" in d.get("message", "")], gen.diagnostics
