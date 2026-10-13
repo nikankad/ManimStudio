@@ -358,3 +358,44 @@ def test_a_complex_tracker_previews():
            "        self.add(z)\n        self.play(z.animate.set_value(2j))\n")
     r = runtime.run(import_code(src).doc, render=False)
     assert r.error is None, r.error
+
+
+STYLE = '''from manim import *
+import numpy as np
+
+
+class S(Scene):
+    def construct(self):
+        a = Dot().shift(LEFT * 2)
+        line = Line(LEFT, RIGHT, color=BLUE)
+        line.set_color(RED)
+        line.shift(UP)
+        self.add(a, line)
+
+        ex = Exclusion(Square(), Circle(), color=YELLOW)
+        self.play(Create(ex), run_time=2)
+'''
+
+
+def _construct(src: str) -> str:
+    return src[src.index("def construct"):]
+
+
+def test_imported_code_comes_back_as_it_was_written():
+    doc = import_code(STYLE).doc
+    out = codegen.generate(doc).source
+    assert _construct(out) == _construct(STYLE), out  # inline chains, lines of calls, positional args, blank lines
+    assert import_code(out, base=doc).doc == doc
+
+
+def test_edited_code_falls_back_to_the_usual_style():
+    doc = import_code(STYLE).doc
+    line = next(o for o in doc["objects"] if o["name"] == "line")
+    line["chain"] = ".set_color(GREEN)"  # methods changed in the editor: the layout no longer applies
+    del line["args"]["*"]  # the first positional argument removed: the others can't stay positional
+    a = next(o for o in doc["objects"] if o["name"] == "a")
+    a["chain"] = ".shift(LEFT * 2).scale(2)"  # the part written inline is still there: it stays inline
+    out = codegen.generate(doc).source
+    assert "line = Line(end=RIGHT, color=BLUE)\n        line.set_color(GREEN)\n" in out, out
+    assert "a = Dot().shift(LEFT * 2)\n        a.scale(2)\n" in out, out
+    assert "ex = Exclusion(Square(), Circle(), color=YELLOW)" in out

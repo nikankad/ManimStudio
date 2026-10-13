@@ -117,6 +117,10 @@ class _Source:
         rest = self.lines[end - 1].encode("utf-8")[col:].decode("utf-8", "ignore").strip()  # (offsets count bytes)
         return rest if rest.startswith("#") else ""
 
+    def blank_between(self, after: int, before: int) -> bool:
+        """Whether a blank line separates line ``after`` from line ``before`` (1-based, both excluded)."""
+        return any(not self.lines[k - 1].strip() for k in range(after + 1, before))
+
     def comments_above(self, line: int, floor: int) -> tuple[int, str]:
         """The full-line comments directly above ``line`` (below line ``floor``): (first line, text)."""
         i = line - 1
@@ -189,6 +193,8 @@ class _Importer:
         self.scene_methods: list[str] = []
         self.blocks = _base_blocks(base) if base else {}
         self.reused_steps: set[str] = set()
+        self.gap = False  # a blank line before the statement being read
+        self.pending_gap = False
 
     # ---- helpers
     def cls_of(self, name: str) -> type | None:
@@ -305,7 +311,9 @@ class _Importer:
                     anim["args"] = {"*": ", ".join(values), **kw}
                 return anim
             if kind == "none":  # Wait(1): animates no mobject
-                anim["args"] = {**self.assign(klass, values, ctor=cls_name), **kw}
+                given = self.assign(klass, values, ctor=cls_name)
+                anim["args"] = {**given, **kw}
+                _keep_positional(anim, given, values)
                 return anim
             target = catalog.target_param(klass)
             names = _positional_names(klass)
@@ -318,8 +326,9 @@ class _Importer:
         if values:
             anim["target"] = values.pop(0)
         is_anim = isinstance(klass, type) and issubclass(klass, self.m.Animation)
-        anim["args"] = {**self.assign(klass if is_anim else None, values, skip=catalog.target_param(klass) if is_anim else None,
-                                      ctor=cls_name), **kw}
+        given = self.assign(klass if is_anim else None, values, skip=catalog.target_param(klass) if is_anim else None, ctor=cls_name)
+        anim["args"] = {**given, **kw}
+        _keep_positional(anim, given, values)
         return anim
 
     def animate(self, node: ast.AST) -> dict | None:
@@ -383,8 +392,10 @@ class _Importer:
         if fn is None or kw is None or method not in self.scene_methods or any(isinstance(a, ast.Starred) for a in call.args) and len(call.args) > 1:
             return None
         values = [self.s.seg(a) for a in call.args]
-        args = {**self.assign(fn, values, ctor=""), **kw}
-        return {"id": _id("s"), "kind": "call", "method": method, "args": args}
+        given = self.assign(fn, values, ctor="")
+        step = {"id": _id("s"), "kind": "call", "method": method, "args": {**given, **kw}}
+        _keep_positional(step, given, values)
+        return step
 
     def statement_step(self, stmt: ast.stmt) -> dict | None:
         if (call := _self_call(stmt, "play")) is not None:
@@ -421,9 +432,11 @@ class _Importer:
             return None
         ctor = self.s.seg(cur.func)
         values = [self.s.seg(a) for a in cur.args]
-        args = {**self.assign(self.callee(cur.func), values, ctor=ctor), **kw}
+        given = self.assign(self.callee(cur.func), values, ctor=ctor)
         chain = "".join(f".{c.func.attr}({self.call_args(c)})" for c in reversed(calls))  # type: ignore[union-attr]
-        return {"id": _id("o"), "name": name, "ctor": ctor, "args": args, "pos": None, "chain": chain}, cls
+        obj = {"id": _id("o"), "name": name, "ctor": ctor, "args": {**given, **kw}, "pos": None, "chain": chain}
+        _keep_positional(obj, given, values)
+        return obj, cls
 
     def setup_calls(self, name: str, cls: type | None, stmt: ast.stmt) -> list[ast.Call] | None:
         """``name.a(...).b(...)`` as a statement, where every method returns the object (part of its setup)."""
@@ -482,22 +495,27 @@ class _Importer:
         else:
             obj.pop("after", None)
         _set_comment(obj, comment)
+        _set_gap(obj, self.gap)
         self.objects.append(obj)
 
     def add_step(self, step: dict, comment: str) -> None:
         _set_comment(step, comment)
+        _set_gap(step, self.gap)
         self.steps.append(step)
 
     def flush(self) -> None:
         if not self.pending:
             return
         code = self.s.block(self.pending_from, self.pending[-1].end_lineno or self.pending[-1].lineno)
-        self.steps.append({"id": _id("s"), "kind": "code", "code": code})
+        step = {"id": _id("s"), "kind": "code", "code": code}
+        _set_gap(step, self.pending_gap)
+        self.steps.append(step)
         self.pending = []
 
     def keep_as_code(self, stmt: ast.stmt, first_line: int) -> None:
         if not self.pending:
             self.pending_from = first_line
+            self.pending_gap = self.gap
         self.pending.append(stmt)
 
     def run(self, body: list[ast.stmt], floor: int) -> None:
@@ -507,6 +525,8 @@ class _Importer:
         while i < len(body):
             stmt = body[i]
             first, comment = self.s.comments_above(stmt.lineno, prev_end)
+            # a blank line before it (and its comments), as the code separates its paragraphs
+            self.gap = i > 0 and self.s.blank_between(prev_end, first)
             # Unchanged statements keep the document element they were generated from.
             hit = self.match_base(texts, i)
             if hit is not None:
@@ -532,7 +552,11 @@ class _Importer:
                     runs.append(calls)
                     j += 1
                 rest = self.transform_fields(obj, runs)
-                obj["chain"] += "".join(f".{c.func.attr}({self.call_args(c)})" for calls in rest for c in calls)  # type: ignore[union-attr]
+                pieces = ["".join(f".{c.func.attr}({self.call_args(c)})" for c in calls) for calls in rest]  # type: ignore[union-attr]
+                # how the code spreads them over lines, when it isn't codegen's one line after the constructor
+                if obj["chain"] or len(pieces) > 1:
+                    obj["chain_layout"] = [obj["chain"], *pieces]
+                obj["chain"] += "".join(pieces)
                 self.flush()
                 self.add_object(obj, _join_comments(comment, self.s.comment_after(body[j - 1])))
                 self.known[obj["name"]] = cls
@@ -572,11 +596,27 @@ def _join_comments(above: str, trailing: str) -> str:
     return "\n".join(c for c in (above, trailing) if c)
 
 
+def _set_gap(elem: dict, gap: bool) -> None:
+    if gap:
+        elem["gap"] = True
+    else:
+        elem.pop("gap", None)
+
+
 def _set_comment(elem: dict, comment: str) -> None:
     if comment:
         elem["comment"] = comment
     else:
         elem.pop("comment", None)
+
+
+def _keep_positional(elem: dict, given: dict, values: list[str]) -> None:
+    """Remember which document arguments the code passed by position (``assign`` made ``given`` of the positional
+    ``values``, in order), when codegen wouldn't write them so on its own: it writes ``*`` by position and the
+    others as keywords, so ``Line(a, b)`` would come back as ``Line(a, end=b)``."""
+    names = list(given) if values else []
+    if any(n != "*" for n in names):
+        elem["positional"] = names
 
 
 def _takes_varargs(klass: type) -> bool:

@@ -164,6 +164,7 @@ export function renameRefs(o: SceneObject, names: Map<string, string>): void {
   const rep = (s: string) => renameIdentifiers(s, names);
   o.ctor = rep(o.ctor);
   o.chain = rep(o.chain);
+  if (o.chain_layout) o.chain_layout = o.chain_layout.map(rep);
   for (const k in o.args) o.args[k] = rep(o.args[k]);
   if (o.link) {
     const l = o.link as Record<string, unknown>;

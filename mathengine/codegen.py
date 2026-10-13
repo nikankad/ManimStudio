@@ -57,10 +57,18 @@ def _num(v: float) -> str:
 
 
 def _call_args(args: dict | None, leading: list[str] | None = None, extra: dict | None = None,
-               before_star: tuple[str, ...] = ()) -> str:
+               before_star: tuple[str, ...] = (), positional: list[str] | None = None) -> str:
+    """``positional``: the arguments the code passed by position, in order (as it was written: ``Line(a, b)``, not
+    ``Line(a, end=b)``). They stay positional as long as none before them is gone; the rest are keywords."""
     parts = [p for p in (leading or []) if p and p.strip()]
     merged = dict(args or {})
     merged.update(extra or {})
+    for name in positional or []:
+        val = str(merged.get(name, "")).strip()
+        if not val:
+            break
+        parts.append(val)
+        merged.pop(name)
     star = str(merged.pop("*", "")).strip()
     if star and before_star:
         # f(a, *rest): parameters declared before *args can't follow it as keywords.
@@ -122,7 +130,7 @@ def anim_expr(anim: dict, doc: dict | None = None, plan: construct.Plan | None =
     elif (kw_target := _target_keyword(cls)) and target:  # ApplyMatrix(matrix, mobject): the target isn't the first argument
         expr = f"{cls}({_target_after(cls, kw_target, target, args)})"
     else:
-        expr = f"{cls}({_call_args(args, [target], None, _leading(cls, skip=1))})"
+        expr = f"{cls}({_call_args(args, [target], None, _leading(cls, skip=1), anim.get('positional'))})"
     return f"self._me_tag({expr}, {anim['id']!r})" if tag else expr
 
 
@@ -394,16 +402,32 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
 def _emit_object(obj: dict, emit, B: int, preview: bool, plan: construct.Plan) -> None:
     ref = ("object", obj["id"])
     name = obj["name"]
+    if obj.get("gap") and not preview:
+        emit("")
     _emit_comment(obj, emit, B, ref)
     if obj["id"] in plan.lines:
         for line in plan.lines[obj["id"]]:
             emit(line, ref, B)
     else:
         ctor = (obj.get("ctor") or "").strip()
-        emit(f"{name} = {ctor}({_call_args(obj.get('args'), before_star=_leading(ctor))})", ref, B)
+        made = f"{name} = {ctor}({_call_args(obj.get('args'), before_star=_leading(ctor), positional=obj.get('positional'))})"
         chain = _join_chain(obj.get("chain", ""))
-        if chain:
-            emit(f"{name}{chain}", ref, B)
+        # Written as the code had it: methods on the line that makes it, and each line of calls after it. When the
+        # methods were changed since, the ones still on that line stay there and the others follow on one line.
+        layout = [_join_chain(p) for p in obj.get("chain_layout") or []]
+        if layout and "".join(layout) == chain:
+            emit(made + layout[0], ref, B)
+            for piece in layout[1:]:
+                if piece:
+                    emit(f"{name}{piece}", ref, B)
+        elif layout and layout[0] and chain.startswith(layout[0]):
+            emit(made + layout[0], ref, B)
+            if chain[len(layout[0]):]:
+                emit(f"{name}{chain[len(layout[0]):]}", ref, B)
+        else:
+            emit(made, ref, B)
+            if chain:
+                emit(f"{name}{chain}", ref, B)
         stretch = obj.get("stretch") or [1, 1]
         for dim, f in enumerate(stretch[:2]):
             if abs(float(f) - 1) > EPS:
@@ -529,7 +553,7 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
         method = (step.get("method") or "").strip()
         if not IDENT.match(method):
             return []
-        return [(f"self.{method}({_call_args(step.get('args'), before_star=_method_leading(doc, method))})", ref)]
+        return [(f"self.{method}({_call_args(step.get('args'), before_star=_method_leading(doc, method), positional=step.get('positional'))})", ref)]
     if kind == "code":
         body = textwrap.dedent(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []
@@ -546,6 +570,8 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
 def _emit_step(step: dict, emit, B: int, preview: bool, doc: dict, plan: construct.Plan, skip: set[str]) -> None:
     lines = statement(step, doc, plan, preview, skip)
     ref = ("step", step["id"])
+    if lines and step.get("gap") and not preview:
+        emit("")
     if lines:
         _emit_comment(step, emit, B, ref)
     if preview:

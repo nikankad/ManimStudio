@@ -314,6 +314,23 @@ const same = (a: KeyValue | undefined, b: KeyValue): boolean => {
 
 const splice = (src: string, start: number, end: number, text: string) => src.slice(0, start) + text + src.slice(end);
 
+/** Change an object's chain, and its line of the code with it (the lines stay as the code had them). */
+function spliceChain(obj: SceneObject, start: number, end: number, text: string) {
+  const chain = obj.chain ?? '';
+  const layout = obj.chain_layout;
+  obj.chain = splice(chain, start, end, text);
+  if (!layout || layout.join('') !== chain) return;
+  let at = 0;
+  for (let i = 0; i < layout.length; i++) {
+    const last = i === layout.length - 1;
+    if (start >= at && (end <= at + layout[i].length) && (start < at + layout[i].length || last)) {
+      obj.chain_layout = layout.map((p, k) => (k === i ? splice(p, start - at, end - at, text) : p));
+      return;
+    }
+    at += layout[i].length;
+  }
+}
+
 /**
  * Set a keyframe's value: rewrite only the argument of the method that sets it, in the style it was written in. A
  * value it already has changes nothing. Returns why not, when it can't.
@@ -479,9 +496,9 @@ export function setBaseValue(obj: SceneObject, channel: Channel, value: KeyValue
     const text = channel === 'opacity' ? num(Number(value)) : String(value).trim();
     const chain = obj.chain ?? '';
     const call = chainCalls(chain)?.filter((c) => c.name === method).pop();
-    if (call) obj.chain = splice(chain, call.argStart, call.argEnd, text);
+    if (call) spliceChain(obj, call.argStart, call.argEnd, text);
     else if (channel === 'color' && obj.args.color !== undefined) obj.args = { ...obj.args, color: text };
-    else obj.chain = `${chain}.${method}(${text})`;
+    else spliceChain(obj, chain.length, chain.length, `.${method}(${text})`);
   }
 }
 

@@ -18,6 +18,9 @@ export interface SceneObject {
   instance?: InstanceRef; // part of an inserted construction
   after?: string; // created right after this timeline step (as in the imported code); none: at the top of construct()
   comment?: string; // comment lines written above it in the code
+  chain_layout?: string[]; // how the code spread the chain: [on the line that makes it, then each line of calls after it]
+  positional?: string[]; // the arguments the code passed by position, in order
+  gap?: boolean; // a blank line before it in the code
 }
 
 /** Slider bounds of a parameter (a ValueTracker object; its value is args["*"]). */
@@ -113,6 +116,8 @@ export interface Step {
   label?: string; // code: name shown on the timeline
   targets?: string[]; // add / remove / couple / uncouple
   duration?: number; // couple: glide back into place over this time
+  positional?: string[]; // call: the arguments the code passed by position, in order
+  gap?: boolean; // a blank line before it in the code
 }
 
 /** An animation: cls(target, **args), target.animate(**args).chain, or a composition of `anims`. */
@@ -124,6 +129,7 @@ export interface Anim {
   chain?: string; // cls === "animate"
   anims?: Anim[]; // AnimationGroup, LaggedStart, Succession…: the child animations
   disabled?: boolean;
+  positional?: string[]; // the arguments the code passed by position, in order (after the target)
   // TransformTerms: destination equation (object id) and term pairs [source part id, target part id]
   terms?: { to: string; pairs: [string, string][] };
 }
