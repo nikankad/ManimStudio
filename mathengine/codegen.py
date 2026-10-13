@@ -23,10 +23,12 @@ map variables to mobjects and to measure when each statement and animation runs.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import keyword
 import re
 import textwrap
+import tokenize
 from dataclasses import dataclass, field
 
 from . import construct, tex, timeline
@@ -229,14 +231,44 @@ def _flag(cls: str, name: str) -> bool:
     return getattr(catalog, name)(cls)
 
 
+def string_lines(text: str) -> set[int]:
+    """The lines of ``text`` (0-based) that start inside a string (a triple-quoted one's second line on): they are
+    the string's content, so indenting or dedenting the code must leave them as they are."""
+    inside: set[int] = set()
+    opened: list[int] = []  # f-strings: the line each open one started on
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type == tokenize.STRING:
+                inside.update(range(tok.start[0], tok.end[0]))
+            elif tok.type == getattr(tokenize, "FSTRING_START", -1):
+                opened.append(tok.start[0])
+            elif tok.type == getattr(tokenize, "FSTRING_END", -1) and opened:
+                inside.update(range(opened.pop(), tok.end[0]))
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+    return inside
+
+
+def dedent_code(text: str, keep_first: bool = False) -> str:
+    """``textwrap.dedent`` that leaves the content of multi-line strings as it is. ``keep_first``: the first line
+    is already where it belongs (a statement's continuation lines keep their indentation relative to each other)."""
+    lines = text.split("\n")
+    inside = string_lines(text)
+    code = [i for i, ln in enumerate(lines) if ln.strip() and i not in inside and not (keep_first and i == 0)]
+    margin = min((len(lines[i]) - len(lines[i].lstrip()) for i in code), default=0)
+    return "\n".join(ln if i in inside or (keep_first and i == 0) else ln[margin:] if ln.strip() else ""
+                     for i, ln in enumerate(lines))
+
+
 class _Writer:
     def __init__(self) -> None:
         self.lines: list[str] = []
         self.linemap: dict[int, tuple[str, str]] = {}
 
     def emit(self, text: str, ref: tuple[str, str] | None = None, indent: int = 0) -> None:
-        for raw in text.splitlines() or [""]:
-            self.lines.append(" " * indent + raw if raw.strip() else "")
+        inside = string_lines(text) if indent and "\n" in text else set()
+        for k, raw in enumerate(text.splitlines() or [""]):
+            self.lines.append(raw if k in inside else " " * indent + raw if raw.strip() else "")
             if ref:
                 self.linemap[len(self.lines)] = ref
 
@@ -508,7 +540,7 @@ def _spans(lines: list[str], start: int, end: int, eid: str, step: dict | None, 
     if not step or step.get("kind") != "play":
         return
     block = lines[first:last + 1]
-    text = textwrap.dedent("\n".join(block))
+    text = dedent_code("\n".join(block))
     try:
         tree = ast.parse(text)
     except SyntaxError:
@@ -630,8 +662,9 @@ def _emit_object(obj: dict, emit, B: int, preview: bool, plan: construct.Plan) -
         emit("")
     _emit_comment(obj, emit, B, ref)
     lines = object_lines(obj, plan)
-    for line in lines if preview else _with_eol(obj, as_written(obj, lines)):
-        emit(line, ref, B)
+    lines = lines if preview else _with_eol(obj, as_written(obj, lines))
+    if lines:
+        emit("\n".join(lines), ref, B)
     for line in plan.after.get(obj["id"], []):
         emit(line, ref, B)
     if preview:
@@ -772,7 +805,7 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
     if kind == "block":
         return [(f"{(step.get('head') or '').strip() or 'if True'}:", ref)]
     if kind == "code":
-        body = textwrap.dedent(step.get("code") or "").rstrip()
+        body = dedent_code(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []
     if kind in construct.SWITCH_CLIPS and plan is not None:
         names = [t for t in step.get("targets") or [] if t in plan.switchable]
@@ -799,7 +832,8 @@ def _emit_step(step: dict, emit, B: int, preview: bool, doc: dict, plan: constru
         emit(f"self._me_step({step['id']!r})", ref, B)
     elif lines and step.get("eol"):
         lines = [*lines[:-1], (_with_eol(step, [lines[-1][0]])[0], lines[-1][1])]
-    for text, r in lines:
-        emit(text, r, B)
+    inside = string_lines("\n".join(text for text, _ in lines))
+    for k, (text, r) in enumerate(lines):
+        emit(text, r, 0 if k in inside else B)
     if preview:
         emit(f"self._me_step_end({step['id']!r})", ref, B)

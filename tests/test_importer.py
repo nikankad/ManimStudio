@@ -667,3 +667,31 @@ class S(Scene):
     assert out == src
     r = runtime.run(imp.doc, render=False)
     assert r.error is None and r.duration == 2  # each call is measured: it plays an animation
+
+
+def test_multi_line_strings_and_commented_code_keep_their_text():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        code = """first
+    indented
+no indent"""
+        t = Text(f"""a
+  {code}
+b""")
+        if True:
+            label = Text("""x
+  y""")
+            self.add(label)
+        # a comment above code that stays code
+        always_shift(t, RIGHT, rate=5)
+        self.add(t)
+'''
+    imp = import_code(src)
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+    again = import_code(out, base=imp.doc)
+    assert [s["id"] for s in again.doc["timeline"]] == [s["id"] for s in imp.doc["timeline"]]
+    assert codegen.generate(again.doc, latex=True).source == src

@@ -28,7 +28,6 @@ import functools
 import inspect
 import io
 import re
-import textwrap
 import tokenize
 import uuid
 from dataclasses import dataclass, field
@@ -105,13 +104,12 @@ class _Source:
     def seg(self, node: ast.AST) -> str:
         text = ast.get_source_segment(self.src, node) or ast.unparse(node)
         if "\n" in text:  # continuation lines keep their indentation relative to each other
-            first, rest = text.split("\n", 1)
-            text = first + "\n" + textwrap.dedent(rest)
+            text = codegen.dedent_code(text, keep_first=True)
         return text
 
     def block(self, first: int, last: int) -> str:
         """Lines ``first``..``last`` (1-based, inclusive), dedented."""
-        return textwrap.dedent("\n".join(self.lines[first - 1:last])).strip("\n")
+        return codegen.dedent_code("\n".join(self.lines[first - 1:last])).strip("\n")
 
     def comment_after(self, node: ast.AST) -> str:
         """The comment at the end of the last line of ``node`` (``self.play(...)  # draw it``), or ""."""
@@ -132,7 +130,9 @@ class _Source:
         if lines[0][:col].strip() or (rest := tail[last.end_col_offset or len(tail):].decode("utf-8", "ignore").strip()) and not rest.startswith("#"):
             return None
         lines[-1] = cut
-        out = [lines[0][col:]] + [ln[col:] if not ln[:col].strip() else ln.lstrip() for ln in lines[1:]]
+        inside = codegen.string_lines("\n".join([lines[0][col:], *lines[1:]]))  # a multi-line string's content
+        out = [lines[0][col:]] + [ln if k in inside else ln[col:] if not ln[:col].strip() else ln.lstrip()
+                                  for k, ln in enumerate(lines[1:], 1)]
         return "\n".join(out).rstrip()
 
     def blank_between(self, after: int, before: int) -> bool:
@@ -494,8 +494,7 @@ class _Importer:
                     rows[-1] = rows[-1][:tok.start[1]]
                     head = "\n".join(rows).rstrip()
                     if "\n" in head:  # continuation lines keep their indentation relative to each other
-                        top, rest = head.split("\n", 1)
-                        head = top + "\n" + textwrap.dedent(rest)
+                        head = codegen.dedent_code(head, keep_first=True)
                     return head
         except (tokenize.TokenError, IndentationError, SyntaxError):
             pass
@@ -728,6 +727,8 @@ class _Importer:
                     self.add_object(elem, comment, eol)
                     self.known[elem["name"]] = self.cls_of(elem["ctor"]) or self.ctor_class(_expr(elem["ctor"]))[1]
                 elif kind == "step":
+                    if elem["kind"] == "code":  # its text already holds the comments above and after it
+                        comment = eol = ""
                     self.add_step(elem, comment, eol)
                     self.reused_steps.add(elem["id"])
                 prev_end = body[i + n - 1].end_lineno or body[i + n - 1].lineno
