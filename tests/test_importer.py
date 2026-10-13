@@ -1,11 +1,13 @@
 """manim code -> document -> manim code: the imported scene runs exactly like the original."""
 
+import ast
+import collections
 import json
 
 import numpy as np
 import pytest
 
-from mathengine import codegen, importer, runtime, samples
+from mathengine import codegen, importer, runtime, samples, tex
 from mathengine.importer import CodeError, import_code
 
 SCENE = '''
@@ -119,9 +121,10 @@ def test_statements_become_steps_objects_and_code():
     assert objs["square"]["chain"] == ".shift(RIGHT * 2).set_fill(RED, opacity=0.5)"
     # Objects are made where the code makes them: dots after the move, t after the Transform.
     kinds = [s["kind"] for s in doc["timeline"]]
-    assert kinds == ["play", "play", "wait", "play", "play", "play", "code", "add", "play", "add", "play", "remove", "code", "wait"]
+    assert kinds == ["play", "play", "wait", "play", "play", "play", "block", "apply", "end", "add", "play", "add", "play", "remove",
+                     "play", "wait"]
     steps = doc["timeline"]
-    assert "after" not in objs["circle"] and objs["dots"]["after"] == steps[3]["id"] and objs["t"]["after"] == steps[8]["id"]
+    assert "after" not in objs["circle"] and objs["dots"]["after"] == steps[3]["id"] and objs["t"]["after"] == steps[10]["id"]
     play = steps[1]
     assert play["args"] == {"run_time": "2"}
     assert [(a["cls"], a["target"], a["args"]) for a in play["anims"]] == [("Create", "circle", {}), ("FadeIn", "square", {"shift": "UP"})]
@@ -132,10 +135,12 @@ def test_statements_become_steps_objects_and_code():
     assert lagged["cls"] == "LaggedStart" and lagged["args"] == {"*": "*[FadeIn(d) for d in dots]", "lag_ratio": "0.2"}
     group = steps[5]["anims"][0]
     assert group["cls"] == "AnimationGroup" and [(c["cls"], c["target"]) for c in group["anims"]] == [("Indicate", "circle"), ("Rotate", "square")]
-    assert steps[6]["code"] == "for d in dots:\n    d.set_color(GREEN)"
-    assert [(a["cls"], a["target"], a["args"]) for a in steps[8]["anims"]] == [("Transform", "circle", {"*": "square"}),
+    # the loop is a block around its body's steps
+    assert (steps[6]["head"], steps[7]["target"], steps[7]["chain"]) == ("for d in dots", "d", ".set_color(GREEN)")
+    assert [(a["cls"], a["target"], a["args"]) for a in steps[10]["anims"]] == [("Transform", "circle", {"*": "square"}),
                                                                                ("LaggedStartMap", "dots", {"*": "FadeOut"})]
-    assert any("Line" in n and "kept as code" in n for n in res.notes)
+    # animations an expression builds are clips of their own, their code as written
+    assert [(a["cls"], a["src"]) for a in steps[14]["anims"]] == [("expr", "*[FadeOut(m) for m in [title, circle]]")]
 
 
 def test_codegen_places_objects_where_they_are_made():
@@ -176,6 +181,53 @@ def test_unchanged_code_keeps_the_document():
         d["timeline"][1]["disabled"] = True  # disabled steps aren't in the code, but survive
         src = codegen.generate(d, latex=True).source
         assert json.dumps(import_code(src, base=d).doc, sort_keys=True) == json.dumps(d, sort_keys=True), sid
+
+
+TRAILING = '''
+from manim import *
+
+
+class Demo(Scene):
+    def construct(self):
+        circle = Circle(radius=1.5)  # the main shape
+        label = Text("a # b")  # not a comment inside the string
+        self.play(Create(circle))  # draw it
+        self.play(Write(label), FadeIn(circle))  # both together
+        self.wait(2)  # let it sink in
+        self.play(FadeOut(label))
+'''
+
+
+def test_comments_at_the_end_of_a_line_stay_with_their_statement():
+    res = import_code(TRAILING)
+    by_name = {o["name"]: o for o in res.doc["objects"]}
+    assert by_name["circle"]["eol"] == "# the main shape" and "comment" not in by_name["circle"]
+    assert by_name["label"]["eol"] == "# not a comment inside the string"  # the "#" inside the string is text
+    comments = [s.get("eol") for s in res.doc["timeline"]]
+    assert comments == ["# draw it", "# both together", "# let it sink in", None], comments
+    src = codegen.generate(res.doc, latex=True).source
+    assert src == TRAILING  # at the end of their lines, as written
+    assert 'Text("a # b")' in src
+
+
+def test_a_comment_above_its_statement_stays_put():
+    first = codegen.generate(import_code(TRAILING).doc).source
+    second = codegen.generate(import_code(first).doc).source
+    assert first == second
+
+
+def test_the_no_latex_helper_is_not_copied_into_the_header_on_import(monkeypatch):
+    from mathengine import tex
+
+    monkeypatch.setattr(tex, "latex_available", lambda: False)
+    first = codegen.generate(import_code(TRAILING).doc).source
+    assert first.count("_me_number_parts = {}") == 1
+    doc = import_code(first).doc
+    assert doc["header"] == "", "the helper is codegen's to write, not part of the user's header"
+    assert codegen.generate(doc).source == first
+    # on a machine with LaTeX codegen no longer writes it, but code that came with it keeps working
+    monkeypatch.setattr(tex, "latex_available", lambda: True)
+    assert "_me_number_parts = {}" in import_code(first).doc["header"]
 
 
 def test_edited_code_keeps_the_rest():
@@ -276,3 +328,424 @@ class S(ThreeDScene):
     assert run_source(out, "S")[:2] == run_source(src, "S")[:2]
     r = runtime.run(doc, None, render=False)
     assert r.error is None and r.duration == pytest.approx(3.5)
+
+
+def test_markers_keep_their_attachment_through_code_edits(tmp_path):
+    """A marker attached to a clip keeps pointing at it when the code is edited elsewhere, and survives save/reopen
+    with its name, kind, notes and attachment."""
+    from mathengine import project
+
+    src = ("from manim import *\n\nclass M(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+           "        self.play(Create(a))\n        self.wait(2)\n        self.play(Create(b))\n")
+    d = import_code(src).doc
+    anim = d["timeline"][-1]["anims"][0]["id"]
+    d["markers"] = [{"id": "m1", "time": 3.5, "label": "Reveal", "notes": "say it", "category": "visual",
+                     "anchor": {"id": anim, "edge": "start", "offset": 0.5}}]
+    edited = codegen.generate(d, latex=True).source.replace("self.wait(2)", "self.wait(3)")
+    new = import_code(edited, base=d).doc
+    assert new["markers"] == d["markers"]
+    assert any(a["id"] == anim for s in new["timeline"] for a in s.get("anims") or [])
+    path = tmp_path / "m.manimstudio"
+    project.save_project(path, new)
+    assert project.load_project(path)["markers"] == d["markers"]
+
+
+def test_an_expression_animated_keeps_its_parentheses():
+    src = ("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        a = Circle()\n        b = Square()\n"
+           "        g = VGroup(a)\n        self.add(g, b)\n        self.play((g + b).animate.shift(RIGHT))\n")
+    out = codegen.generate(import_code(src).doc).source
+    assert "self.play((g + b).animate.shift(RIGHT))" in out or "self.play((g+b).animate.shift(RIGHT))" in out, out
+
+
+def test_a_complex_tracker_previews():
+    src = ("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        z = ComplexValueTracker(1 + 1j)\n"
+           "        self.add(z)\n        self.play(z.animate.set_value(2j))\n")
+    r = runtime.run(import_code(src).doc, render=False)
+    assert r.error is None, r.error
+
+
+STYLE = '''from manim import *
+import numpy as np
+
+
+class S(Scene):
+    def construct(self):
+        a = Dot().shift(LEFT * 2)
+        line = Line(LEFT, RIGHT, color=BLUE)
+        line.set_color(RED)
+        line.shift(UP)
+        self.add(a, line)
+
+        ex = Exclusion(Square(), Circle(), color=YELLOW)
+        self.play(Create(ex), run_time=2)
+'''
+
+
+def _construct(src: str) -> str:
+    return src[src.index("def construct"):]
+
+
+def test_imported_code_comes_back_as_it_was_written(monkeypatch):
+    doc = import_code(STYLE).doc
+    out = codegen.generate(doc).source
+    assert _construct(out) == _construct(STYLE), out  # inline chains, lines of calls, positional args, blank lines
+    assert import_code(out, base=doc).doc == doc
+    # the whole file, top included: no config line or import it didn't have, its blank lines before the class
+    top = "from manim import *\n\nclass S(Scene):\n    def construct(self):\n        self.wait()\n"
+    doc = import_code(top).doc
+    assert codegen.generate(doc, latex=True).source == top
+    for latex in (True, False):  # the importer removes helpers it will regenerate in the same environment
+        monkeypatch.setattr(tex, "latex_available", lambda: latex)
+        assert import_code(codegen.generate(doc, latex=latex).source, base=doc).doc == doc
+    doc["config"]["background_color"] = "#222222"  # changed in the app: written the usual way
+    out = codegen.generate(doc, latex=True).source
+    assert "config.background_color = '#222222'" in out and "import numpy as np" in out, out
+
+
+def test_number_fallback_survives_import_into_a_latex_environment(monkeypatch):
+    """Import must keep the original number rendering when the receiving machine has LaTeX."""
+    monkeypatch.setattr(tex, "latex_available", lambda: False)
+    doc = import_code("from manim import *\n\nclass S(Scene):\n    def construct(self):\n        self.wait()\n").doc
+    fallback = codegen.generate(doc, latex=False).source
+    monkeypatch.setattr(tex, "latex_available", lambda: True)
+    imported = import_code(fallback, base=doc).doc
+    assert tex.NUMBERS_SOURCE.strip() in imported["header"]
+    for latex in (True, False):
+        generated = codegen.generate(imported, latex=latex).source
+        assert generated.count(tex.NUMBERS_SOURCE.strip()) == 1
+    imported["config"]["background_color"] = "#222222"  # changing the header also keeps exactly one helper
+    assert codegen.generate(imported, latex=False).source.count(tex.NUMBERS_SOURCE.strip()) == 1
+
+
+def test_edited_code_falls_back_to_the_usual_style():
+    doc = import_code(STYLE).doc
+    line = next(o for o in doc["objects"] if o["name"] == "line")
+    line["chain"] = ".set_color(GREEN)"  # methods changed in the editor: the layout no longer applies
+    del line["args"]["*"]  # the first positional argument removed: the others can't stay positional
+    a = next(o for o in doc["objects"] if o["name"] == "a")
+    a["chain"] = ".shift(LEFT * 2).scale(2)"  # the part written inline is still there: it stays inline
+    out = codegen.generate(doc).source
+    assert "line = Line(end=RIGHT, color=BLUE)\n        line.set_color(GREEN)\n" in out, out
+    assert "a = Dot().shift(LEFT * 2)\n        a.scale(2)\n" in out, out
+    assert "ex = Exclusion(Square(), Circle(), color=YELLOW)" in out
+
+
+LATER = '''from manim import *
+
+
+class S(MovingCameraScene):
+    def construct(self):
+        g = VGroup(Dot(), Square())
+        label = Text("hi")
+        self.add(g, label)
+        self.wait()
+        label.next_to(g, UP, buff=0.5)
+        g[0].set_color(RED)
+        self.camera.frame.scale(1.5)
+        self.play(FadeOut(label))
+'''
+
+
+def test_methods_called_later_become_steps_that_can_be_edited():
+    doc = import_code(LATER).doc
+    applies = [s for s in doc["timeline"] if s.get("kind") == "apply"]
+    assert [(s["target"], s["chain"]) for s in applies] == [
+        ("label", ".next_to(g, UP, buff=0.5)"), ("g[0]", ".set_color(RED)"), ("self.camera.frame", ".scale(1.5)")]
+    assert _construct(codegen.generate(doc).source) == _construct(LATER)
+    applies[0]["chain"] = ".next_to(g, DOWN)"  # edited in the inspector
+    out = codegen.generate(doc).source
+    assert "        label.next_to(g, DOWN)\n        g[0].set_color(RED)\n" in out, out
+    r = runtime.run(doc, render=False)
+    assert r.error is None, r.error
+
+
+def test_calls_on_anything_and_values_become_steps():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        k = 2
+        k += 1
+        a, b = Dot(), Square()
+        row = VGroup(*[Dot() for _ in range(3)])
+        Text.set_default(color=YELLOW)
+        VGroup(a, b).arrange(RIGHT, buff=k)
+        make = lambda n: VGroup(*[Circle() for _ in range(n)])
+        make(2).shift(UP)
+        self.add(*row, VGroup(a, b))
+        self.play(*[FadeIn(m) for m in row], FadeIn(a), run_time=k)
+        self.remove(a)
+        Text.set_default()
+'''
+    doc = import_code(src).doc
+    rows = [(s["kind"], s.get("target") or s.get("targets"), s.get("op"), s.get("value") or s.get("chain")) for s in doc["timeline"]]
+    assert rows == [
+        ("assign", "k", "=", "2"), ("assign", "k", "+=", "1"), ("assign", "a, b", "=", "Dot(), Square()"),
+        ("apply", "Text", None, ".set_default(color=YELLOW)"), ("apply", "VGroup(a, b)", None, ".arrange(RIGHT, buff=k)"),
+        ("assign", "make", "=", "lambda n: VGroup(*[Circle() for _ in range(n)])"), ("apply", "make(2)", None, ".shift(UP)"),
+        ("add", ["*row", "VGroup(a, b)"], None, None), ("play", None, None, None), ("remove", ["a"], None, None),
+        ("apply", "Text", None, ".set_default()")], rows
+    assert [o["name"] for o in doc["objects"]] == ["row"]
+    play = doc["timeline"][8]
+    assert [(a["cls"], a.get("src"), a["target"]) for a in play["anims"]] == [("expr", "*[FadeIn(m) for m in row]", ""), ("FadeIn", None, "a")]
+    out = codegen.generate(doc, latex=True).source
+    assert _construct(out) == _construct(src), out
+    assert import_code(out, base=doc).doc == doc  # read back: the same elements, the same ids
+    # the measuring run never evaluates a target twice when it runs code (make(2) would make another group)
+    preview = codegen.generate(doc, preview=True, latex=True).source
+    assert "_me_state" not in "\n".join(ln for ln in preview.splitlines() if "make(2)" in ln or "VGroup(a, b)" in ln)
+    assert preview.count("make(2)") == 1
+    r = runtime.run(doc, render=False)
+    assert r.error is None, r.error
+    # edited in the program: written the usual way
+    doc["timeline"][1]["value"] = "4"
+    doc["timeline"][1]["op"] = "*="
+    assert "        k *= 4\n" in codegen.generate(doc, latex=True).source
+
+
+WRAPPED = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        a = Text(
+            "long",
+            font_size=30,
+        )
+        self.play(
+            Write(a),
+            run_time=2,
+        )
+'''
+
+
+def test_statements_written_over_several_lines_come_back_the_same():
+    doc = import_code(WRAPPED).doc
+    out = codegen.generate(doc).source
+    assert _construct(out) == _construct(WRAPPED), out
+    assert import_code(out, base=doc).doc == doc
+    play = next(s for s in doc["timeline"] if s.get("kind") == "play")
+    play["args"]["run_time"] = "3"  # edited: the statement is written the usual way again
+    out = codegen.generate(doc).source
+    assert "self.play(Write(a), run_time=3)" in out, out
+    assert 'a = Text(\n            "long",\n            font_size=30,\n        )\n' in out, out
+
+
+SPANS = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        a = Circle()
+        b = Text("é b")
+        self.play(FadeIn(a), Write(b))
+        self.play(
+            LaggedStart(FadeOut(a), b.animate.shift(UP), lag_ratio=0.5),
+            run_time=2,
+        )
+        self.wait()
+'''
+
+
+def test_each_element_knows_where_its_code_is():
+    doc = import_code(SPANS).doc
+    gen = codegen.generate(doc, latex=True)
+    lines = gen.source.split("\n")
+
+    def text(eid):
+        (l, c, el, ec), = gen.spans[eid]
+        return lines[l - 1][c:ec] if l == el else "\n".join([lines[l - 1][c:], *lines[l:el - 1], lines[el - 1][:ec]])
+
+    by = {o["name"]: o["id"] for o in doc["objects"]}
+    assert text(by["b"]) == 'b = Text("é b")'
+    one, lagged, wait = doc["timeline"]
+    assert [text(a["id"]) for a in one["anims"]] == ["FadeIn(a)", "Write(b)"]  # characters, not utf-8 bytes
+    assert text(lagged["id"]).startswith("self.play(\n") and text(lagged["id"]).endswith(")")
+    group = lagged["anims"][0]
+    assert text(group["id"]) == "LaggedStart(FadeOut(a), b.animate.shift(UP), lag_ratio=0.5)"
+    assert [text(a["id"]) for a in group["anims"]] == ["FadeOut(a)", "b.animate.shift(UP)"]
+    assert text(wait["id"]) == "self.wait()"
+    wait["comment"] = "# rest"  # a statement's block starts at its comment
+    gen = codegen.generate(doc, latex=True)
+    lines = gen.source.split("\n")
+    assert text(wait["id"]) == "# rest\n        self.wait()"
+
+
+def test_an_unused_import_at_the_top_stays_as_written():
+    src = ("from manim import *\nfrom manim.utils.rate_functions import ease_in_sine\n\nclass S(Scene):\n"
+           "    def construct(self):\n        self.wait()\n")
+    doc = import_code(src).doc
+    assert codegen.generate(doc, latex=True).source == src
+
+
+BLOCKS = '''from manim import *
+
+
+class B(Scene):
+    def construct(self):
+        dots = VGroup(*[Dot(RIGHT * k) for k in range(3)])
+        # one at a time
+        for i, d in enumerate(dots):  # each dot
+            self.play(FadeIn(d), run_time=0.5)
+            if i == 1:
+                self.play(d.animate.set_color(RED), run_time=0.5)
+            elif i == 2:
+                pass
+            else:
+                self.wait(0.25)
+
+        with open("/dev/null") as f:
+            self.wait(0.1)
+        try:
+            self.play(FadeOut(dots[0]))
+        except Exception as e:
+            self.wait()
+        finally:
+            k = 1
+        while k < 3:
+            k += 1
+        else:
+            self.wait(0.25)
+'''
+
+
+def test_loops_and_branches_are_blocks_on_the_timeline():
+    imp = import_code(BLOCKS)
+    tl = imp.doc["timeline"]
+    assert not [s for s in tl if s["kind"] == "code"]
+    heads = [s.get("head") for s in tl if s["kind"] == "block"]
+    assert heads == ["for i, d in enumerate(dots)", "if i == 1", "elif i == 2", "else", 'with open("/dev/null") as f', "try",
+                     "except Exception as e", "finally", "while k < 3", "else"]
+    assert [s["kind"] for s in tl].count("end") == 5
+    assert (tl[0]["comment"], tl[0]["eol"]) == ("# one at a time", "# each dot")
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == BLOCKS  # as written, comments at the end of lines too
+    again = import_code(out, base=imp.doc)
+    assert again.doc == imp.doc  # the same ids: nothing changed
+    # each body run is measured: the loop's three runs, its branches, the whole loop's time
+    r = runtime.run(imp.doc, render=False)
+    assert r.error is None, r.error
+    runs = collections.Counter(t.id for t in r.steps)
+    opener = tl[0]["id"]
+    end = next(s["id"] for s in reversed(tl[:tl.index(next(s for s in tl if s.get("head", "").startswith("with")))]) if s["kind"] == "end")
+    if_, elif_, else_ = [s["id"] for s in tl if s["kind"] == "block"][1:4]
+    assert runs[opener] == 3 and runs[if_] == 1 and runs[elif_] == 1 and runs[else_] == 1
+    whole = next(t for t in r.steps if t.id == end)
+    assert abs((whole.end - whole.start) - (3 * 0.5 + 0.5 + 0.25)) < 1e-6
+
+
+def test_editing_a_block_keeps_the_code_valid():
+    doc = import_code(BLOCKS).doc
+    tl = doc["timeline"]
+    i = next(k for k, s in enumerate(tl) if s.get("head") == "elif i == 2")
+    body = tl[i + 1:i + 1]  # the elif's body is empty: codegen writes pass
+    assert body == []
+    # a disabled block leaves its whole statement out (its steps too)
+    loop = tl[0]
+    loop["disabled"] = True
+    out = codegen.generate(doc, latex=True).source
+    ast.parse(out)
+    assert "for i, d" not in out and "set_color" not in out and "self.wait(0.1)" in out
+    back = import_code(out, base=doc).doc
+    assert [s["id"] for s in back["timeline"]] == [s["id"] for s in tl]  # it comes back whole, still disabled
+    assert back["timeline"][0].get("disabled")
+    loop.pop("disabled")
+    # unbalanced: a clause with no block and an end too many are left out; an empty body gets pass; an open
+    # block is closed at the end
+    doc["timeline"] = [{"id": "x1", "kind": "block", "head": "else"}, {"id": "x2", "kind": "end"},
+                       {"id": "x3", "kind": "block", "head": "for j in range(2)"},
+                       {"id": "x4", "kind": "block", "head": "if j"}, {"id": "x5", "kind": "end"}]
+    out = codegen.generate(doc, latex=True).source
+    body = out[out.index("def construct"):]
+    assert "else" not in body and "for j in range(2):\n            if j:\n                pass\n" in body, body
+    assert runtime.run(doc, render=False).error is None
+
+
+def test_a_call_to_the_scenes_own_method_is_a_step():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def flash(self, m, color=YELLOW):
+        self.play(Indicate(m, color=color))
+
+    def construct(self):
+        c = Circle()
+        self.add(c)
+        self.flash(c, color=RED)
+        self.flash(c)
+'''
+    imp = import_code(src)
+    calls = [(s["method"], s["args"]) for s in imp.doc["timeline"] if s["kind"] == "call"]
+    assert calls == [("flash", {"*": "c", "color": "RED"}), ("flash", {"*": "c"})]
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+    r = runtime.run(imp.doc, render=False)
+    assert r.error is None and r.duration == 2  # each call is measured: it plays an animation
+
+
+def test_multi_line_strings_and_commented_code_keep_their_text():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        code = """first
+    indented
+no indent"""
+        t = Text(f"""a
+  {code}
+b""")
+        if True:
+            label = Text("""x
+  y""")
+            self.add(label)
+        # a comment above code that stays code
+        always_shift(t, RIGHT, rate=5)
+        self.add(t)
+'''
+    imp = import_code(src)
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+    again = import_code(out, base=imp.doc)
+    assert [s["id"] for s in again.doc["timeline"]] == [s["id"] for s in imp.doc["timeline"]]
+    assert codegen.generate(again.doc, latex=True).source == src
+
+
+def test_header_comments_and_a_docstring_that_mentions_the_class():
+    src = '''"""Demo.
+
+class S(Scene) is below.
+"""
+from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        for s in ["a#b", "c"]:  # each
+            self.add(Text(s))
+        if (
+            True
+        ):  # multi
+            self.wait()
+'''
+    imp = import_code(src)
+    heads = [(s["head"], s.get("eol")) for s in imp.doc["timeline"] if s["kind"] == "block"]
+    assert heads == [('for s in ["a#b", "c"]', "# each"), ("if (\n    True\n)", "# multi")], heads
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+
+
+def test_an_object_added_by_an_expression_counts_as_shown():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        c = Circle()
+        self.add(*[c])
+        self.play(c.animate.shift(UP))
+'''
+    gen = codegen.generate(import_code(src).doc, latex=True)
+    assert not [d for d in gen.diagnostics if "on screen" in d.get("message", "")], gen.diagnostics

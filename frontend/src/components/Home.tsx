@@ -2,8 +2,8 @@
 // project file was given) and from the toolbar's Manim Studio button.
 
 import { useEffect, useMemo, useState } from 'react';
-import { api, type RecentProject, type Sample } from '../api';
-import { emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
+import { api, type Recovery, type RecentProject, type Sample } from '../api';
+import { currentRecoveryId, emptyDoc, frameSnap, getState, loadDoc, setState, toast, useStore } from '../store';
 import { Field } from './ParamField';
 import { Modal } from './Modal';
 import { discardOk, importManimFile, openPath, openProject, RESOLUTIONS } from './Panels';
@@ -30,12 +30,23 @@ function size(bytes: number | null): string {
 const seconds = (s: number) => `0:${String(Math.round(s)).padStart(2, '0')}`;
 
 async function openSample(s: Sample) {
-  if (!discardOk()) return;
+  if (!(await discardOk())) return;
   try {
     const res = await api.openSample(s.id);
     loadDoc(res.doc, null);
     setState({ time: frameSnap(s.duration * 0.7) }); // the frame on its card
     toast(`${s.name}: a copy of the sample. Press ⏮ then Play to watch it from the start; Save keeps your own copy.`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function restore(r: Recovery) {
+  if (!(await discardOk())) return;
+  try {
+    const res = await api.openRecovery(r.id);
+    loadDoc(res.doc, res.path, r.id);
+    toast(`Restored the unsaved changes to ${r.name}. Save to keep them.`);
   } catch (e) {
     toast(String(e));
   }
@@ -47,11 +58,13 @@ export function Home() {
   const path = useStore((s) => s.path);
   const [section, setSection] = useState<Section>('home');
   const [recent, setRecent] = useState<RecentProject[] | null>(null);
-  const [samples, setSamples] = useState<Sample[]>([]);
+  const [samples, setSamples] = useState<Sample[] | null>(null); // null: still being measured
+  const [recovery, setRecovery] = useState<Recovery[]>([]);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    api.home().then((h) => { setRecent(h.recent); setSamples(h.samples); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.home().then((h) => { setRecent(h.recent); setRecovery((h.recovery ?? []).filter((r) => r.id !== currentRecoveryId())); }).catch((e) => { setRecent([]); toast(String(e)); });
+    api.samples().then((h) => setSamples(h.samples)).catch((e) => { setSamples([]); toast(String(e)); });
     if (!getState().app) api.version().then((a) => setState({ app: a })).catch(() => undefined);
   }, []);
 
@@ -61,6 +74,7 @@ export function Home() {
   }, [recent, filter]);
 
   const remove = (r: RecentProject) => api.removeRecent(r.path).then((h) => setRecent(h.recent)).catch((e) => toast(String(e)));
+  const dropRecovery = (r: Recovery) => api.clearRecovery(r.id).then((h) => setRecovery(h.recovery)).catch((e) => toast(String(e)));
   const current = hasProject ? (path ? path.split(/[\\/]/).pop() : 'Untitled') : null;
 
   return (
@@ -80,7 +94,7 @@ export function Home() {
             <button className="primary home-cta" onClick={() => setState({ panel: 'new-project' })}>New project…</button>
             <button className="home-cta" onClick={() => void openProject()}>Open project…</button>
             <button className="home-cta" title="A manim .py file: its scene becomes the timeline, and the code stays in sync both ways" onClick={() => void importManimFile()}>Open manim file…</button>
-            <button className="home-cta" title="A new project with the code open: paste a manim scene and the timeline follows" onClick={() => newFromCode()}>Paste manim code…</button>
+            <button className="home-cta" title="A new project with the code open: paste a manim scene and the timeline follows" onClick={() => void newFromCode()}>Paste manim code…</button>
           </div>
           <span className="spacer" />
           <button className="home-link small" title="Release notes and downloads" onClick={() => app && openReleases(app.releases)}>What’s new</button>
@@ -89,10 +103,26 @@ export function Home() {
         <main className="home-main">
           {section === 'home' ? (
             <>
+              {recovery.length > 0 && (
+                <section className="recovery">
+                  <h2>Unsaved work</h2>
+                  <p className="muted small">Changes that were never saved: the app closed or crashed before you could.</p>
+                  {recovery.map((r) => (
+                    <div key={r.id} className="recovery-row">
+                      <span className="recovery-name"><b>{r.name}</b>{r.scene && <span className="muted"> · {r.scene}</span>}</span>
+                      <span className="muted">{ago(r.saved)}</span>
+                      <span className="spacer" />
+                      <button className="primary" onClick={() => void restore(r)}>Restore</button>
+                      <button title="Delete these unsaved changes for good" onClick={() => void dropRecovery(r)}>Discard</button>
+                    </div>
+                  ))}
+                </section>
+              )}
               <section>
                 <h2>Start from a sample</h2>
                 <div className="sample-grid">
-                  {samples.map((s) => (
+                  {samples === null && <p className="muted">Loading samples…</p>}
+                  {(samples ?? []).map((s) => (
                     <button key={s.id} className="sample-card" title={s.description} onClick={() => void openSample(s)}>
                       <div className="sample-thumb">
                         {s.thumbnail ? <img src={s.thumbnail} alt="" /> : <span className="muted">no preview</span>}
@@ -123,6 +153,10 @@ export function Home() {
                     <tbody>
                       {shown.map((r) => (
                         <tr key={r.path} className={r.exists ? '' : 'missing'} title={r.exists ? r.path : `${r.path}: moved or deleted`}
+                          tabIndex={0} aria-label={`Open ${r.name}`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && e.target === e.currentTarget) (r.exists ? void openPath(r.path) : toast('That file was moved or deleted'));
+                          }}
                           onClick={() => (r.exists ? void openPath(r.path) : toast('That file was moved or deleted'))}>
                           <td className="recent-thumb">{r.thumbnail ? <img src={r.thumbnail} alt="" /> : <span />}</td>
                           <td className="recent-name">{r.name}{!r.exists && <span className="muted small"> · missing</span>}</td>
@@ -164,7 +198,7 @@ function Learn() {
           <b>Read the guide</b>
           <span className="muted small">Drawing, connecting objects, parameters, the timeline, exporting video and code, and shortcuts.</span>
         </button>
-        <button className="learn-card" onClick={() => newFromCode()}>
+        <button className="learn-card" onClick={() => void newFromCode()}>
           <b>Start from manim code</b>
           <span className="muted small">Paste a manim scene into the Code tab: every self.play becomes clips on the timeline, and editing either one updates the other.</span>
         </button>
@@ -179,8 +213,8 @@ function Learn() {
 }
 
 /** A new, empty project with the code open, ready for a pasted manim scene. */
-function newFromCode() {
-  if (!discardOk()) return;
+async function newFromCode() {
+  if (!(await discardOk())) return;
   loadDoc(emptyDoc(), null);
   setState({ centerTab: 'code' });
 }
@@ -198,8 +232,8 @@ export function NewProjectDialog() {
   const [fps, setFps] = useState(60);
   const [bg, setBg] = useState('#000000');
   const [w, h] = res.split('x').map(Number);
-  const create = () => {
-    if (!discardOk()) return;
+  const create = async () => {
+    if (!(await discardOk())) return;
     const doc = emptyDoc();
     doc.scene.name = toClassName(name) || 'MainScene';
     doc.config = { ...doc.config, pixel_width: w, pixel_height: h, frame_rate: fps, background_color: bg };
@@ -209,10 +243,17 @@ export function NewProjectDialog() {
   const scale = 120 / Math.max(w, h);
   return (
     <Modal title="New project">
-      <div className="new-project">
+      <div
+        className="new-project"
+        onKeyDown={(e) => {
+          const t = e.target as HTMLInputElement;
+          if (e.key === 'Enter' && t.tagName === 'INPUT' && t.type !== 'color') void create(); // Enter in a text field creates
+          else if (e.key === 'Escape') setState({ panel: null, panelData: null });
+        }}
+      >
         <div className="new-fields">
           <label className="param"><span className="pname">Name</span>
-            <Field value={name} onChange={setName} placeholder="My scene" />
+            <Field value={name} onChange={setName} placeholder="My scene" autoFocus />
           </label>
           <p className="muted small new-hint">The scene class will be <code>{toClassName(name) || 'MainScene'}</code>. You choose where to save on the first Save.</p>
           <label className="param"><span className="pname">Format</span>
@@ -240,7 +281,7 @@ export function NewProjectDialog() {
       <div className="row actions">
         <span className="spacer" />
         <button onClick={() => setState({ panel: null, panelData: null })}>Cancel</button>
-        <button className="primary" onClick={create}>Create</button>
+        <button className="primary" onClick={() => void create()}>Create</button>
       </div>
     </Modal>
   );

@@ -5,6 +5,7 @@ import { dist, dragHandle, freeShape, handlesOf, nearestOnPath, nearestOnSegment
 import { meetSnaps, type MeetSnap } from '../intersect';
 import {
   addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, coupleObjects, uncoupleObjects, editPoints, fmt, fps,
+  clearRange, playbackAt, playRange, setRangePoint, workArea,
   frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
   timecode, toast, toggleObjectSelection, type TransformDelta, useStore,
 } from '../store';
@@ -64,6 +65,9 @@ const ENTRY_HINT: Record<Tool, string[]> = {
   select: [], point: ['x, y'], line: ['x, y of start', 'x, y of end'], arrow: ['x, y of start', 'x, y of end'],
   circle: ['x, y of center', 'radius'], rect: ['x, y of a corner', 'width, height'], polygon: ['x, y of next vertex'],
 };
+
+/** The preview video that failed to play (told once). */
+let unplayable: string | null | undefined;
 
 export function Viewport() {
   const doc = useStore((s) => s.doc);
@@ -140,12 +144,27 @@ export function Viewport() {
     if (!v || !showVideo) return;
     if (playing) {
       if (Math.abs(v.currentTime - getState().time) > 0.25) v.currentTime = getState().time;
-      void v.play();
+      v.play().catch((err: DOMException) => {
+        // the video can't play here (a codec the window lacks, a file gone): play frame by frame instead
+        if (err.name === 'AbortError' || !getState().playing) return;
+        if (unplayable !== video?.url) toast('The preview video can’t play here, so playback shows frames as they are drawn');
+        unplayable = video?.url;
+        setState({ showVideo: false });
+      });
       let raf = 0;
       const loop = () => {
         if (!getState().playing) return;
-        setState({ time: v.currentTime });
-        if (v.ended) return setState({ playing: false });
+        // the range's end (or the video's): start over at In with Loop on, else stop there
+        const p = playbackAt(v.ended ? Infinity : v.currentTime);
+        if (p.wrapped) {
+          v.currentTime = p.t;
+          if (v.paused) void v.play().catch(() => {});
+        }
+        setState({ time: p.stop ? Math.min(p.t, v.duration || p.t) : p.t });
+        if (p.stop) {
+          v.pause();
+          return setState({ playing: false, playingRange: false });
+        }
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
@@ -245,7 +264,8 @@ export function Viewport() {
   const selectedId = selection?.kind === 'object' ? selection.id : null;
   const selInfo = visible.find((o) => o.id === selectedId);
   const selObj = selectedId ? objOf(selectedId) : undefined;
-  const error = frame?.error;
+  const timelineError = useStore((s) => s.timeline?.error);
+  const error = frame?.error ?? timelineError; // a failure later in the scene shows even while the playhead is before it
 
   // ------------------------------------------------------------ creating shapes
 
@@ -744,6 +764,7 @@ export function Viewport() {
           }}
         >
           {frame?.image && <img className={`frame ${error ? 'stale' : ''}`} src={frame.image} draggable={false} alt="" />}
+          <FrameStatus />
           {video?.url && <video ref={videoRef} className={`frame ${showVideo ? '' : 'hidden'}`} src={video.url} preload="auto" muted playsInline />}
           <svg className="overlay" width={size.w} height={size.h} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
             onPointerLeave={() => setCursor(null)}
@@ -832,7 +853,7 @@ export function Viewport() {
           </svg>
           {menu && <CanvasMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} />}
           {doc.objects.length === 0 && !dropPoint && tool === 'select' && (
-            <div className="empty-hint">Draw with the tools above, or drag a manim object here<br /><span className="muted">e.g. Circle, MathTex, Axes</span></div>
+            <div className="empty-hint">Draw with the tools above, or drag a manim object here<br /><span className="muted">or double-click one in the library (press / to search it): Circle, MathTex, Axes</span></div>
           )}
         </div>
         {(error || diag) && (
@@ -997,15 +1018,42 @@ function Handles({ name, box, rotation, toPx, onDown, moveOnly, point }: {
   );
 }
 
+/**
+ * Whether the picture is the frame at the playhead: a note while a new one is on its way (after a moment, so quick
+ * answers don't flash it), and Retry when the backend didn't answer.
+ */
+function FrameStatus() {
+  const failed = useStore((s) => s.frameFailed);
+  const behind = useStore((s) => !s.playing && !s.showVideo && !!s.frameAt && (s.frameAt.doc !== (s.previewDoc ?? s.doc) || Math.abs(s.frameAt.time - s.time) > 1e-6));
+  if (failed) {
+    return (
+      <div className="frame-status failed" role="alert">
+        This frame couldn’t be drawn: {failed}
+        <button className="small" onClick={() => { setState({ frameFailed: null }); requestFrame(); }}>Retry</button>
+      </div>
+    );
+  }
+  return behind ? <div className="frame-status updating" role="status">Updating this frame…</div> : null;
+}
+
 /** Premiere-style transport under the program monitor. */
 function Transport() {
   const time = useStore((s) => s.time);
   const playing = useStore((s) => s.playing);
   const doc = useStore((s) => s.doc);
   const timeline = useStore((s) => s.timeline);
+  const range = useStore((s) => s.range);
+  const loop = useStore((s) => s.loop);
+  const playingRange = useStore((s) => s.playingRange);
   const end = sequenceEnd(doc, timeline);
   const pts = editPoints(doc, timeline);
   const go = (t: number) => setState({ time: frameSnap(Math.max(0, Math.min(end, t))), showVideo: false });
+  const area = workArea();
+  const len = area.end - area.start;
+  const frames = Math.round(len * fps());
+  const readout = !area.set
+    ? 'No range: playback and export use the whole scene'
+    : `${range.in === null ? 'Start' : `In ${timecode(area.start)}`} → ${range.out === null ? 'end' : `Out ${timecode(area.end)}`}: ${Math.round(len * 100) / 100} s, ${frames} frame${frames === 1 ? '' : 's'} (the frame at Out is not included; export still renders the whole scene)`;
   return (
     <div className="transport">
       <span className="tc blue">{timecode(time)}</span>
@@ -1017,7 +1065,14 @@ function Transport() {
         <button className="icon" title="Step forward one frame (→)" onClick={() => go(time + 1 / fps())}>▶︎</button>
         <button className="icon" title="Next edit point (↓)" onClick={() => go(pts.find((p) => p > time + 1e-6) ?? end)}>⇥</button>
         <button className="icon" title="Go to end (End)" onClick={() => go(end)}>⏭</button>
+        <span className="sep" />
+        <button className={`icon ${range.in !== null ? 'on' : ''}`} aria-label="Set In (I)" title="Set In at the playhead (I); Shift+I goes to it" onClick={() => setRangePoint('in')}>{'{'}</button>
+        <button className={`icon ${range.out !== null ? 'on' : ''}`} aria-label="Set Out (O)" title="Set Out at the playhead (O); Shift+O goes to it" onClick={() => setRangePoint('out')}>{'}'}</button>
+        <button className={`icon ${playingRange ? 'on' : ''}`} aria-label="Play In to Out" title={`Play In to Out (Shift+Space)${area.set ? '' : ': set In (I) or Out (O) first'}`} disabled={!area.set} onClick={() => (playingRange ? setPlaying(false) : playRange())}>{'{▶}'}</button>
+        <button className={`icon ${loop ? 'on' : ''}`} aria-label="Loop" aria-pressed={loop} title={loop ? 'Loop is on: playback starts over at the end (at In, when there is a range)' : 'Loop playback'} onClick={() => setState({ loop: !loop })}>⟲</button>
+        <button className="icon" aria-label="Clear In and Out" title="Clear In and Out" disabled={!area.set} onClick={clearRange}>{'{×}'}</button>
       </div>
+      <span className={`muted small range-readout ${area.set ? 'set' : ''}`} role="status" title={readout}>{area.set ? readout : ''}</span>
       <span className="tc">{timecode(end)}</span>
     </div>
   );

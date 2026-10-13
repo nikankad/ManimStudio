@@ -18,6 +18,11 @@ export interface SceneObject {
   instance?: InstanceRef; // part of an inserted construction
   after?: string; // created right after this timeline step (as in the imported code); none: at the top of construct()
   comment?: string; // comment lines written above it in the code
+  eol?: string; // the comment at the end of its (last) line in the code
+  chain_layout?: string[]; // how the code spread the chain: [on the line that makes it, then each line of calls after it]
+  positional?: string[]; // the arguments the code passed by position, in order
+  gap?: boolean; // a blank line before it in the code
+  written?: Written;
 }
 
 /** Slider bounds of a parameter (a ValueTracker object; its value is args["*"]). */
@@ -70,7 +75,8 @@ type LinkSpec =
   | { kind: 'area'; graph: string; a: string; b: string; bounded?: string; frozen?: boolean }
   | { kind: 'riemann'; graph: string; a: string; b: string; dx: string; sample?: 'left' | 'right' | 'center'; bounded?: string; frozen?: boolean }
   | { kind: 'brace'; target: string; parts?: string[]; direction?: string; frozen?: boolean }
-  | { kind: 'highlight'; target: string; parts?: string[]; style?: 'box' | 'background' | 'underline'; frozen?: boolean };
+  | { kind: 'highlight'; target: string; parts?: string[]; style?: 'box' | 'background' | 'underline'; frozen?: boolean }
+  | { kind: 'text'; template: string; off?: boolean; frozen?: boolean }; // a Text showing values: "t = {t:2}"
 
 export type LinkKind = Link['kind'];
 
@@ -97,15 +103,18 @@ export interface TemplateInput {
  * The timeline is construct()'s statements, in order (mathengine/timeline.py). Each step is one manim statement:
  * play: self.play(*anims, **args) · wait: self.wait(**args) · add / remove: self.add(*targets) · code: any Python ·
  * couple / uncouple: switch constructions · call: self.<method>(**args), any other method of the scene
- * (next_section, add_sound, move_camera…). A step starts when the one before it ends.
+ * (next_section, add_sound, move_camera…) · apply: target.method(…) · assign: target op value (k = 2, total += x).
+ * block … end: a compound statement (for, while, if/elif/else, with, try…) around the steps between them; a block whose
+ * head starts with elif / else / except / finally is the next clause of the open one. A step starts when the one before it ends.
  */
-export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call';
+export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply' | 'assign' | 'block' | 'end';
 
 export interface Step {
   id: string;
   kind: StepKind;
   disabled?: boolean; // left out of the code
   comment?: string; // comment lines above it in the code
+  eol?: string; // the comment at the end of its (last) line in the code
   anims?: Anim[]; // play
   args?: Args; // play: self.play keyword arguments (run_time, rate_func…); wait: duration…; call: the method's arguments
   method?: string; // call: the scene method
@@ -113,25 +122,81 @@ export interface Step {
   label?: string; // code: name shown on the timeline
   targets?: string[]; // add / remove / couple / uncouple
   duration?: number; // couple: glide back into place over this time
+  positional?: string[]; // call: the arguments the code passed by position, in order
+  gap?: boolean; // a blank line before it in the code
+  target?: string; // apply: the object (or part of one) its methods are called on
+  chain?: string; // apply: the methods, ".next_to(u, UP).set_color(RED)"
+  op?: string; // assign: "=", "+=", "-="…
+  value?: string; // assign: the expression on the right
+  head?: string; // block: its header without the colon, "for d in dots", "if k > 2", "else"
+  repeat?: Repeat; // block: a loop written in math; codegen writes its header from this (head follows it)
+  written?: Written;
+}
+
+/** The code's own text of an element (its line breaks, spacing…), written as is while codegen would write `gen`. */
+export interface Written {
+  gen: string;
+  as: string;
 }
 
 /** An animation: cls(target, **args), target.animate(**args).chain, or a composition of `anims`. */
 export interface Anim {
   id: string;
-  cls: string; // "Create", ... or "animate"
+  cls: string; // "Create", ... "animate", or "expr" (any other animation expression, written as `src`)
+  src?: string; // cls === "expr": the expression, "*[FadeOut(m) for m in dots]"
   target: string;
   args: Args;
   chain?: string; // cls === "animate"
   anims?: Anim[]; // AnimationGroup, LaggedStart, Succession…: the child animations
   disabled?: boolean;
+  positional?: string[]; // the arguments the code passed by position, in order (after the target)
   // TransformTerms: destination equation (object id) and term pairs [source part id, target part id]
   terms?: { to: string; pairs: [string, string][] };
 }
 
+export type MarkerCategory = 'chapter' | 'narration' | 'visual' | 'review';
+
 export interface Marker {
   id: string;
-  time: number;
+  time: number; // where it is (for an attached marker: where it was last, used if what it is attached to goes away)
   label?: string;
+  notes?: string;
+  category?: MarkerCategory;
+  // attached to the start or end of a step or an animation (by id), `offset` seconds from it: it moves along with it
+  anchor?: { id: string; edge: 'start' | 'end'; offset: number };
+}
+
+/**
+ * A definition of the scene (mathengine/defs.py): a named value, list or function written in math, made in
+ * Scene › Definitions. It becomes Python above the scene class; math everywhere can use it by name.
+ */
+export interface Def {
+  id: string;
+  name: string;
+  kind: 'value' | 'list' | 'function';
+  expr?: string; // value: its expression; function: what it returns
+  items?: string[]; // list
+  params?: string[]; // function: its inputs
+  where?: { name: string; expr: string }[]; // function: names worked out first, in order
+}
+
+/** A Repeat: counter `var` from `from` to `to` (both included, math), or each item of the list definition `each`. */
+export interface Repeat {
+  var: string;
+  from?: string;
+  to?: string;
+  each?: string;
+}
+
+/** What the editor learns about a definition (mathengine/server.py api_defs). */
+export interface DefInfo {
+  error?: string;
+  hint?: string;
+  value?: number;
+  length?: number;
+  items?: number[];
+  sample?: number;
+  at?: number;
 }
 
 export interface SceneDoc {
@@ -140,10 +205,12 @@ export interface SceneDoc {
   config: { pixel_width: number; pixel_height: number; frame_rate: number; background_color: string };
   header: string;
   footer?: string; // module code after the scene class
+  top_written?: Written; // the top of the file (imports, config, header) as the imported code had it
   objects: SceneObject[];
   timeline: Step[];
   markers?: Marker[];
   constructions?: Template[];
+  defs?: Def[];
 }
 
 export interface Param {
@@ -230,19 +297,33 @@ export interface ObjInfo {
   path?: Pt[]; // sampled outline (graphs, circles) for snapping
   axes?: { origin: Pt; ux: Pt; uy: Pt; x_range: [number, number]; y_range: [number, number] };
   parts?: { id: string; box: [number, number, number, number] | null }[];
+  layer?: number | null; // drawing order at this time: higher is drawn later (on top); null when nothing of it is on screen
+}
+
+/** An object as an animation takes it from / to it (a ValueTracker: just its value). */
+export interface ObjState {
+  center?: [number, number];
+  width?: number;
+  height?: number;
+  opacity?: number;
+  color?: string; // #RRGGBB
+  stroke?: number; // stroke width
+  value?: number;
 }
 
 export interface Diagnostic {
   id: string;
-  level: 'error' | 'warning';
+  level: 'error' | 'warning' | 'info';
   message: string;
   kind: 'object' | 'anim';
 }
 
 export interface RunResult {
   duration: number;
-  steps: { id: string; start: number; end: number }[]; // when each statement runs (measured by manim)
-  anims: { id: string; start: number; end: number; curve?: number[] }[]; // when manim runs each animation; curve: its progress over that time
+  // when each statement runs (measured by manim), and which objects (ids) were on screen just before and after it
+  steps: { id: string; start: number; end: number; before?: string[]; after?: string[]; from?: ObjState; to?: ObjState }[];
+  // when manim runs each animation; curve: its progress over that time; from / to: its object then (measuring run, top-level)
+  anims: { id: string; start: number; end: number; curve?: number[]; from?: ObjState; to?: ObjState }[];
   objects: ObjInfo[];
   camera: { center: [number, number]; width: number; height: number } | null;
   plays: number;
@@ -251,6 +332,7 @@ export interface RunResult {
   elapsed_ms: number;
   values: Record<string, number>; // ValueTracker values at this time
   diagnostics: Diagnostic[];
+  doc?: SceneDoc; // the document this measured (set by the editor): its timings hold only for steps unchanged since
 }
 
 export interface Job {
@@ -267,6 +349,7 @@ export type Selection =
   | { kind: 'object'; id: string; terms?: string[] } // terms: selected equation parts
   | { kind: 'objects'; ids: string[] }
   | { kind: 'clips'; ids: string[] } // timeline steps and animations (by id)
+  | { kind: 'marker'; id: string }
   | null;
 
 /** Canvas tool. */

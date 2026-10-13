@@ -50,6 +50,8 @@ export function CodeArea({ value, onChange, minLines = 3, placeholder }: { value
 
 const KEYWORDS = new Set(['False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except',
   'finally', 'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while', 'with', 'yield']);
+const LITERALS = new Set(['True', 'False', 'None']);
+const OPERATOR = /^[=+\-*/%<>!&|^~@]$/;
 const TOKEN = /(#.*$)|([rRbBuUfF]{0,2}"""[\s\S]*?(?:"""|$)|[rRbBuUfF]{0,2}'''[\s\S]*?(?:'''|$)|[rRbBuUfF]{0,2}"(?:\\.|[^"\\])*"?|[rRbBuUfF]{0,2}'(?:\\.|[^'\\])*'?)|(\b\d+\.?\d*(?:e[+-]?\d+)?\b)|([A-Za-z_]\w*)(\s*\()?|(\S)/g;
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -67,13 +69,13 @@ export function highlight(line: string): string {
     else if (str) out += `<span class="t-str">${esc(str)}</span>`;
     else if (num) out += `<span class="t-num">${num}</span>`;
     else if (word) {
-      const cls = KEYWORDS.has(word) ? 't-kw' : word === 'self' ? 't-self' : prev === 'def' || prev === 'class' ? 't-def'
+      const cls = LITERALS.has(word) ? 't-lit' : KEYWORDS.has(word) ? 't-kw' : word === 'self' ? 't-self' : prev === 'def' || prev === 'class' ? 't-def'
         : /^[A-Z][A-Z0-9_]+$/.test(word) ? 't-const' : call ? (/^[A-Z]/.test(word) ? 't-cls' : 't-fn') : /^[A-Z]/.test(word) ? 't-cls' : '';
       out += cls ? `<span class="${cls}">${word}</span>` : word;
       if (call) out += esc(call);
       prev = word;
       continue;
-    } else out += esc(all);
+    } else out += OPERATOR.test(all) ? `<span class="t-op">${esc(all)}</span>` : esc(all);
     prev = '';
   }
   return out + esc(line.slice(last));

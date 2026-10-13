@@ -3,6 +3,9 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { getState, setState, useStore } from '../store';
 import { Modal } from './Modal';
+import { keys } from '../keys';
+import { pref, setPref } from '../prefs';
+import { startTryThis } from './TryThis';
 
 // ---------------------------------------------------------------- guided tour
 
@@ -57,12 +60,12 @@ export const TOUR: TourStep[] = [
     target: '[data-tour="timeline"]',
     title: 'Timeline',
     before: libraryTab('Objects'),
-    body: <>The scene’s <code>construct()</code>, statement by statement: each <code>self.play</code> plays its animations together on V1, V2…, then the next statement starts. Drag to move, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
+    body: <>The scene, in order. Animations that play together share a shaded <b>Play together</b> column, stacked on animation lanes V1, V2… (lanes are not drawing layers; Scene › Drawing order shows what is on top); a hatched block is a pause; the next group starts when the one before ends. Click the shading to select a group, drag clips to move them, drag right edges to trim, and press <kbd>Space</kbd> to play.</>,
   },
   {
     target: '[data-tour="record"]',
     title: 'Record',
-    body: <>With Record on, canvas edits become animation clips at the playhead instead of changing the starting picture. Dragging a point that is bound to a parameter records a <code>set_value</code> animation.</>,
+    body: <>With Record on, canvas edits become animation clips at the playhead instead of changing the starting picture. Dragging a point that is bound to a parameter records a <code>set_value</code> animation. With the playhead in a loop's first run the clip goes in its body (it runs every time); in a later run, drawn faintly, it goes after the loop. (In a narrow window Record is in the <b>Options</b> menu.)</>,
   },
   {
     target: '[data-tour="output"]',
@@ -176,14 +179,15 @@ const TOPICS: Topic[] = [
       <>
         <p>Manim Studio builds manim scenes visually. A project is a set of <b>objects</b> (shapes, text, graphs…) and the statements of the scene’s <code>construct()</code> that animate them, shown as clips on a timeline. The <b>Code</b> tab shows the same scene as manim code; edit either one and the other follows, or paste a whole manim file to start from it.</p>
         <ol>
-          <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b>.</li>
+          <li>Draw something with the tools above the canvas, or drag a class from the <b>Library</b> (or double-click it; press <kbd>/</kbd> to search, then <kbd>Enter</kbd> adds the top result).</li>
           <li>New objects get an intro animation (Create/Write) at the playhead, so the timeline fills up as you build.</li>
           <li>Select an object to edit it in the <b>Inspector</b>; select two to connect them.</li>
-          <li>Press <kbd>Space</kbd> to play, <kbd>⌘S</kbd> to save, and <b>Export video</b> to render with manim.</li>
+          <li>Press <kbd>Space</kbd> to play, <kbd>{keys('⌘S')}</kbd> to save, and <b>Export video</b> to render with manim; when it finishes, <b>Show in folder</b> and <b>Play</b> open the video.</li>
+          <li>Unsaved changes are kept as you work. If the app closes or crashes, <b>Home</b> lists them under <b>Unsaved work</b> and opening that project offers to restore them.</li>
         </ol>
       </>
     ),
-    actions: [{ label: 'Take the tour', run: () => startTour(0) }],
+    actions: [{ label: 'Take the tour', run: () => startTour(0) }, { label: 'Try this: your first animation', run: startTryThis }],
   },
   {
     id: 'draw',
@@ -229,7 +233,7 @@ const TOPICS: Topic[] = [
   {
     id: 'graph',
     title: 'Graphs and parameters',
-    keywords: 'function graph expression plot axes parameter slider valuetracker discontinuity domain',
+    keywords: 'function graph expression plot axes parameter slider valuetracker discontinuity domain definition definitions value list sum piecewise if',
     body: (
       <>
         <p>Click <b>ƒ Graph</b> and type an explicit function of <code>x</code>, such as <code>y = a*sin(b*x)</code>. You can use <code>+ − * / ^</code>, implicit multiplication (<code>2x</code>), <code>sin cos tan exp ln log sqrt abs</code> and <code>pi</code>, <code>e</code>.</p>
@@ -237,8 +241,11 @@ const TOPICS: Topic[] = [
           <li>Every other letter becomes a <b>parameter</b> with a slider (value, bounds and step). Parameters are shared: graphs, points and labels using <code>a</code> all follow it.</li>
           <li>The <b>preview</b> shows exactly what will be added. Choose new or existing axes, the domain and the color.</li>
           <li>Discontinuities (like those of <code>tan(x)</code>) are found automatically, and the curve isn't drawn across them.</li>
-          <li>Not supported yet: implicit equations (<code>x^2 + y^2 = 1</code>), inequalities, parametric or polar curves, piecewise functions. The builder explains what it can't read.</li>
-          <li>To animate a parameter, select it and use <b>Animate to… → Add clip</b>; its sliders appear in the inspector when nothing is selected.</li>
+          <li>Also: <code>if(x &lt; 0, 0, x^2)</code> for pieces, <code>sum(k, 1, n, 1/k^2)</code> and <code>prod(…)</code>, <code>mod min max atan2 round isprime</code>, and the scene's <b>definitions</b>.</li>
+          <li><b>Definitions</b> (Scene inspector, nothing selected): <b>+ value</b>, <b>+ list</b> and <b>+ function</b> name things written in math, such as <code>period = 2 pi</code>, a list of numbers used as <code>ZEROS[1]</code> (counting from 1), or <code>Z(t)</code> with <i>where</i> names worked out first. Each is checked as you type. Graphs and every math field use them by name, renaming one renames its uses, and the code has them as Python above the scene.</li>
+          <li><b>Text with values</b>: a parameter's <i>Show as text</i>, or <i>Show values in it</i> on any Text, puts math in braces in its words: <code>{'t = {t:2}'}</code> (2 decimals), <code>{'½ + {ZEROS[k]:3}i'}</code>. With a parameter in it, the text follows the parameter as it changes.</li>
+          <li>Not supported yet: implicit equations (<code>x^2 + y^2 = 1</code>), parametric or polar curves. The builder explains what it can't read.</li>
+          <li>To animate a parameter, select it and use <b>Animate to… → Add clip</b> (a number, or math such as <code>2 pi</code> or <code>ZEROS[k]</code> in a loop); its sliders appear in the inspector when nothing is selected.</li>
         </ul>
       </>
     ),
@@ -295,21 +302,32 @@ const TOPICS: Topic[] = [
   {
     id: 'timeline',
     title: 'Timeline and animation',
-    keywords: 'timeline clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple',
+    keywords: 'timeline wording words names rename label phrasebook loop for while if else block repeat value variable updater always_redraw clip track play scrub trim marker record animate effect overlap warning order wait statement self.play construct gap ripple keep later timing hold cancel escape cue chapter narration review notes attached in out range loop work area',
     body: (
       <>
         <ul>
-          <li>The timeline is the scene’s <code>construct()</code>, in order. The <b>Statements</b> lane shows each one: <code>self.play</code>, <code>self.wait</code> (a pause), <code>self.add</code> / <code>self.remove</code>, and code. A statement starts when the one before it ends, exactly like manim.</li>
-          <li>The animations of one <code>self.play</code> start together: the first on V1, the second on V2, and so on. The <code>self.play</code> lasts as long as its longest animation. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
-          <li>Drag a clip onto another <code>self.play</code> to play it with that one, or into a pause to start it there (the pause shrinks, and later statements move only if it doesn’t fit). Drag it up or down to change its row. The drag shows the result before you let go. Drag a statement to move the whole statement. <kbd>Alt</kbd>-drag copies.</li>
-          <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along.</li>
+          <li>The timeline is the scene in order, exactly as manim runs it. Animations that play together (one <code>self.play</code>) share a shaded <b>Play together</b> column and are stacked on <b>animation lanes</b> V1, V2… (the 1st, 2nd… animation of the group; lanes are not drawing layers: <i>Scene › Drawing order</i> lists what is drawn on top); the group lasts as long as its longest animation, and the next one starts when it ends. A <b>hatched block</b> is a pause (<code>self.wait</code>). Clips read object first: <i>circle · Create</i>.</li>
+          <li>Clips are named in words, object first: <i>title · Fade in</i>, <i>title · Scale ×0.55, to the top edge</i>, <i>Repeat, k = 1 to 6</i>, <i>Fade out all but title</i>. Hover one for its code. Right-click › <b>Change wording…</b> says how clips like it read: <code>{'{1}'}</code> is its first argument, <code>{'{angle}'}</code> a named one, <code>{'{1:side}'}</code> says <code>UP</code> as “above”; every clip with the same animation, method or statement follows, and <b>Default</b> goes back. Settings › Timeline resets them or names clips as in the code.</li>
+          <li>Steps that aren’t animations (objects added or removed without one, code, couple / uncouple, scene calls, and anything disabled) sit in a slim <b>Other</b> strip under the ruler, shown only when the scene has some.</li>
+          <li>Drag the line under a track’s name (V1, V2…) to make that track taller or shorter; double-click it for the usual height. <b>+ Add track</b> adds empty tracks; × removes the last one while it’s empty.</li>
+          <li>Clips show what they do to their object, like transitions and keyframes in a video editor: <b>IN</b> ramps up as it brings the object on screen, <b>OUT</b> ramps down as it takes it off, <b>⇄</b> swaps one object for another (<code>ReplacementTransform</code>), and <b>fx</b> changes an object already there, from the keyframe ◆ at its start to the one at its end. In Effect Controls, <b>Easing</b> sets how the change is spread over time, and <b>Keyframes</b> ◀ ▶ step the playhead through the object’s animations.</li>
+          <li><b>Keyframes of</b> an object has a row per property at the playhead (Position, Scale, Rotation, Opacity, Color, Stroke width; a tracker’s value). Clips that move the camera (<code>self.camera.frame.animate…</code>) have the camera’s keyframes: its position and zoom. Each keyframe is the end of a manim clip: changing its value rewrites just that argument (<code>shift(RIGHT * 2)</code> → <code>shift(RIGHT * 3)</code>), ◆ adds a clip such as <code>c.animate.scale(2)</code> or <code>Rotate(c, angle=…)</code> that ends at the playhead (or removes the keyframe there), and with no keyframes yet a value changes the object as created. A keyframe written as an expression or placed relative to something else (<code>next_to(label, RIGHT)</code>) shows its method’s arguments, edited as code; <b>Pin</b> makes a relative one <code>.move_to(…)</code> where it is now. Where the object is already animated, ◆ says why and leaves the code alone.</li>
+          <li><b>+ Change</b> adds a <i>Change at once</i> step: methods called on an object at that point without animating them, such as <code>label.next_to(c, UP)</code>. Imported files get one for each such line, and keep how their code was written (chains, positional arguments, wrapping, blank lines) until you edit that statement.</li>
+          <li><b>Blocks</b>: a loop, an <code>if</code> / <code>elif</code> / <code>else</code>, a <code>with</code> or a <code>try</code> is a bar in the Other strip with its header and how many times its body ran (<i>for d in dots ×5</i>, <i>didn’t run</i>). Its first run is laid out clip by clip under the bar, and the later runs follow it as faint clips, where manim ran them. Select the bar to edit the header (a <code>range(n)</code> loop gets a Repeat count), add <b>+ else</b> / <b>+ elif</b>, or <b>Unwrap</b> its steps. <b>+ Repeat</b> puts the selected clips in <code>for i in range(2)</code>. Its <b>Loop</b> menu writes it in math instead: <i>a counter</i> (<code>k</code> from <code>1</code> to <code>len(ZEROS)</code>, both ends included) or <i>each item of a list</i>; a loop in code that is already one (<code>for i in range(5)</code>) opens as one. What is created in the loop (an object whose intro you add with the playhead in it, or one set to be created there) is made anew on each run, and its math fields can use the counter: a point at coordinates <code>(0.5, ZEROS[k])</code> lands on each zero in turn. Used outside its loop, the field offers <b>Create it in the loop</b>. Deleting, moving, copying or disabling a block takes the whole statement; keyframes inside one are edited by their method’s arguments.</li>
+          <li><b>+ Value</b> adds a value step (<code>k = 2</code>, <code>total += k</code>): a name later steps can use, edited by name, operation and value. An animation built by an expression (<code>*[FadeOut(m) for m in dots]</code>) is a clip of its own, its code edited in Effect Controls.</li>
+          <li><b>Updaters</b> (<code>add_updater</code>, <code>always_redraw</code>) are ⟳ bars over the time manim runs them, from where they are set to where they are cleared; click one to select what sets it.</li>
+          <li>Click a group’s shading to select it: Effect Controls then show its animations and the settings it gives them all (<code>run_time</code>, <code>rate_func</code>…, shown in the corner of the shading when set). With the group selected, drag any of its clips to move the whole group; drag the shading’s right edge to retime it; right-click the shading to disable or delete it. <code>AnimationGroup</code>, <code>LaggedStart</code> and <code>Succession</code> show their animations inside the clip, at the times manim plays them.</li>
+          <li>Drag a clip into another group’s column to play it with that group, or into a pause to start it there (the pause shrinks, and later steps move only if it doesn’t fit). Drag it up or down to change its track. The drag shows the result before you let go, and a note says where it lands (a group’s start) and how later beats move. <kbd>Alt</kbd>-drag copies; <kbd>Esc</kbd> cancels.</li>
+          <li>Drag a clip’s right edge to change its <code>run_time</code>, or a pause’s right edge to change its length. Everything after it moves along, unless <b>Keep later timing</b> is on (the button next to the snap magnet): then the pause right after it gives or takes the time, so later beats keep their time. It never takes more than that pause holds. Duration in Effect Controls works the same way.</li>
           <li>Effect Controls show every argument manim takes for the selected clip: the animation’s class, object(s), duration and arguments; a <code>self.play</code>’s animations (reorder, add, group into <code>LaggedStart</code>…) and the arguments it gives them all; a <code>self.wait</code>’s options. <i>+ self.…</i> on the timeline adds any other scene method: sections, sounds, subcaptions, the 3D camera…</li>
-          <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>⇧Del</kbd> (ripple delete) closes the gap.</li>
+          <li><kbd>Del</kbd> leaves the time as a pause (<code>self.wait</code>), like Premiere; <kbd>{keys('⇧Del')}</kbd> (ripple delete) closes the gap.</li>
           <li>A clip marked <b>!</b> animates an object that isn’t on screen yet (no Create, FadeIn or Add before it): manim would show it from that clip on. Effect Controls explains it.</li>
           <li>Drop an effect from the library's <b>Effects</b> tab onto an object or a track, or use <b>Animate at playhead</b> in the inspector.</li>
           <li>With <b>● Record</b> on, moving, scaling or rotating on the canvas adds <code>.animate</code> clips; dragging a point bound to a parameter records a <code>set_value</code> clip.</li>
           <li><kbd>Space</kbd> plays; <kbd>←</kbd>/<kbd>→</kbd> step frames; <kbd>↑</kbd>/<kbd>↓</kbd> jump between edit points; <kbd>M</kbd> adds a marker.</li>
-          <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it.</li>
+          <li><b>In / Out</b>: <kbd>I</kbd> and <kbd>O</kbd> (or <code>{'{'}</code> <code>{'}'}</code> by the transport) mark a range; it shows as a bar on the ruler that you can drag. <kbd>{keys('⇧Space')}</kbd> plays In to Out and stops at Out; <b>Loop</b> ⟲ starts playback over at In. The readout by the transport gives the range’s length in seconds and frames (the frame at Out is not included). The range is for playback only: export still renders the whole scene. <kbd>{keys('⇧⌘X')}</kbd> clears it.</li>
+          <li><b>Markers</b>: with a clip selected under the playhead, <kbd>M</kbd> attaches the new marker to that clip’s start or end, so it moves with the clip. Click a marker to jump there and edit it (name, kind, notes, what it is attached to); double-click to name it; drag it along the ruler; <kbd>Alt</kbd>-click deletes it. <i>Scene › Markers</i> lists them all, with search and a filter by kind (Chapter, Narration, Visual event, Review).</li>
+          <li><b>Auto-render</b> renders a smooth preview in the background; when it's ready, <kbd>Space</kbd> plays it. The preview button says <i>Preview ready</i>, <i>Rendering</i>, <i>Preview out of date</i> (click to render again) or <i>Render failed · Retry</i>. The monitor says <i>Updating this frame…</i> while the picture catches up with the playhead, and offers <b>Retry</b> when a frame couldn’t be drawn.</li>
         </ul>
       </>
     ),
@@ -324,8 +342,8 @@ const TOPICS: Topic[] = [
         <ul>
           <li>Every field accepts Python: click <code>{'{}'}</code> next to a field to type any expression manim accepts (<code>BLUE</code>, <code>UP * 2</code>, <code>lambda x: x**2</code>).</li>
           <li><b>Code</b> steps (<i>+ Code</i> on the timeline) run any manim code inside <code>construct()</code>.</li>
-          <li>The <b>&lt;/&gt; Code</b> tab is the whole scene as a manim file, and it works both ways. Edit it and the timeline, canvas and inspector follow; edit those and the code follows. Clicking a line selects what it makes, and selecting a clip highlights its line.</li>
-          <li>Paste a whole manim file into it (or use <i>Open manim file…</i> on Home, or <code>manim-studio scene.py</code>) and its scene becomes the timeline. Each <code>self.play</code> becomes clips, objects are created where the code creates them, and anything else (loops, updaters, helper variables) is kept as code, so the scene runs exactly as written. Imports, helpers and custom classes stay at the top of the file, and other methods of the scene class stay in it.</li>
+          <li>The <b>&lt;/&gt; Code</b> tab is the whole scene as a manim file, and it works both ways. Edit it and the timeline, canvas and inspector follow; edit those and the code follows. Click anything on the timeline and the block of code that makes it lights up (for an animation, its whole <code>self.play</code> with the animation marked inside, and faintly where its object is made); click in the code to select the animation or object under the caret.</li>
+          <li>Paste a whole manim file into it (or use <i>Open manim file…</i> on Home, or <code>manim-studio scene.py</code>) and its scene becomes the timeline. Each <code>self.play</code> becomes clips, objects are created where the code creates them, loops and ifs become blocks, values and method calls become steps, and updaters are bars; the little the timeline can't show (a nested function, a <code>match</code>…) is kept as code, so the scene runs exactly as written. Imports, helpers and custom classes stay at the top of the file, and other methods of the scene class stay in it.</li>
           <li><i>Save .py</i> writes a standalone manim file.</li>
           <li><b>Export video</b> renders with manim at the quality you choose.</li>
         </ul>
@@ -348,12 +366,15 @@ const TOPICS: Topic[] = [
             ['← / →', 'Previous / next frame (Shift: 5 frames)'],
             ['↑ / ↓', 'Previous / next edit point'],
             ['Home / End', 'Start / end of the sequence'],
-            ['Del, ⇧Del', 'Delete, ripple delete'],
-            ['⌘D', 'Duplicate selected objects'],
-            ['⌘C / ⌘V', 'Copy / paste clips'],
-            ['⌘Z / ⇧⌘Z', 'Undo / redo'],
-            ['⌘S', 'Save'],
+            [keys('Del, ⇧Del'), 'Delete, ripple delete'],
+            [keys('⌘D'), 'Duplicate selected objects'],
+            [keys('⌘X / ⌘C / ⌘V'), 'Cut / copy / paste clips'],
+            [keys('⌘Z / ⇧⌘Z'), 'Undo / redo'],
+            [keys('⌘S / ⌘N'), 'Save / new project'],
+            ['I / O', 'Set In / Out at the playhead (Shift: go to it)'],
+            [keys('⇧Space · ⇧⌘X'), 'Play In to Out · clear In and Out'],
             ['M · S · = / -', 'Marker · timeline snap · zoom'],
+            ['/', 'Search the library: type a name, Enter adds the top result'],
             ['? or F1', 'Open this guide'],
           ].map(([k, v]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{v}</td></tr>)}
         </tbody>
@@ -370,6 +391,8 @@ const TOPICS: Topic[] = [
         <li><b>“Construction error” or a note on an object</b>: a source was deleted, is the wrong kind (an angle needs two lines), comes later in the scene, or the objects depend on each other in a loop. The inspector says which; pick another source, or <b>Uncouple</b> / <b>Forget</b> the relationship.</li>
         <li><b>“…is undone when the animation ends”</b> on a clip: you animated the position or shape of a connected object. Animate its source or parameter instead, or uncouple it during the clip (+ Uncouple at playhead / + Couple at playhead).</li>
         <li><b>“Needs LaTeX”</b> on an equation: install LaTeX (MiKTeX on Windows, MacTeX or BasicTeX on macOS, TeX Live on Linux), then click <b>Check again</b> in the scene panel; no restart needed. Until then, numbers and simple labels are drawn with plain text.</li>
+        <li><b>The app closed before I saved</b>: open <b>Home</b> (the toolbar’s ⌂ Home button) and use <b>Restore</b> under <b>Unsaved work</b>.</li>
+        <li><b>Some toolbar switches are missing</b>: in a narrow window <b>Snap</b>, <b>Auto-intro</b>, <b>Record</b> and <b>Auto-render</b> move into the <b>Options</b> menu.</li>
         <li><b>Playback is choppy</b>: live playback renders each frame; leave <b>Auto-render</b> on and play once the preview is ready.</li>
       </ul>
     ),
@@ -420,29 +443,20 @@ const WELCOME_KEY = 'mathengine.welcomed';
 export function WelcomeCard() {
   const tour = useStore((s) => s.tour);
   const panel = useStore((s) => s.panel);
-  const [show, setShow] = useState(() => {
-    try {
-      return !localStorage.getItem(WELCOME_KEY);
-    } catch {
-      return false; // storage unavailable: don't nag
-    }
-  });
+  const [show, setShow] = useState(() => !pref(WELCOME_KEY));
   const dismiss = () => {
     setShow(false);
-    try {
-      localStorage.setItem(WELCOME_KEY, '1');
-    } catch {
-      /* storage unavailable */
-    }
+    setPref(WELCOME_KEY, '1');
   };
   if (!show || tour !== null || panel) return null;
   return (
     <div className="welcome-card" role="dialog" aria-label="Welcome">
       <b>New to Manim Studio?</b>
-      <p className="muted small">A one-minute tour shows where everything is. You can reopen it from Help at any time.</p>
+      <p className="muted small">A one-minute tour shows where everything is, and <i>Try this</i> walks you through a first animation, from a circle to a video, without code. Both are in Help at any time.</p>
       <div className="row">
         <button className="ghost small" onClick={dismiss}>Not now</button>
         <span className="spacer" />
+        <button className="ghost small" onClick={() => { dismiss(); startTryThis(); }}>Try this</button>
         <button className="primary" onClick={() => { dismiss(); startTour(0); }}>Take the tour</button>
       </div>
     </div>

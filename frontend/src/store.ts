@@ -1,9 +1,11 @@
 import { useSyncExternalStore } from 'react';
-import { api, type AppInfo } from './api';
+import { api, type AppInfo, type Recovery } from './api';
+import { pref, setPref } from './prefs';
 import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlone, STANDALONE_KINDS, objectDeps, ownsPosition, remapLink, renameRefs, RESERVED_NAMES, sortByDependencies, wouldCycle } from './construct';
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
-import { cloneAnim, cloneStep, findAnim, findStep, forgetObjects, landing, layout, newAnim, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
-import type { Anim, Args, Catalog, CatalogEntry, Job, Link, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
+import { anchorTo, cloneAnim, cloneStep, compoundOf, compounds, findAnim, withBlocks, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
+import { setConstants } from './words';
+import type { Anim, Args, Catalog, CatalogEntry, Job, Link, Marker, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
 
 export interface VideoState {
   jobId: string | null;
@@ -22,20 +24,28 @@ export interface AppState {
   selection: Selection;
   time: number;
   frame: RunResult | null;
+  frameAt: { doc: SceneDoc; time: number } | null; // what the frame shown was drawn for
+  frameFailed: string | null; // the last frame couldn't be drawn (the backend didn't answer): why
   timeline: RunResult | null;
   catalog: Catalog | null;
   signatures: Record<string, Signature>;
   playing: boolean;
+  // the work area (editor state, not part of the document): In and Out points, either may be unset
+  range: { in: number | null; out: number | null };
+  loop: boolean; // playback starts over at the end (of the range when there is one)
+  playingRange: boolean; // playing In to Out: stops at Out
   past: SceneDoc[];
   future: SceneDoc[];
-  panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project';
+  panel: null | 'settings' | 'export' | 'graph' | 'delete' | 'insert' | 'save-construction' | 'help' | 'new-project' | 'wording';
   tour: number | null; // guided tour step
+  tryThis: { played: boolean; exported: boolean } | null; // Help › Try this, the guided first animation: what has happened
   panelData: unknown; // e.g. object ids for 'delete', a template for 'insert'
   tool: Tool; // canvas drawing tool
   starters: Template[]; // built-in constructions
   library: Template[]; // the user's saved constructions (~/.mathengine/constructions.json)
   snap: boolean; // canvas snapping
   timelineSnap: boolean;
+  keepTiming: boolean; // duration edits take the time from the pause after them, so later steps keep their time
   autoIntro: boolean;
   record: boolean;
   centerTab: 'program' | 'code'; // the center panel shows the canvas or the code
@@ -45,8 +55,11 @@ export interface AppState {
   showVideo: boolean; // playing the rendered preview video instead of live frames
   autoRender: boolean; // render a smooth preview in the background after edits
   toast: string | null;
+  wording: number; // bumped when the timeline's wording changes (Change wording…, Settings), to redraw its clips
   home: boolean; // the Home screen (projects, samples) instead of the editor
   hasProject: boolean; // a project is open behind the Home screen (it can go back to it)
+  restore: Recovery | null; // unsaved changes found for the project just opened: restore them or keep the saved file?
+  leave: { resolve: (choice: 'save' | 'discard' | 'cancel') => void } | null; // asking what to do with unsaved changes
 }
 
 export const emptyDoc = (): SceneDoc => ({
@@ -68,20 +81,27 @@ let state: AppState = {
   selection: null,
   time: 0,
   frame: null,
+  frameAt: null,
+  frameFailed: null,
   timeline: null,
   catalog: null,
   signatures: {},
   playing: false,
+  range: { in: null, out: null },
+  loop: false,
+  playingRange: false,
   past: [],
   future: [],
   panel: null,
   panelData: null,
   tool: 'select',
   tour: null,
+  tryThis: null,
   starters: [],
   library: [],
   snap: true,
   timelineSnap: true,
+  keepTiming: false,
   autoIntro: true,
   record: false,
   centerTab: 'program',
@@ -91,8 +111,11 @@ let state: AppState = {
   showVideo: false,
   autoRender: true,
   toast: null,
+  wording: 0,
   home: false,
   hasProject: false,
+  restore: null,
+  leave: null,
 };
 
 const listeners = new Set<() => void>();
@@ -102,6 +125,22 @@ const subscribe = (l: () => void) => {
 };
 
 export const getState = () => state;
+
+// The editor's switches are remembered between launches (prefs.json, through the backend).
+const SWITCHES = ['snap', 'timelineSnap', 'keepTiming', 'loop', 'autoIntro', 'autoRender'] as const;
+let applyingPrefs = false;
+
+/** Start from the switches as they were left; call once the preferences are loaded. */
+export function applyPrefs() {
+  const patch: Partial<Pick<AppState, (typeof SWITCHES)[number]>> = {};
+  for (const k of SWITCHES) {
+    const v = pref('ui.' + k);
+    if (v === '0' || v === '1') patch[k] = v === '1';
+  }
+  applyingPrefs = true;
+  setState(patch);
+  applyingPrefs = false;
+}
 
 export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)) {
   const prev = state;
@@ -115,6 +154,8 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
     requestFrame();
   }
   if (state.doc.header !== prev.doc.header) void loadCatalog();
+  if (!applyingPrefs) for (const k of SWITCHES) if (state[k] !== prev[k]) setPref('ui.' + k, state[k] ? '1' : '0');
+  if (state.doc !== prev.doc || state.dirty !== prev.dirty || state.path !== prev.path || state.hasProject !== prev.hasProject) syncRecovery();
   listeners.forEach((l) => l());
 }
 
@@ -130,6 +171,12 @@ let lastCoalesce: { key: string; at: number } | null = null;
 export function updateDoc(fn: (d: SceneDoc) => void, coalesce?: string) {
   const next = structuredClone(state.doc);
   fn(next);
+  // markers attached to a step or animation move along; one whose step or animation is gone stays where it was
+  const gone = next.markers?.some((m) => m.anchor) ? settleMarkers(next, docLayout(state.doc), layout(next, state.timeline)) : [];
+  if (gone.length) {
+    const names = gone.map((m) => (m.label ? `“${m.label}”` : 'a marker')).join(', ');
+    queueMicrotask(() => toast(`${names[0].toUpperCase()}${names.slice(1)} ${gone.length === 1 ? 'was' : 'were'} attached to what was removed: ${gone.length === 1 ? 'it stays' : 'they stay'} at ${gone.map((m) => timecode(m.time)).join(', ')}`));
+  }
   const now = Date.now();
   const merge = coalesce && lastCoalesce?.key === coalesce && now - lastCoalesce.at < 1200;
   lastCoalesce = coalesce ? { key: coalesce, at: now } : null;
@@ -150,20 +197,75 @@ export function redo() {
   setState({ doc: future[0], future: future.slice(1), past: [...past, doc], dirty: true });
 }
 
-export function loadDoc(doc: SceneDoc, path: string | null) {
+/** Open a document as the current project. `recoverId` is a copy of unsaved work being restored: it stays unsaved. */
+export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) {
   doc.markers ??= [];
   doc.constructions ??= [];
   doc.timeline ??= [];
-  setState({ video: null, showVideo: false,  doc, path, dirty: false, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, home: false, hasProject: true });
+  forgetRecovery(); // whatever was open is saved or discarded by now
+  if (recoverId) {
+    recoveryId = recoverId;
+    recoveryTouched = true;
+  }
+  epoch++; // answers still on their way for the project open before are dropped
+  setState({ range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, frameAt: null, frameFailed: null, home: false, hasProject: true });
+}
+
+// ---------------------------------------------------------------- unsaved-work recovery
+
+// While the project has unsaved changes, a copy goes to the backend every few seconds (recovery.py); Home offers
+// it back after a crash. Saving, or opening another project over these changes, removes the copy.
+
+const RECOVERY_DELAY = 2500; // ms
+const newRecoveryId = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
+let recoveryId = newRecoveryId();
+/** The recovery copy of the project being edited now (Home must not offer it back as lost work). */
+export const currentRecoveryId = () => recoveryId;
+let recoveryTouched = false; // a copy under this id may exist on the backend
+const ownRecovery = new Set<string>(); // every copy this window has written (saved or dropped since, or still current)
+/** Whether a copy of unsaved work is this window's own: never offered back as work lost in an earlier session. */
+export const isOwnRecovery = (id: string) => ownRecovery.has(id);
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let recoveryChain: Promise<unknown> = Promise.resolve(); // requests go in order, so a late write can't undo a clear
+
+function syncRecovery() {
+  const { dirty, hasProject } = state;
+  if (dirty && hasProject) {
+    recoveryTimer ??= setTimeout(() => {
+      recoveryTimer = null;
+      const { dirty: d, hasProject: h, path, doc } = state;
+      if (!d || !h) return;
+      recoveryTouched = true;
+      const id = recoveryId;
+      ownRecovery.add(id);
+      recoveryChain = recoveryChain.then(() => api.saveRecovery(id, path, doc)).catch(() => undefined); // best effort
+    }, RECOVERY_DELAY);
+  } else forgetRecovery();
+}
+
+function forgetRecovery() {
+  if (recoveryTimer) clearTimeout(recoveryTimer);
+  recoveryTimer = null;
+  if (recoveryTouched) {
+    const id = recoveryId;
+    recoveryChain = recoveryChain.then(() => api.clearRecovery(id)).catch(() => undefined);
+  }
+  recoveryTouched = false;
+  recoveryId = newRecoveryId();
 }
 
 export function toast(msg: string) {
+  msg = msg.replace(/^Error: /, ''); // String(error) puts that in front of every message
   setState({ toast: msg });
   setTimeout(() => getState().toast === msg && setState({ toast: null }), 4000);
 }
 
 // ---------------------------------------------------------------- backend sync
 
+// Each opened project is a new epoch: a frame, timeline or render asked for an earlier one never shows in this one.
+let epoch = 0;
+/** Identifies an opened project even if its path or document later changes. */
+export const projectEpoch = () => epoch;
 let frameBusy = false;
 let frameWanted = false;
 export let previewWidth = 960;
@@ -182,24 +284,29 @@ async function pumpFrames() {
   frameBusy = true;
   const doc = state.previewDoc ?? state.doc;
   const time = state.time;
+  const ep = epoch;
   // Like Premiere's playback resolution: half-res while playing live so frames keep up.
   const width = state.playing ? Math.max(320, Math.round(previewWidth / 2)) : previewWidth;
   try {
     const frame = await api.run(doc, time, true, width);
+    if (ep !== epoch) throw new Stale();
     // While the scene is broken, keep showing the last good picture (dimmed by the viewport).
     if (frame.error && state.frame?.image) frame.image = state.frame.image;
     // Requests are sequential, so this is always the newest frame we have: show it even if
     // another one is already wanted (during playback one always is).
-    const patch: Partial<AppState> = { frame };
+    const patch: Partial<AppState> = { frame, frameAt: { doc, time }, frameFailed: null };
     // After pausing a preview video, switch back to live frames once the exact frame is here.
     if (state.showVideo && !state.playing && time === state.time && doc === state.doc) patch.showVideo = false;
     setState(patch);
   } catch (e) {
-    toast(String(e));
+    // the backend didn't answer: say so where the picture is, with Retry (requestFrame)
+    if (!(e instanceof Stale) && ep === epoch) setState({ frameFailed: String(e).replace(/^Error: /, '') });
   }
   frameBusy = false;
   void pumpFrames();
 }
+
+class Stale extends Error {}
 
 let timelineTimer: number | undefined;
 let timelineBusy = false;
@@ -239,11 +346,12 @@ async function runTimeline() {
   timelineBusy = true;
   timelineWanted = false;
   const doc = state.doc;
+  const ep = epoch;
   try {
     const timeline = await api.run(doc, null, false);
-    if (state.doc === doc) setState({ timeline });
+    if (state.doc === doc && ep === epoch) setState({ timeline: { ...timeline, doc } });
   } catch (e) {
-    toast(String(e));
+    if (ep === epoch) toast(String(e));
   }
   timelineBusy = false;
   if (timelineWanted || state.doc !== doc) void runTimeline();
@@ -256,6 +364,7 @@ export async function loadCatalog() {
   catalogHeader = header;
   try {
     const catalog = await api.catalog(header);
+    setConstants([...catalog.colors, ...catalog.directions]); // RED reads “red” on the timeline
     setState({ catalog, signatures: {} });
   } catch (e) {
     toast(String(e));
@@ -324,23 +433,80 @@ export function parseTimecode(text: string, rate = fps()): number | null {
 
 // ---------------------------------------------------------------- playback
 
+/**
+ * The work area: In to Out. Only In set: In to the end; only Out: the start to Out. `set`: either is set. Out is
+ * where the range ends (the frame at Out is the first one not in it).
+ */
+export function workArea(s: AppState = state): { start: number; end: number; set: boolean } {
+  const end = sequenceEnd(s.doc, s.timeline);
+  const a = Math.min(s.range.in ?? 0, end), b = Math.min(s.range.out ?? end, end);
+  return { start: a, end: Math.max(a, b), set: s.range.in !== null || s.range.out !== null };
+}
+
+/** Where playback stops (or, looping, starts over), and where it starts over. */
+function playLimits(s: AppState): { from: number; to: number } {
+  const r = workArea(s);
+  return s.range.in !== null || s.range.out !== null ? (s.loop || s.playingRange ? { from: r.start, to: r.end } : { from: 0, to: sequenceEnd(s.doc, s.timeline) }) : { from: 0, to: r.end };
+}
+
+/**
+ * Playback reached time `t`: where it is now. At the end it stops, or with Loop on starts over (at In when there is a
+ * range). Shared by live playback and the preview video.
+ */
+export function playbackAt(t: number): { t: number; stop?: boolean; wrapped?: boolean } {
+  const { from, to } = playLimits(state);
+  if (t < to - 1e-6) return { t };
+  if (state.loop && to - from > 1e-3) return { t: from, wrapped: true };
+  return { t: to, stop: true };
+}
+
+/** Set In or Out at time `t` (the playhead): an Out before In (or an In after Out) clears the other one, and says so. */
+export function setRangePoint(which: 'in' | 'out', t = state.time) {
+  t = frameSnap(Math.max(0, Math.min(sequenceEnd(state.doc, state.timeline), t)));
+  const range = { ...state.range, [which]: t };
+  const other = which === 'in' ? 'out' : 'in';
+  if (range.in !== null && range.out !== null && range.out - range.in < 1 / fps() - 1e-6) {
+    range[other] = null;
+    toast(which === 'in' ? 'In is at or after Out, so Out is cleared: the range now runs from In to the end' : 'Out is at or before In, so In is cleared: the range now runs from the start to Out');
+  }
+  setState({ range });
+}
+
+export function clearRange() {
+  setState({ range: { in: null, out: null }, playingRange: false });
+}
+
+/** Play from In to Out (and stop there, unless Loop is on). */
+export function playRange() {
+  const r = workArea();
+  if (r.end - r.start < 1e-3) return toast('The range is empty: set In (I) before Out (O)');
+  setPlaying(false);
+  setState({ time: r.start, playingRange: true });
+  setPlaying(true, true);
+}
+
 let playRaf = 0;
-export function setPlaying(playing: boolean) {
+export function setPlaying(playing: boolean, keepRange = false) {
   cancelAnimationFrame(playRaf);
+  if (!keepRange && state.playingRange) setState({ playingRange: false });
   const duration = sequenceEnd(state.doc, state.timeline);
   if (playing && duration <= 0) return setState({ playing: false, time: 0, showVideo: false }); // nothing to play
-  if (playing && state.time >= duration - 1e-3) setState({ time: 0 });
+  if (playing) {
+    // from the start (of the range, when looping one) when the playhead is at the end or outside the range played
+    const { from, to } = playLimits(state);
+    if (state.time >= to - 1e-3 || (state.time < from - 1e-6 && (state.loop || state.playingRange))) setState({ time: from });
+  }
   setState({ playing, showVideo: playing ? previewFresh() : state.showVideo });
+  if (playing && state.tryThis && !state.tryThis.played) setState({ tryThis: { ...state.tryThis, played: true } });
   if (!playing) return requestFrame();
   let last = performance.now();
   const tick = (now: number) => {
     const s = getState();
     if (!s.playing) return;
-    const end = sequenceEnd(s.doc, s.timeline);
-    const t = Math.min(end, s.time + (now - last) / 1000);
+    const p = playbackAt(s.time + (now - last) / 1000);
     last = now;
-    if (!s.showVideo) setState({ time: t });
-    if (t >= end && !s.showVideo) return setState({ playing: false });
+    if (!s.showVideo) setState({ time: p.t });
+    if (p.stop && !s.showVideo) return setState({ playing: false, playingRange: false });
     playRaf = requestAnimationFrame(tick);
   };
   playRaf = requestAnimationFrame(tick);
@@ -360,14 +526,21 @@ export function previewFresh(s: AppState = state): boolean {
 }
 
 /** Render a smooth 480p preview with the manim CLI (cached per animation by manim). */
-export async function renderPreview() {
+/** `retry`: render again even though rendering this exact document failed. */
+export async function renderPreview(retry = false) {
   const doc = state.doc;
   const key = docKey(doc);
   const v = state.video;
-  if (v && v.key === key && v.state !== 'cancelled') return; // already rendered, rendering, or failed for this exact doc
+  if (v && v.key === key && v.state !== 'cancelled' && !(retry && v.state === 'error')) return; // already rendered, rendering, or failed for this exact doc
+  const ep = epoch;
   if (!doc.timeline.length || sequenceEnd(doc, state.timeline) <= 0) return; // nothing plays: no video to make
   try {
     const job = await api.render(doc, 'preview');
+    if (ep !== epoch || docKey(state.doc) !== key) {
+      // another project (or another edit) by now: nobody will show this render, so it must not keep manim busy
+      if (job.id && (job.state === 'running' || job.state === 'queued')) api.cancelJob(job.id).catch(() => undefined);
+      return;
+    }
     if (job.state === 'error' || !job.id) {
       setState({ video: { jobId: null, key, state: 'error', progress: 0, message: job.message, url: null } });
       return;
@@ -464,6 +637,38 @@ export function placeStepAt(d: SceneDoc, step: Step | Step[], at?: At): number {
   return land.time;
 }
 
+/** Axes, planes and number lines span the frame: they belong at the centre, and other objects sit on them. */
+const fillsFrame = (ctor: string) => {
+  const bases = state.catalog?.mobjects.find((m) => m.name === ctor)?.bases ?? [];
+  return ['Axes', 'NumberLine'].includes(ctor) || bases.some((b) => ['CoordinateSystem', 'Axes', 'NumberLine'].includes(b));
+};
+
+const SLOTS: [number, number][] = [[0, 0], [-3, 0], [3, 0], [0, 2], [0, -2], [-3, 2], [3, 2], [-3, -2], [3, -2]];
+
+/**
+ * Where an object added from the library goes: the centre, or the first spot nobody sits on, so adding several
+ * doesn't pile them up. Objects built on another one (a brace, a label…) stay at the centre; they follow their target.
+ */
+export function newObjectPos(ctor: string): [number, number] {
+  const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
+  if (Object.values(entry?.starter ?? {}).includes('@target') || fillsFrame(ctor)) return [0, 0];
+  const placed = state.doc.objects.filter((o) => o.pos && !fillsFrame(o.ctor));
+  return SLOTS.find((s) => !placed.some((o) => Math.hypot(o.pos![0] - s[0], o.pos![1] - s[1]) < 1)) ?? [0, 0];
+}
+
+/**
+ * An object whose first statement (its intro or self.add) landed in a block's body is created there too, right
+ * before it: in a loop each run then makes its own, and its math can use the loop's counter.
+ */
+function createWhereIntroduced(d: SceneDoc, obj: SceneObject, step: string | undefined) {
+  const i = d.timeline.findIndex((s) => s.id === step);
+  if (i <= 0) return;
+  for (const c of compounds(d.timeline).values()) if (c.from < i && i < c.to) {
+    obj.after = d.timeline[i - 1].id;
+    return;
+  }
+}
+
 export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: At, initial?: Args): string {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
   const args: Record<string, string> = {};
@@ -481,8 +686,11 @@ export function addObject(ctor: string, pos: [number, number] | null, targetName
     if (intro) {
       const a = newAnim(intro, name);
       end = placeAt(d, [a], at) + animEstimate(a);
+      createWhereIntroduced(d, obj, findAnim(d, a.id)?.step.id);
     } else if (!NO_INTRO.has(ctor)) {
-      end = placeStepAt(d, { id: uid('s'), kind: 'add', targets: [name] }, at);
+      const add: Step = { id: uid('s'), kind: 'add', targets: [name] };
+      end = placeStepAt(d, add, at);
+      createWhereIntroduced(d, obj, add.id);
     }
   });
   setState({ selection: { kind: 'object', id: newId }, time: frameSnap(end) });
@@ -498,11 +706,21 @@ export function addAnimation(cls: string, target: string, at?: At): string {
   return a.id;
 }
 
-/** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, or couple / uncouple. */
-export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: string[]; method?: string }): string {
+/** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, a value, a change, or couple / uncouple. */
+export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: string[]; method?: string; target?: string }): string {
   const step: Step = { id: uid('s'), kind };
   if (kind === 'code') step.code = '# any manim code; every object variable is in scope\n';
-  else if (kind === 'wait') step.args = { duration: '1' };
+  else if (kind === 'apply') {
+    step.target = at?.target ?? at?.targets?.[0] ?? state.doc.objects[0]?.name ?? '';
+    step.chain = '.shift(RIGHT)';
+  } else if (kind === 'assign') {
+    const used = new Set([...state.doc.objects.map((o) => o.name), ...state.doc.timeline.map((s) => s.target ?? '')]);
+    let n = 1;
+    while (used.has(`value${n}`)) n++;
+    step.target = at?.target ?? `value${n}`;
+    step.op = '=';
+    step.value = '1';
+  } else if (kind === 'wait') step.args = { duration: '1' };
   else if (kind === 'call') {
     step.method = at?.method ?? 'next_section';
     step.args = {};
@@ -510,6 +728,64 @@ export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: s
   updateDoc((d) => void placeStepAt(d, step, at));
   selectClips([step.id]);
   return step.id;
+}
+
+/**
+ * Put steps in a block (`for i in range(2)` by default): the selected steps (from the first to the last, whole blocks
+ * included), or an empty one at the playhead. Returns the block's id.
+ */
+export function wrapInBlock(ids: string[], head = 'for i in range(2)'): string | null {
+  const opener: Step = { id: uid('s'), kind: 'block', head };
+  const end: Step = { id: uid('s'), kind: 'end' };
+  const doc = state.doc;
+  const steps = withBlocks(doc, ids.map((id) => (findStep(doc, id) ? id : findAnim(doc, id)?.step.id ?? '')).filter(Boolean));
+  const at = doc.timeline.map((s, i) => (steps.has(s.id) ? i : -1)).filter((i) => i >= 0);
+  if (!at.length) {
+    updateDoc((d) => void placeStepAt(d, [opener, end]));
+    selectClips([opener.id]);
+    return opener.id;
+  }
+  let from = at[0], to = at[at.length - 1];
+  // the range must hold whole blocks, and sit in one body
+  const shapes = compounds(doc.timeline);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of shapes.values()) {
+      const within = (i: number) => i >= from && i <= to;
+      const crosses = within(c.from) !== within(c.to) || (!within(c.from) && c.clauses.some((id) => within(doc.timeline.findIndex((x) => x.id === id))));
+      if (crosses) {
+        [from, to] = [Math.min(from, c.from), Math.max(to, c.to)];
+        grew = true;
+      }
+    }
+  }
+  updateDoc((d) => {
+    d.timeline.splice(to + 1, 0, end);
+    d.timeline.splice(from, 0, opener);
+  });
+  selectClips([opener.id]);
+  return opener.id;
+}
+
+/** Take the steps out of a block (its header and end go; a clause goes with its body). */
+export function unwrapBlock(id: string) {
+  const opener = compoundOf(state.doc.timeline, id);
+  if (!opener) return;
+  updateDoc((d) => {
+    const c = compounds(d.timeline).get(opener);
+    if (!c) return;
+    const gone = new Set([opener, ...(c.end ? [c.end] : [])]);
+    // other clauses' bodies (else, except…) would run as well once unwrapped: they go with their clause
+    const drop = withBlocks(d, c.clauses);
+    for (const s of d.timeline) if (gone.has(s.id) || drop.has(s.id)) for (const o of d.objects) if (o.after === s.id) {
+      const i = d.timeline.indexOf(s);
+      const prev = d.timeline.slice(0, i).reverse().find((x) => !gone.has(x.id) && !drop.has(x.id));
+      if (prev) o.after = prev.id;
+      else delete o.after;
+    }
+    d.timeline = d.timeline.filter((s) => !gone.has(s.id) && !drop.has(s.id));
+  });
+  selectClips([]);
 }
 
 /** The manim Scene class the scene is built on (its methods are what a statement can call). */
@@ -526,6 +802,8 @@ export function sceneCalls(doc: SceneDoc = state.doc): string[] {
 /** Turn steps and animations on or off (a disabled one is left out of the code). */
 export function toggleDisabled(ids: string[]) {
   const doc = state.doc;
+  // a block is switched on or off whole: its clauses and end stand for it
+  ids = [...new Set(ids.map((id) => { const s = findStep(doc, id); return s?.kind === 'block' || s?.kind === 'end' ? compoundOf(doc.timeline, id) ?? id : id; }))];
   const first = findStep(doc, ids[0]) ?? findAnim(doc, ids[0])?.anim;
   const off = !first?.disabled;
   updateDoc((d) => {
@@ -537,11 +815,41 @@ export function toggleDisabled(ids: string[]) {
   });
 }
 
+/**
+ * Add a marker at `time`. With one clip selected under it, the marker is attached to that clip (its start or end,
+ * whichever is nearer) and moves with it, like a clip marker in Premiere.
+ */
 export function addMarker(time = state.time) {
+  const t = frameSnap(time);
+  const lay = docLayout();
+  const sel = state.selection?.kind === 'clips' && state.selection.ids.length === 1 ? state.selection.ids[0] : undefined;
+  const sp = sel && (lay.anims.get(sel) ?? lay.steps.get(sel));
+  const anchor = sp && t >= sp.start - 1e-6 && t <= sp.end + 1e-6 ? anchorTo(lay, sel!, t) : undefined;
+  const m: Marker = { id: uid('m'), time: t, ...(anchor ? { anchor } : {}) };
   updateDoc((d) => {
     d.markers ??= [];
-    d.markers.push({ id: uid('m'), time: frameSnap(time) });
+    d.markers.push(m);
   });
+  return m.id;
+}
+
+export function setMarker(id: string, fn: (m: Marker) => void, coalesce?: string) {
+  updateDoc((d) => {
+    const m = d.markers?.find((x) => x.id === id);
+    if (m) fn(m);
+  }, coalesce && `marker:${id}:${coalesce}`);
+}
+
+export function deleteMarker(id: string) {
+  updateDoc((d) => void (d.markers = (d.markers ?? []).filter((k) => k.id !== id)));
+  if (state.selection?.kind === 'marker' && state.selection.id === id) setState({ selection: null });
+}
+
+/** Select a marker (its settings show in the inspector) and move the playhead to it. */
+export function selectMarker(id: string, seek = true) {
+  const m = state.doc.markers?.find((x) => x.id === id);
+  if (!m) return;
+  setState({ selection: { kind: 'marker', id }, ...(seek ? { time: frameSnap(markerTime(m, docLayout())), showVideo: false } : {}) });
 }
 
 /** All edit points (step and animation starts and ends, markers), for ↑/↓ navigation and snapping. */
@@ -552,7 +860,7 @@ export function editPoints(doc: SceneDoc, timeline: RunResult | null): number[] 
     pts.add(Math.round(sp.start * 1e4) / 1e4);
     pts.add(Math.round(sp.end * 1e4) / 1e4);
   }
-  for (const m of doc.markers ?? []) pts.add(m.time);
+  for (const m of doc.markers ?? []) pts.add(Math.round(markerTime(m, lay) * 1e4) / 1e4);
   return [...pts].sort((a, b) => a - b);
 }
 
@@ -574,6 +882,7 @@ export function renameObject(id: string, newName: string) {
 export function deleteSelection(ripple = false) {
   const sel = state.selection;
   if (!sel) return;
+  if (sel.kind === 'marker') return deleteMarker(sel.id);
   if (sel.kind === 'object' || sel.kind === 'objects') {
     const ids = selectedObjectIds(sel);
     const deps = dependentsOf(state.doc, ids, false);
@@ -805,12 +1114,18 @@ export function createLinked(spec: LinkedSpec, opts: { select?: boolean; time?: 
   let end: number | null = null;
   updateDoc((d) => {
     const name = uniqueName(d, spec.name ?? snake(spec.ctor.split('.').pop() || 'obj'));
-    d.objects.push({ id, name, ctor: spec.ctor, args: { ...spec.args }, pos: spec.pos ?? null, chain: '', link: spec.link });
+    const obj: SceneObject = { id, name, ctor: spec.ctor, args: { ...spec.args }, pos: spec.pos ?? null, chain: '', link: spec.link };
+    d.objects.push(obj);
     sortByDependencies(d);
     if (intro) {
       const a = newAnim(intro, name);
       end = placeAt(d, [a], at) + animEstimate(a);
-    } else if (spec.intro === undefined && !NO_INTRO.has(spec.ctor)) placeStepAt(d, { id: uid('s'), kind: 'add', targets: [name] }, at);
+      createWhereIntroduced(d, obj, findAnim(d, a.id)?.step.id);
+    } else if (spec.intro === undefined && !NO_INTRO.has(spec.ctor)) {
+      const add: Step = { id: uid('s'), kind: 'add', targets: [name] };
+      placeStepAt(d, add, at);
+      createWhereIntroduced(d, obj, add.id);
+    }
   });
   if (opts.select !== false) selectObjects([id]);
   if (end !== null) setState({ time: frameSnap(end) }); // like addObject: show the object once its intro has played
@@ -864,8 +1179,20 @@ export function setParamValue(name: string, v: number) {
 }
 
 /** Animate a parameter to a value at the playhead (target.animate.set_value(…) on the timeline). */
-export function animateParam(name: string, to: number, duration = 1) {
-  const a: Anim = { ...newAnim('animate', name), chain: `.set_value(${Math.round(to * 1000) / 1000})` };
+/** One clip at the playhead fading out everything on screen except `keep` (objects made in loops included). */
+export function fadeOutRest(keep: string[]): string {
+  // the bare Mobject left out is the invisible helper that keeps constructions updated (Constraints)
+  const conds = [...keep.map((k) => `m is not ${k}`), 'type(m) is not Mobject'];
+  const a: Anim = { ...newAnim('expr', ''), src: `*[FadeOut(m) for m in self.mobjects if ${conds.join(' and ')}]` };
+  let start = 0;
+  updateDoc((d) => void (start = placeAt(d, [a])));
+  setState({ selection: { kind: 'clips', ids: [a.id] }, time: frameSnap(start + animEstimate(a)) });
+  return a.id;
+}
+
+/** A clip animating a parameter to `to`: a number, or Python (a math value the backend compiled). */
+export function animateParam(name: string, to: number | string, duration = 1) {
+  const a: Anim = { ...newAnim('animate', name), chain: `.set_value(${typeof to === 'number' ? Math.round(to * 1000) / 1000 : to})` };
   if (duration !== 1) a.args = { run_time: String(duration) };
   let start = 0;
   updateDoc((d) => void (start = placeAt(d, [a])));
@@ -877,12 +1204,21 @@ export function animateParam(name: string, to: number, duration = 1) {
 let clipboard: { steps: Step[]; anims: Anim[] } = { steps: [], anims: [] };
 export function copyClips() {
   if (state.selection?.kind !== 'clips') return;
-  const ids = new Set(state.selection.ids);
+  const ids = withBlocks(state.doc, state.selection.ids);
   const steps = state.doc.timeline.filter((s) => ids.has(s.id));
   const anims = [...ids].map((id) => findAnim(state.doc, id)).filter((r) => r && !ids.has(r.step.id)).map((r) => r!.anim);
   clipboard = structuredClone({ steps, anims });
   const n = steps.length + anims.length;
   toast(`Copied ${n} clip${n === 1 ? '' : 's'}`);
+}
+
+/** Copy the selected clips and remove them (leaving the time as a gap, as Delete does). */
+export function cutClips() {
+  if (state.selection?.kind !== 'clips') return;
+  const n = state.selection.ids.length;
+  copyClips();
+  deleteSelection();
+  toast(`Cut ${n} clip${n === 1 ? '' : 's'}: Paste puts ${n === 1 ? 'it' : 'them'} back at the playhead`);
 }
 
 /** Paste at the playhead: animations into the self.play there (or a new one), statements as they were. */

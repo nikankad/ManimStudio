@@ -1,0 +1,36 @@
+# Checks every pull request: the Python tests (which also run the frontend's timeline and
+# keyframe operations under node) and the frontend's type check and build.
+name: CI
+
+on:
+  pull_request: # pushes to main run the same tests in release.yml
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: System libraries and LaTeX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcairo2-dev libpango1.0-dev pkg-config ffmpeg \
+            texlive-latex-base texlive-latex-recommended texlive-latex-extra texlive-fonts-recommended dvisvgm cm-super-minimal
+      - name: Frontend type check and build
+        working-directory: frontend
+        run: npm ci && npm run build
+      - run: pip install ".[dev]"
+      - run: pytest -q

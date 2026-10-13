@@ -56,6 +56,12 @@ class StepTiming:
     start: float
     end: float
     curve: list[float] | None = None  # an animation's progress at evenly spaced times from start to end
+    # a step's objects on screen (ids) just before and just after it: the timeline's object view (measuring run only)
+    shown_before: list[str] | None = None
+    shown_after: list[str] | None = None
+    # an animation's object as it is when the animation starts and when it ends (measuring run, top-level only)
+    state0: dict | None = None
+    state1: dict | None = None
 
 
 @dataclass
@@ -75,9 +81,13 @@ class RunResult:
     def to_json(self) -> dict:
         return {
             "duration": float(self.duration),
-            "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end)} for s in self.steps],
+            "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end),
+                       **({"before": s.shown_before, "after": s.shown_after} if s.shown_after is not None else {}),
+                       **({"from": s.state0, "to": s.state1} if s.state1 is not None else {})}
+                      for s in self.steps],
             "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6),
-                       **({"curve": s.curve} if s.curve else {})} for s in self.anims],
+                       **({"curve": s.curve} if s.curve else {}),
+                       **({"from": s.state0, "to": s.state1} if s.state1 is not None else {})} for s in self.anims],
             "objects": self.objects,
             "camera": self.camera,
             "plays": self.plays,
@@ -99,7 +109,9 @@ class PreviewMixin:
         self.renderer.play = self._me_render_play
         self._me_registry: dict[str, tuple[Any, str]] = {}
         self._me_open: dict[str, float] = {}
+        self._me_before: dict[str, list[str] | None] = {}
         self._me_steps: list[StepTiming] = []
+        self._me_states: dict[str, list] = {}
         self._me_anims: list[StepTiming] = []
         self._me_current_step: str | None = None
         self._me_plays = 0
@@ -108,13 +120,37 @@ class PreviewMixin:
     def _me_reg(self, name: str, mob: Any, oid: str) -> None:
         self._me_registry[name] = (mob, oid)
 
+    def _me_shown(self) -> list[str] | None:
+        """Ids of the objects on screen now, for the timeline's measuring run only: shown whole, as part of a group, or
+        in parts (a group whose members were brought in one by one, as LaggedStartMap(FadeIn, group) does)."""
+        if self._me_target is not None:
+            return None
+        on = set(id(x) for x in self.get_mobject_family_members())
+        return [oid for mob, oid in self._me_registry.values() if any(id(x) in on for x in mob.get_family())]
+
     def _me_step(self, sid: str) -> None:
         self._me_current_step = sid
         self._me_open[sid] = self.renderer.time
+        self._me_before[sid] = self._me_shown()
 
     def _me_step_end(self, sid: str) -> None:
         start = self._me_open.pop(sid, self.renderer.time)
-        self._me_steps.append(StepTiming(sid, start, self.renderer.time))
+        timing = StepTiming(sid, start, self.renderer.time, None, self._me_before.pop(sid, None), self._me_shown())
+        if sid in self._me_states:
+            timing.state0, timing.state1 = self._me_states.pop(sid)
+        self._me_steps.append(timing)
+
+    def _me_enter(self, sid: str) -> None:
+        """A block's body starts (once per run of a loop, when an if's branch is taken…): measuring run only."""
+        if self._me_target is None:
+            t = self.renderer.time
+            self._me_steps.append(StepTiming(sid, t, t))
+
+    def _me_state(self, sid: str, mob: Any, which: int) -> None:
+        """An apply step's object before (0) and after (1) it: its keyframe (measuring run only)."""
+        if self._me_target is None:
+            states = self._me_states.setdefault(sid, [None, None])
+            states[which] = _state(mob)
 
     def _me_tag(self, anim: Any, aid: str) -> Any:
         """Mark an animation of the timeline so its timing can be reported (manim's own prepare_animation)."""
@@ -171,6 +207,11 @@ class PreviewMixin:
         self.begin_animations()
         for anim in self.animations:
             self._me_time(anim, lambda a, t0=t0, rt=float(anim.run_time): t0 + a * rt)
+        # keyframe values: what each animation's object is like at its start (and, below, at its end)
+        measuring = self._me_target is None
+        tagged = {getattr(a, "_me_id", None): a for a in self.animations} if measuring else {}
+        tagged.pop(None, None)
+        start_states = {aid: _state(a.mobject) for aid, a in tagged.items()}
 
         dt = 1 / m.config.frame_rate
         target = self._me_target
@@ -222,6 +263,11 @@ class PreviewMixin:
         for anim in self.animations:
             anim.finish()
             anim.clean_up_from_scene(self)
+        if tagged:
+            timing = {t.id: t for t in self._me_anims if t.id in tagged}
+            for aid, anim in tagged.items():
+                if aid in timing:
+                    timing[aid].state0, timing[aid].state1 = start_states[aid], _state(anim.mobject)
         if not r.skip_animations:
             self.update_mobjects(0)
         r.static_image = None
@@ -369,7 +415,9 @@ def _geometry(mob: Any, oid: str, part_index: dict[str, dict[str, int]]) -> dict
 
 def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = None) -> list[dict]:
     m = manim()
-    on_screen = set(id(x) for x in scene.get_mobject_family_members())
+    drawn = scene.get_mobject_family_members()  # in drawing order (z_index first, then the order added)
+    on_screen = set(id(x) for x in drawn)
+    order = {id(x): i for i, x in enumerate(drawn)}
     out = []
     for name, (mob, oid) in scene._me_registry.items():
         visible = id(mob) in on_screen
@@ -385,14 +433,45 @@ def _object_boxes(scene: Any, part_index: dict[str, dict[str, int]] | None = Non
         except Exception:
             center = None
         info = {"id": oid, "name": name, "visible": visible, "box": box, "center": center}
+        # where it is drawn: the later its last drawn part, the more it covers (None: nothing of it on screen)
+        layer = max((order[id(x)] for x in mob.get_family() if id(x) in order), default=None)
+        info["layer"] = layer
         info.update(_geometry(mob, oid, part_index or {}))
         out.append(info)
     return out
 
 
+def _state(mob: Any) -> dict | None:
+    """What the keyframe editor shows of an object: where it is, its size, opacity and colour (a ValueTracker: its
+    value)."""
+    m = manim()
+    try:
+        if isinstance(mob, m.ValueTracker):
+            return {"value": round(float(mob.get_value()), 6)}
+        c = mob.get_center()
+        out: dict = {"center": [round(float(c[0]), 4), round(float(c[1]), 4)], "width": round(float(mob.width), 4),
+                     "height": round(float(mob.height), 4)}
+        if isinstance(mob, m.VMobject):
+            out["opacity"] = round(max(float(mob.get_fill_opacity()), float(mob.get_stroke_opacity())), 4)
+            out["stroke"] = round(float(mob.get_stroke_width()), 4)
+        elif hasattr(mob, "get_opacity"):
+            out["opacity"] = round(float(mob.get_opacity()), 4)
+        color = mob.get_color()
+        out["color"] = color.to_hex().upper() if hasattr(color, "to_hex") else str(color)
+        return out
+    except Exception:  # an unusual mobject (no points yet, a custom class): no values, the times still show
+        return None
+
+
 def _tracker_values(scene: Any) -> dict[str, float]:
     m = manim()
-    return {name: float(mob.get_value()) for name, (mob, _oid) in scene._me_registry.items() if isinstance(mob, m.ValueTracker)}
+    out = {}
+    for name, (mob, _oid) in scene._me_registry.items():
+        if isinstance(mob, m.ValueTracker):
+            v = mob.get_value()
+            if not isinstance(v, complex):  # a ComplexValueTracker has no number to show
+                out[name] = float(v)
+    return out
 
 
 def _media_dir():

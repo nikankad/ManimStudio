@@ -6,6 +6,7 @@
 import { geoType, graphAxes, isCoupled, type GeoType } from './construct';
 import { meetPoints, MEETS, STRAIGHT } from './intersect';
 import { coupleTo, createLinked, getState, selectedObjectIds, selectObjects, setState, toast, updateDoc, type LinkedSpec } from './store';
+import { pyString } from './pyparse';
 import type { Link, ObjInfo, Pt, SceneDoc, SceneObject } from './types';
 
 export interface Action {
@@ -135,6 +136,15 @@ export function actionsFor(ids: string[], terms: string[] = []): Action[] {
       add({ group: 'Measure', label: 'Show angle value', hint: 'The angle in degrees, computed by manim.', run: make({ ctor: 'DecimalNumber', name: `${o.name}_value`, args: { ...MEASURE_ARGS, unit: 'r"^\\circ"' }, link: { kind: 'measure', what: 'angle', of: o.id, offset: [0.6, 0.3], degrees: true } }) });
     if (t === 'area' || t === 'riemann')
       add({ group: 'Measure', label: 'Show integral (numerical)', hint: 'The integral over the interval, approximated numerically (trapezoid rule). The shading itself is not a measurement.', run: make({ ctor: 'DecimalNumber', name: 'integral', args: MEASURE_ARGS, link: { kind: 'measure', what: 'integral', of: o.id, offset: [0, 0] } }) });
+    if (t === 'param')
+      add({ group: 'Measure', label: 'Show as text', hint: 'A text that shows this parameter as it changes, like “t = 1.25”. Edit its words and values in Relationship.', run: make({ ctor: 'Text', name: `${o.name}_text`, args: { font_size: '32' }, link: { kind: 'text', template: `${o.name} = {${o.name}:2}` }, pos: [0, 3] }) });
+    if ((o.ctor === 'Text' || o.ctor === 'MarkupText') && !o.link) {
+      const words = pyString(o.args['*'] ?? '') ?? '';
+      add({ group: 'Annotate', label: 'Show values in it', hint: 'Its text can then show math values in braces: “t = {t:2}” (2 decimals), “zero at {ZEROS[k]:3}”. Values of parameters update as they change.', run: () => updateDoc((d) => {
+        const x = d.objects.find((y) => y.id === o.id);
+        if (x) x.link = { kind: 'text', template: words.replace(/[{}]/g, (c) => c + c) };
+      }) });
+    }
     if (t === 'param')
       add({ group: 'Measure', label: 'Show value', hint: 'A number label that shows this parameter.', run: make({ ctor: 'DecimalNumber', name: `${o.name}_label`, args: MEASURE_ARGS, link: { kind: 'measure', what: 'value', expr: o.name }, pos: [0, 3] }) });
     if (t === 'equation') {

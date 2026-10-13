@@ -1,21 +1,26 @@
 import { useState } from 'react';
 import { api } from '../api';
-import {
-  addAnimation, addObject, docLayout, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
-  timecode, toast, toggleDisabled, updateDoc, useSignature, useStore,
+import { fadeOutRest,
+  addAnimation, addObject, docLayout, uid, getState, objectClasses, deleteSelection, duplicateObject, fps, frameSnap, renameObject, sceneBase, selectClips, setState,
+  timecode, toast, toggleDisabled, updateDoc, useSignature, useStore, setMarker, deleteMarker,
 } from '../store';
-import { addChild, findAnim, findStep, groupAnims, literal, newAnim, removeIds, reorder, setAnimDuration, setStepDuration, ungroup, type AnimRef } from '../timeline';
+import { addChild, anchorTo, compoundOf, compounds, EPS, isClause, findAnim, layout, MARKER_CATEGORIES, markerTime, findStep, groupAnims, literal, newAnim, removeIds, reorder, retime, targetsOf, ungroup, walk, type AnimRef } from '../timeline';
+import { ratePath } from './rates';
 import { CodeArea } from './CodeArea';
-import { animLabel, stepLabel } from './Timeline';
+import { animLabel, markerWhere, stepLabel } from './Timeline';
 import { type Call, formatChain, parseArgs, parseChain } from '../pyparse';
-import type { Anim, Args, Param, SceneDoc, SceneObject, Step } from '../types';
+import type { Anim, Args, Marker, Param, SceneDoc, SceneObject, Step } from '../types';
 import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote } from './ParamField';
 import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
+import { DefinitionsPanel } from './Definitions';
+import { RepeatFields } from './Repeat';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
-import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, standsAlone } from '../construct';
-import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects } from '../store';
+import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
+import { addKey, CAMERA, CAMERA_NAME, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
+import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects, unwrapBlock } from '../store';
+import { keys } from '../keys';
 
 const TEXT_CTORS = new Set(['Text', 'Tex', 'MathTex', 'MarkupText', 'Paragraph', 'Title', 'SingleStringMathTex']);
 const QUICK_ANIMS = ['Create', 'Write', 'FadeIn', 'FadeOut', 'Indicate', 'Circumscribe', 'Transform', 'ReplacementTransform', 'GrowFromCenter', 'Uncreate'];
@@ -37,12 +42,99 @@ export function Inspector() {
     if (step) body = <StepInspector key={step.id} step={step} />;
     else if (ref) body = <AnimInspector key={ref.anim.id} r={ref} />;
     else if (ids.length > 1) body = <MultiClipInspector ids={ids} />;
+  } else if (selection?.kind === 'marker') {
+    const m = doc.markers?.find((x) => x.id === selection.id);
+    body = m ? <MarkerInspector key={m.id} m={m} /> : null;
   }
   return (
     <aside className="panel inspector" data-tour="inspector">
-      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : 'Scene'}</div>
+      <div className="panel-title">{selection?.kind === 'clips' ? 'Effect Controls' : selection?.kind === 'object' || selection?.kind === 'objects' ? 'Properties' : selection?.kind === 'marker' ? 'Marker' : 'Scene'}</div>
       <div className="scroll" tabIndex={-1}>{body ?? <SceneInfo />}</div>
     </aside>
+  );
+}
+
+/**
+ * A marker: its name, kind and notes, and what it is attached to. Attached to a clip's start or end (plus an offset),
+ * it moves with the clip; otherwise it stays at its time.
+ */
+function MarkerInspector({ m }: { m: Marker }) {
+  const doc = useStore((s) => s.doc);
+  const timeline = useStore((s) => s.timeline);
+  const time = useStore((s) => s.time);
+  const lay = docLayout(doc, timeline);
+  const at = markerTime(m, lay);
+  // what it can be attached to: the steps and animations around it (and what it is attached to now)
+  const near = (id: string) => {
+    const sp = lay.anims.get(id) ?? lay.steps.get(id);
+    return !!sp && at >= sp.start - 0.5 && at <= sp.end + 0.5;
+  };
+  const options: { id: string; label: string }[] = [];
+  for (const s of doc.timeline) {
+    if (s.disabled) continue;
+    if (s.kind !== 'play' && (near(s.id) || m.anchor?.id === s.id)) options.push({ id: s.id, label: `${stepLabel(s).name} ${stepLabel(s).sub}`.trim() });
+    if (s.kind === 'play') {
+      if (near(s.id) || m.anchor?.id === s.id) options.push({ id: s.id, label: `Play together (${(s.anims ?? []).length})` });
+      for (const a of walk(s.anims)) if (!a.disabled && (near(a.id) || m.anchor?.id === a.id)) options.push({ id: a.id, label: [animLabel(a).name, animLabel(a).sub].filter(Boolean).join(' ') });
+    }
+  }
+  const attach = (id: string) => setMarker(m.id, (x) => {
+    const anchor = id ? anchorTo(lay, id, at) : undefined;
+    if (anchor) x.anchor = anchor;
+    else delete x.anchor;
+    x.time = Math.round(at * 1000) / 1000;
+  });
+  const setEdge = (edge: 'start' | 'end') => setMarker(m.id, (x) => {
+    const sp = x.anchor && (lay.anims.get(x.anchor.id) ?? lay.steps.get(x.anchor.id));
+    if (x.anchor && sp) x.anchor = { ...x.anchor, edge, offset: Math.round((at - sp[edge]) * 1000) / 1000 };
+  });
+  const moveTo = (t: number) => setMarker(m.id, (x) => {
+    t = Math.max(0, frameSnap(t));
+    const sp = x.anchor && (lay.anims.get(x.anchor.id) ?? lay.steps.get(x.anchor.id));
+    if (x.anchor && sp) x.anchor.offset = Math.round((t - sp[x.anchor.edge]) * 1000) / 1000;
+    x.time = t;
+  }, 'time');
+  return (
+    <div className="pad marker-insp">
+      <h3>Marker</h3>
+      <section className="fx-section">
+        <div className="fx-row"><span>Name</span><Field ariaLabel="Marker name" value={m.label ?? ''} placeholder="Name it (it shows on the ruler)"
+          onChange={() => {}} onBlur={(v) => v.trim() !== (m.label ?? '') && setMarker(m.id, (x) => { if (v.trim()) x.label = v.trim(); else delete x.label; })} /></div>
+        <div className="fx-row"><span>Kind</span>
+          <div className="seg marker-kind" role="group" aria-label="Marker kind">
+            <button className={!m.category ? 'on' : ''} aria-pressed={!m.category} onClick={() => setMarker(m.id, (x) => void delete x.category)}>None</button>
+            {MARKER_CATEGORIES.map((c) => (
+              <button key={c.id} className={m.category === c.id ? 'on' : ''} aria-pressed={m.category === c.id} onClick={() => setMarker(m.id, (x) => void (x.category = c.id))}>{c.label}</button>
+            ))}
+          </div>
+        </div>
+        <div className="fx-row"><span>Notes</span><Field ariaLabel="Marker notes" multiline value={m.notes ?? ''} placeholder="What happens here, what to say, what to check…"
+          onChange={(v) => setMarker(m.id, (x) => { if (v) x.notes = v; else delete x.notes; }, 'notes')} /></div>
+      </section>
+      <section className="fx-section">
+        <h4>Time</h4>
+        <div className="fx-row"><span>At</span><ScrubNumber value={at} min={0} step={1 / fps()} precision={3} suffix="s" onChange={moveTo} />
+          <span className="muted small mono">{timecode(at)}</span></div>
+        <div className="fx-row"><span /><button className="ghost small" disabled={Math.abs(time - at) < 1e-6} onClick={() => moveTo(time)}>Move to playhead</button></div>
+        <div className="fx-row"><span>Attached to</span>
+          <select aria-label="Attached to" value={m.anchor?.id ?? ''} onChange={(e) => attach(e.target.value)}>
+            <option value="">Nothing: stays at its time</option>
+            {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </div>
+        {m.anchor && (
+          <div className="fx-row"><span>From its</span>
+            <div className="seg" role="group" aria-label="Attached at">
+              <button className={m.anchor.edge === 'start' ? 'on' : ''} aria-pressed={m.anchor.edge === 'start'} onClick={() => setEdge('start')}>Start</button>
+              <button className={m.anchor.edge === 'end' ? 'on' : ''} aria-pressed={m.anchor.edge === 'end'} onClick={() => setEdge('end')}>End</button>
+            </div>
+            <span className="muted small">{m.anchor.offset ? `${m.anchor.offset > 0 ? '+' : '−'}${Math.abs(m.anchor.offset)} s` : ''}</span>
+          </div>
+        )}
+        <p className="muted small">{markerWhere(m, doc)}{m.anchor ? ': it moves when that clip moves or changes length.' : '. Attach it to a clip to move it with the clip.'}</p>
+      </section>
+      <div className="row"><button className="ghost small danger" onClick={() => deleteMarker(m.id)}>Delete marker</button></div>
+    </div>
   );
 }
 
@@ -60,6 +152,7 @@ function SceneInfo() {
         <button onClick={() => setState({ panel: 'help', panelData: null })}>Guide &amp; tour</button>
       </div>
       <ParametersPanel />
+      <DefinitionsPanel />
       <h4>How it works</h4>
       <ul className="tips">
         <li><b>Draw</b> with the tools above the canvas (keys 1–7): points, segments, arrows, circles, rectangles, polygons. Drawing between existing points connects to them.</li>
@@ -67,7 +160,7 @@ function SceneInfo() {
         <li><b>ƒ Graph</b> builds axes and a graph from an expression like <code>y = a*x^2 + b</code>, with parameter sliders you can animate.</li>
         <li>The <b>Constructions</b> tab holds reusable pieces: a labeled triangle, the unit circle, a number line, secant-to-tangent, and your own.</li>
         <li>Drag any manim class onto the <b>canvas</b> or straight onto a <b>timeline track</b>.</li>
-        <li>The timeline is the scene’s <code>construct()</code>: each <b>self.play</b> plays its animations together (V1, V2… are its 1st, 2nd… animation), then the next statement starts. Drag clips to move them, drag their right edges to trim, and Alt-drag to duplicate.</li>
+        <li>The timeline is the scene’s <code>construct()</code>: each <b>self.play</b> is a <b>Play together</b> group whose animations run at once (animation lanes V1, V2… hold its 1st, 2nd… animation; they are not drawing layers, see Scene › Drawing order), then the next statement starts. Drag clips to move them, drag their right edges to trim, and Alt-drag to duplicate.</li>
         <li>The <b>Code</b> tab shows the same scene as manim code. Edit it, or paste a whole manim file, and the timeline follows.</li>
         <li>On the canvas, drag an object to move it. Corner handles scale it, edge handles stretch it, and the top knob rotates it. With <b>Record</b> on, each of these becomes an animation clip at the playhead.</li>
         <li>Every field takes Python, like <code>BLUE</code>, <code>UP * 2</code> or <code>lambda x: x**2</code>.</li>
@@ -77,7 +170,7 @@ function SceneInfo() {
       <ul className="tips keys">
         <li><kbd>Space</kbd> play · <kbd>←</kbd><kbd>→</kbd> frame · <kbd>↑</kbd><kbd>↓</kbd> edit points</li>
         <li><kbd>M</kbd> marker · <kbd>S</kbd> snap · <kbd>=</kbd>/<kbd>-</kbd> zoom · <kbd>\</kbd> fit</li>
-        <li><kbd>Del</kbd> delete · <kbd>⇧Del</kbd> ripple delete · <kbd>⌘C</kbd>/<kbd>⌘V</kbd> clips</li>
+        <li><kbd>Del</kbd> delete · <kbd>{keys('⇧Del')}</kbd> ripple delete · <kbd>{keys('⌘C')}</kbd>/<kbd>{keys('⌘V')}</kbd> clips</li>
       </ul>
       <LatexNotice />
       {catalog && <p className="muted small">Manim Studio {versionLabel(app)} · manim {catalog.manim_version}</p>}
@@ -104,11 +197,12 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   const chainSig = useSignature(chainCls);
   const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
   const isEquation = obj.ctor === 'MathTex' || obj.ctor === 'Tex';
-  const content = TEXT_CTORS.has(obj.ctor) && !isEquation ? unquote(obj.args['*'] ?? '') : null;
+  const content = TEXT_CTORS.has(obj.ctor) && !isEquation && obj.link?.kind !== 'text' ? unquote(obj.args['*'] ?? '') : null; // a text with values is edited in Relationship
   const terms = useStore((s) => (s.selection?.kind === 'object' && s.selection.id === obj.id ? s.selection.terms : undefined));
   const isVector = sig?.vector ?? true;
   const paramNames = new Set(sig?.params.map((p) => p.name) ?? []);
-  const styleKeys = STYLE_KEYS.filter((k) => paramNames.has(k) || obj.args[k] !== undefined);
+  // every vector shape takes these (VMobject's own arguments), even when its signature only says **kwargs (Polygon…)
+  const styleKeys = STYLE_KEYS.filter((k) => isVector || paramNames.has(k) || obj.args[k] !== undefined);
   // Arguments the construction supplies (a segment's start/end, a brace's mobject…) aren't edited here.
   const controlled = new Set(obj.link && !standsAlone(obj) ? CONTROLLED_ARGS[obj.link.kind] ?? [] : []);
 
@@ -129,9 +223,9 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
   return (
     <div className="pad">
       <div className="insp-head">
-        <Field value={obj.name} onChange={() => undefined} onBlur={commitName} className="mono name" />
+        <Field value={obj.name} onChange={() => undefined} onBlur={commitName} className="mono name" ariaLabel="Object name" />
         <span className="muted">=</span>
-        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => void (o.ctor = v), 'ctor')} list="me-mobjects" className="mono" />
+        <Field value={obj.ctor} onChange={(v) => setObj(obj.id, (o) => { o.ctor = v; delete o.positional; }, 'ctor')} list="me-mobjects" className="mono" ariaLabel="manim class" />
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       {sig?.unknown && !obj.link && <p className="warn small">Unknown constructor. It will still be passed to Python as written.</p>}
@@ -142,7 +236,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
       {isEquation && <EquationSection obj={obj} />}
       <GeometrySection obj={obj} />
 
-      {!isEquation && (content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
+      {!isEquation && obj.link?.kind !== 'text' && (content !== null || (TEXT_CTORS.has(obj.ctor) && !obj.args['*'])) && (
         <section>
           <h4>{obj.ctor === 'Text' || obj.ctor === 'MarkupText' || obj.ctor === 'Paragraph' ? 'Text' : 'LaTeX'}</h4>
           <Field multiline className="mono content" value={content ?? ''} onChange={(v) => setObj(obj.id, (o) => void (o.args['*'] = quote(v)), 'content')} />
@@ -196,6 +290,8 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         </section>
       )}
 
+      <KeyframeChannels obj={obj} />
+
       <ActionsSection ids={[obj.id]} terms={terms} />
 
       <CreatedSection obj={obj} />
@@ -204,6 +300,7 @@ function ObjectInspector({ obj }: { obj: SceneObject }) {
         <h4>Animate at playhead</h4>
         <div className="chips">
           {QUICK_ANIMS.map((a) => <button key={a} className="chip" onClick={() => addAnimation(a, obj.name)}>{a}</button>)}
+          <button className="chip" title={`Fade out everything on screen at the playhead except ${obj.name} (what loops made included)`} onClick={() => fadeOutRest([obj.name])}>Fade out the rest</button>
           <button className="chip" onClick={() => addAnimation('animate', obj.name)}>.animate</button>
           {obj.eq?.parts?.length ? <button className="chip" title="Transform into another equation term by term" onClick={() => addTermsTransform(obj)}>Transform terms…</button> : null}
         </div>
@@ -225,7 +322,7 @@ function CreatedSection({ obj }: { obj: SceneObject }) {
     <section>
       <h4><Tip tip={{ title: 'In the code', text: 'Where construct() creates this object: at the start, or right after a statement. Creating it later matters when it is placed relative to something that moves first (next_to, copy…). It is never created before what it is built from.' }}>In the code</Tip></h4>
       <div className="fx-row wide-row"><span>Created</span>
-        <select className="field" value={obj.after ?? ''} onChange={(e) => setObj(obj.id, (o) => { if (e.target.value) o.after = e.target.value; else delete o.after; }, 'after')}>
+        <select className="field" aria-label="Where in construct() it is created" value={obj.after ?? ''} onChange={(e) => setObj(obj.id, (o) => { if (e.target.value) o.after = e.target.value; else delete o.after; }, 'after')}>
           <option value="">at the start of construct()</option>
           {steps.map((s, i) => <option key={s.id} value={s.id}>after {i + 1}. {stepLabel(s).title.split('\n')[0].slice(0, 48)}</option>)}
         </select>
@@ -355,7 +452,7 @@ function ChainEditor({ chain, cls, onChange, title, placeholder, help }: { chain
     <section>
       <h4>
         {help ? <Tip tip={help}>{title}</Tip> : title}{' '}
-        <select className="inline" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
+        <select className="inline" aria-label="Add a method call" value="" onChange={(e) => e.target.value && write([...(calls ?? []), { name: e.target.value, args: '' }])} disabled={!calls}>
           <option value="">+ method</option>
           <optgroup label="Common">{top.map((m) => <option key={m}>{m}</option>)}</optgroup>
           <optgroup label={`All ${cls} methods`}>{rest.map((m) => <option key={m}>{m}</option>)}</optgroup>
@@ -449,6 +546,13 @@ function CallCard({ cls, call, onChange, onRemove, onUp }: { cls: string; call: 
 /** Hover help for the clip settings that aren't manim arguments. */
 const CLIP_HELP: Record<string, TipContent> = {
   cls: { title: 'Animation', text: 'The manim animation this clip plays. Type or pick another class to switch to it. Arguments the new class doesn’t take must be removed below, or the clip shows an error.' },
+  eol: { title: 'Comment at the end of the line', text: 'Written after the statement on its line, as the code had it: self.play(...)  # the reveal.' },
+  blockHead: { title: 'Header', text: 'The line that opens the block, without its colon: for d in dots, while k < 3, if k > 2, with …, try. Its steps on the timeline are its body.' },
+  repeat: { title: 'Repeat', text: 'How many times the loop runs (range(n)): its steps play again each time.' },
+  assignTarget: { title: 'Name', text: 'What gets the value: a variable (k), an attribute (self.count) or an item (values[0]). Several names unpack a tuple (a, b).' },
+  assignValue: { title: 'Value', text: 'Any Python expression. It is worked out when the scene runs, at this point in it.' },
+  addExpr: { title: 'Expressions', text: 'Anything else the statement passes: *dots spreads a list, VGroup(a, b) builds a group on the spot.' },
+  exprSrc: { title: 'Animation code', text: 'An animation written as an expression manim works out when the scene runs: a list of animations (*[FadeIn(d) for d in dots]), a function call, a variable. Its length is measured by running the scene.' },
   target: { title: 'Object', text: 'The object this clip animates. Pick another object’s name to animate that one instead; the timing stays the same.' },
   start: {
     title: 'Start',
@@ -456,7 +560,7 @@ const CLIP_HELP: Record<string, TipContent> = {
   },
   duration: {
     title: 'Duration',
-    text: 'How long the animation takes (manim’s run_time). Longer is slower: the same change is spread over more time. The self.play lasts as long as its longest animation, and everything after it moves along.',
+    text: 'How long the animation takes (manim’s run_time). Longer is slower: the same change is spread over more time. The self.play lasts as long as its longest animation, and everything after it moves along; with Keep later timing on (a button by the timeline’s snap magnet), the pause right after it gives or takes the time instead.',
     notes: ['Same as dragging the clip’s right edge on the timeline.', 'A run_time on the self.play applies to all its animations; changing one of several gives the others that run_time as their own.'],
   },
   holdDuration: { title: 'Duration', text: 'How long the scene keeps running here (self.wait). Nothing moves except objects with updaters. Use it to pause, or to extend the end of the video.' },
@@ -466,6 +570,20 @@ const CLIP_HELP: Record<string, TipContent> = {
   methods: {
     title: 'Methods to animate',
     text: 'Each method is applied to the object, and the clip animates it from how it is when the clip starts to how it is after these calls. Changing a method’s arguments changes where the object ends up. Calls run in order, top to bottom.',
+  },
+  easing: {
+    title: 'Easing',
+    text: 'How the change is spread over the clip’s time: at a constant speed, starting or ending slowly, or going there and back. The clip’s curve (or its intro and outro ramp) on the timeline shows it.',
+    notes: ['Sets manim’s rate_func. Every rate function manim has is in the arguments below.'],
+  },
+  channels: {
+    title: 'Keyframes',
+    text: 'Each property of the object at the playhead. ◆ adds a keyframe there (an animation that ends at the playhead) or removes the one there. Changing a value changes the keyframe under the playhead, or adds one; with no keyframes yet it changes the object as created.',
+    notes: ['A keyframe is plain manim code: obj.animate.move_to(…), .scale(…), .set_color(…), Rotate(obj, angle=…), tracker.animate.set_value(…). Editing one changes only that argument, in the way it was written.', 'Keyframes placed relative to something else (next_to, to_edge…) or written as expressions are shown but edited in the code.'],
+  },
+  keyframes: {
+    title: 'Keyframes',
+    text: 'Where this object’s animations start and end, across the whole scene; this clip’s are highlighted. ◀ ▶ move the playhead to the previous or next one; click a diamond to go there and select its animation.',
   },
   label: { title: 'Label', text: 'The name shown on the clip in the timeline. It doesn’t change the scene.' },
   comment: { title: 'Comment', text: 'Comment lines written above this statement in the code (# …). They don’t change the scene.' },
@@ -489,6 +607,14 @@ function setAnim(id: string, fn: (a: Anim) => void, key: string) {
 
 const frames = (v: number) => Math.round(v * fps()) / fps();
 
+/** Set a length from Effect Controls the way trimming its clip does (Keep later timing included). */
+function setLength(target: { anim: string } | { step: string }, v: number, key: string) {
+  const { timeline, keepTiming } = getState();
+  let limit: string | undefined;
+  updateDoc((d) => void (limit = retime(d, timeline, target, frames(v), keepTiming).limit), key);
+  if (limit) toast(limit);
+}
+
 function TimingRow({ id, step }: { id: string; step: boolean }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
   const sp = (step ? lay.steps : lay.anims).get(id);
@@ -510,6 +636,143 @@ function CommentField({ step }: { step: Step }) {
         else delete s.comment;
       }, 'comment')} />
     </label>
+  );
+}
+
+/** The comment at the end of a step's line in the code (`self.play(...)  # the reveal`). */
+function EolField({ step }: { step: Step }) {
+  return (
+    <label className="param"><span className="pname"><Tip tip={CLIP_HELP.eol}>line end</Tip></span>
+      <Field className="mono" value={step.eol ?? ''} placeholder="# at the end of its line" ariaLabel="Comment at the end of its line" onChange={(v) => setStep(step.id, (s) => {
+        if (v.trim()) s.eol = v.trim().startsWith('#') ? v.trim() : `# ${v.trim()}`;
+        else delete s.eol;
+      }, 'eol')} />
+    </label>
+  );
+}
+
+/** An apply step: methods called on an object at once (`label.next_to(u, UP)`), and that object's keyframes. */
+function ApplySection({ step }: { step: Step }) {
+  const target = step.target ?? '';
+  const obj = useStore((s) => s.doc.objects.find((o) => o.name === target));
+  const cls = useChainClass(obj ? obj.name : target);
+  return (
+    <>
+      <section>
+        <p className="muted small">The methods run here, between the statements around it: the object changes at once, with no animation (a jump in its keyframes).</p>
+        <label className="param"><span className="pname"><Tip tip={CLIP_HELP.target}>Object</Tip></span>
+          <Field className="mono" value={target} list="me-targets" ariaLabel="Object" onChange={(v) => setStep(step.id, (s) => void (s.target = v), 'target')} />
+        </label>
+      </section>
+      <ChainEditor title="Methods" help={CLIP_HELP.methods} cls={cls} chain={step.chain ?? ''} placeholder=".next_to(other, UP)" onChange={(v) => setStep(step.id, (s) => void (s.chain = v), 'chain')} />
+      {obj && <KeyframeChannels obj={obj} clip={step.id} />}
+      {!obj && target.trim() === CAMERA_NAME && <KeyframeChannels obj={CAMERA} clip={step.id} />}
+    </>
+  );
+}
+
+const ASSIGN_OPS = ['=', '+=', '-=', '*=', '/=', '//=', '%=', '**=', '@=', '|=', '&=', '^=', '<<=', '>>='];
+
+/** An assign step: `target op value`, a variable (or an attribute, an item…) later statements read. */
+function AssignSection({ step }: { step: Step }) {
+  const op = step.op ?? '=';
+  return (
+    <section>
+      <p className="muted small">Runs here, between the statements around it, and takes no time. Steps after it can use the value.</p>
+      <label className="param"><span className="pname"><Tip tip={CLIP_HELP.assignTarget}>Name</Tip></span>
+        <Field className="mono" value={step.target ?? ''} ariaLabel="Name" onChange={(v) => setStep(step.id, (s) => void (s.target = v), 'target')} />
+      </label>
+      <label className="param"><span className="pname">Operation</span>
+        <select className="field mono" aria-label="Operation" value={op} onChange={(e) => setStep(step.id, (s) => void (s.op = e.target.value), 'op')}>
+          {(ASSIGN_OPS.includes(op) ? ASSIGN_OPS : [op, ...ASSIGN_OPS]).map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      </label>
+      <h4><Tip tip={CLIP_HELP.assignValue}>Value</Tip></h4>
+      <CodeArea value={step.value ?? ''} minLines={1} onChange={(v) => setStep(step.id, (s) => void (s.value = v), 'value')} />
+    </section>
+  );
+}
+
+const REPEAT = /^\s*for\s+(\w+)\s+in\s+range\(\s*(\d+)\s*\)\s*$/;
+
+/** A block step: the header of a compound statement (for, while, if, with, try…), how many times its body ran, and
+ * its clauses. The steps between it and its end are its body: they run each time it does. */
+function BlockSection({ step }: { step: Step }) {
+  const doc = useStore((s) => s.doc);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const opener = compoundOf(doc.timeline, step.id) ?? step.id;
+  const shape = compounds(doc.timeline).get(opener);
+  const b = lay.blocks.find((x) => x.id === opener);
+  const head = step.head ?? '';
+  const rep = head.match(REPEAT);
+  const clause = b?.clauses.find((c) => c.id === step.id);
+  const runs = clause && clause.id !== opener ? clause.runs : b?.runs;
+  const kinds = doc.timeline.filter((x) => x.id === opener || shape?.clauses.includes(x.id)).map((x) => (x.head ?? '').trim().split(/\s/)[0]);
+  const canElse = ['for', 'while', 'if', 'elif', 'except'].includes(kinds[kinds.length - 1]) && !(kinds[0] === 'try' && kinds.includes('finally'));
+  const addClause = (h: string) => updateDoc((d) => {
+    const c = compounds(d.timeline).get(opener);
+    if (!c?.end) return;
+    d.timeline.splice(d.timeline.findIndex((x) => x.id === c.end), 0, { id: uid('s'), kind: 'block', head: h });
+  });
+  return (
+    <section>
+      {step.kind === 'end'
+        ? <p className="muted small">The end of the block: the steps after it run once the block is done.</p>
+        : <p className="muted small">{isClause(step) ? 'This clause’s steps run when the code reaches it.' : 'The steps under it on the timeline, up to its end, are its body: they run each time it does.'}{' '}
+          {runs !== undefined ? (runs === 0 ? 'Its body didn’t run.' : `Its body ran ${runs} time${runs === 1 ? '' : 's'}${b?.estimated ? ' (estimated)' : ''}.`) : ''}</p>}
+      {step.kind === 'block' && !isClause(step) && (/^\s*(for|while)\b/.test(head) || step.repeat) && (
+        <RepeatFields step={step}>
+          <BlockHeader step={step} head={head} rep={rep} />
+        </RepeatFields>
+      )}
+      {step.kind === 'block' && !(!isClause(step) && (/^\s*(for|while)\b/.test(head) || step.repeat)) && <BlockHeader step={step} head={head} rep={rep} />}
+      <div className="row">
+        {step.id !== opener && <button className="ghost small" onClick={() => selectClips([opener])}>Select the block</button>}
+        {!isClause(step) && canElse && shape?.end && <button className="ghost small" title="Add an else: steps that run when the block’s own don’t (or after a loop that wasn’t broken out of)" onClick={() => addClause('else')}>+ else</button>}
+        {kinds[0] === 'if' && !kinds.includes('else') && shape?.end && <button className="ghost small" title="Add an elif: another condition, tried when the ones before it are false" onClick={() => addClause('elif True')}>+ elif</button>}
+        <button className="ghost small" title="Take its steps out of the block: they run once, in place (other clauses go with their steps)" onClick={() => unwrapBlock(step.id)}>Unwrap</button>
+      </div>
+    </section>
+  );
+}
+
+/** The header of a block step as code, and its count when it is `for i in range(n)`. */
+function BlockHeader({ step, head, rep }: { step: Step; head: string; rep: RegExpMatchArray | null }) {
+  return (
+    <>
+      <label className="param"><span className="pname"><Tip tip={CLIP_HELP.blockHead}>Header</Tip></span>
+        <Field className="mono" value={head} ariaLabel="Header" onChange={(v) => setStep(step.id, (s) => void (s.head = v.replace(/:\s*$/, '')), 'head')} />
+      </label>
+      {rep && (
+        <div className="fx-row"><Tip tip={CLIP_HELP.repeat}>Repeat</Tip>
+          <ScrubNumber value={+rep[2]} min={0} step={1} precision={0} suffix="×" onChange={(v) => setStep(step.id, (s) => void (s.head = `for ${rep[1]} in range(${Math.max(0, Math.round(v))})`), 'head')} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Targets of self.add / self.remove that aren't object names (`*dots`, `VGroup(a, b)`): each one an expression. */
+function ExtraTargets({ step, names }: { step: Step; names: Set<string> }) {
+  const targets = step.targets ?? [];
+  const set = (i: number, v: string | null) => setStep(step.id, (s) => {
+    const t = [...(s.targets ?? [])];
+    if (v === null) t.splice(i, 1);
+    else if (i >= t.length) t.push(v);
+    else t[i] = v;
+    s.targets = t;
+  }, 'targets:' + i);
+  return (
+    <>
+      <h4><Tip tip={CLIP_HELP.addExpr}>Expressions</Tip></h4>
+      {targets.map((t, i) => names.has(t) ? null : (
+        <div key={i} className="row">
+          <Field className="mono" value={t} ariaLabel={`Expression ${i + 1}`} onChange={(v) => set(i, v)} />
+          <button className="x-btn" title="Remove it" aria-label={`Remove ${t}`} onClick={() => set(i, null)}>×</button>
+        </div>
+      ))}
+      <div className="row"><button className="ghost small" title="Add an expression (*dots, VGroup(a, b), group[0]…)" onClick={() => set(targets.length, 'VGroup()')}>+ expression</button></div>
+    </>
   );
 }
 
@@ -536,7 +799,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3 className="mono">{step.kind === 'code' ? 'Code' : step.kind === 'couple' ? 'Couple' : step.kind === 'uncouple' ? 'Uncouple' : step.kind === 'call' ? `self.${step.method}(…)` : `self.${step.kind}(…)`}</h3>
+      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once', assign: 'Value', block: isClause(step) ? 'Clause' : 'Block', end: 'End of block' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />
@@ -544,7 +807,7 @@ function StepInspector({ step }: { step: Step }) {
         <h4>Timing</h4>
         <TimingRow id={step.id} step />
         {waitLen !== undefined && (
-          <div className="fx-row"><Tip tip={CLIP_HELP.holdDuration}>Duration</Tip><ScrubNumber value={waitLen} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => updateDoc((d) => setStepDuration(d, step.id, frames(v)), `${step.id}:dur`)} /></div>
+          <div className="fx-row"><Tip tip={CLIP_HELP.holdDuration}>Duration</Tip><ScrubNumber value={waitLen} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setLength({ step: step.id }, v, `${step.id}:dur`)} /></div>
         )}
         {step.kind === 'couple' && <div className="fx-row"><Tip tip={CLIP_HELP.glide}>Glide</Tip><ScrubNumber value={step.duration ?? 0} min={0} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setStep(step.id, (s) => { const g = Math.max(0, frames(v)); if (g) s.duration = g; else delete s.duration; }, 'dur')} /><span className="muted small">{step.duration ? '' : 'snaps at once'}</span></div>}
         {(step.kind === 'code' || step.kind === 'call') && <p className="muted small"><Tip tip={CLIP_HELP.measured}>How long it runs</Tip> is measured by running the scene.</p>}
@@ -562,7 +825,7 @@ function StepInspector({ step }: { step: Step }) {
         <>
           <section>
             <h4>Method</h4>
-            <select className="field mono" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; }, 'method')}>
+            <select className="field mono" aria-label="Scene method" value={step.method} onChange={(e) => setStep(step.id, (s) => { s.method = e.target.value; s.args = {}; delete s.positional; }, 'method')}>
               {(calls ?? []).filter((m) => !['play', 'wait', 'add', 'remove'].includes(m)).map((m) => <option key={m} value={m}>self.{m}</option>)}
               {step.method && !calls?.includes(step.method) && <option value={step.method}>self.{step.method}</option>}
             </select>
@@ -579,6 +842,10 @@ function StepInspector({ step }: { step: Step }) {
         </section>
       )}
 
+      {step.kind === 'apply' && <ApplySection step={step} />}
+      {step.kind === 'assign' && <AssignSection step={step} />}
+      {(step.kind === 'block' || step.kind === 'end') && <BlockSection step={step} />}
+
       {(step.kind === 'add' || step.kind === 'remove') && (
         <section>
           <p className="muted small">{step.kind === 'add' ? 'Ticked objects appear on screen here, without an animation (drawn in this order, on top of what is there).' : 'Ticked objects disappear here, without an animation.'}</p>
@@ -588,6 +855,7 @@ function StepInspector({ step }: { step: Step }) {
               <span className="mono">{o.name}</span>
             </label>
           ))}
+          <ExtraTargets step={step} names={new Set(objects.map((o) => o.name))} />
         </section>
       )}
 
@@ -606,7 +874,7 @@ function StepInspector({ step }: { step: Step }) {
         </section>
       )}
 
-      <section><CommentField step={step} /></section>
+      <section><CommentField step={step} />{step.kind !== 'code' && step.kind !== 'end' && <EolField step={step} />}</section>
       <ClipActions id={step.id} />
     </div>
   );
@@ -642,7 +910,7 @@ function AnimationsList({ parentId, anims, title, rows }: { parentId: string; an
         </div>
       ))}
       <div className="row">
-        <select className="field mono" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an animation here (it targets the selected object)">
+        <select className="field mono" aria-label="Add an animation" value="" onChange={(e) => e.target.value && add(e.target.value)} title="Add an animation here (it targets the selected object)">
           <option value="">+ animation…</option>
           <option value="animate">.animate</option>
           {(catalog?.animations ?? []).map((e) => <option key={e.name} value={e.name}>{e.name}</option>)}
@@ -650,7 +918,7 @@ function AnimationsList({ parentId, anims, title, rows }: { parentId: string; an
       </div>
       {anims.length > 1 && (
         <div className="row">
-          <select className="field mono" value={groupCls} onChange={(e) => setGroupCls(e.target.value)}>
+          <select className="field mono" aria-label="Group animations into" value={groupCls} onChange={(e) => setGroupCls(e.target.value)}>
             <option value="">Group {selected.length > 1 ? `${selected.length} selected` : 'all'} into…</option>
             {groups.map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
@@ -688,6 +956,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
   const sp = lay.anims.get(anim.id);
   const targetCls = useChainClass(anim.target);
+  const targetObj = useStore((s) => s.doc.objects.find((o) => o.name === anim.target));
   const composition = !!anim.anims;
   const rt = literal(anim.args.run_time ?? (!parent ? step.args?.run_time : undefined));
   const target = sig?.target;
@@ -695,10 +964,11 @@ function AnimInspector({ r }: { r: AnimRef }) {
   const list = parent?.anims ?? step.anims ?? [];
   const at = list.indexOf(anim);
   const setTarget = (v: string) => setAnim(anim.id, (a) => void (a.target = v), 'target');
+  if (anim.cls === 'expr') return <ExprAnimInspector r={r} />;
   return (
     <div className="pad">
       <div className="insp-head">
-        <Tip tip={CLIP_HELP.cls}><Field className="mono" value={anim.cls} list="me-animations" onChange={(v) => setAnim(anim.id, (a) => void (a.cls = v), 'cls')} /></Tip>
+        <Tip tip={CLIP_HELP.cls}><Field className="mono" value={anim.cls} list="me-animations" onChange={(v) => setAnim(anim.id, (a) => { a.cls = v; delete a.positional; }, 'cls')} /></Tip>
       </div>
       {sig?.doc && <p className="doc">{sig.doc}</p>}
       <Diagnostics id={anim.id} />
@@ -715,8 +985,8 @@ function AnimInspector({ r }: { r: AnimRef }) {
         <h4>Timing</h4>
         <TimingRow id={anim.id} step={false} />
         <div className="fx-row"><Tip tip={CLIP_HELP.duration}>Duration</Tip>
-          <ScrubNumber value={rt ?? (sp ? sp.end - sp.start : 1)} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => updateDoc((d) => setAnimDuration(d, anim.id, frames(v)), `${anim.id}:dur`)} />
-          {anim.args.run_time === undefined && <span className="muted small">{!parent && step.args?.run_time !== undefined ? 'from self.play' : 'manim’s default'}</span>}
+          <ScrubNumber value={rt ?? (sp ? sp.end - sp.start : 1)} min={1 / fps()} step={1 / fps()} precision={3} suffix="s" onChange={(v) => setLength({ anim: anim.id }, v, `${anim.id}:dur`)} />
+          {anim.args.run_time === undefined && <span className="muted small">{!parent && step.args?.run_time !== undefined ? `self.play’s run_time=${step.args.run_time}${(step.anims ?? []).length > 1 ? `, shared by all ${(step.anims ?? []).length}` : ''}` : 'manim’s default'}</span>}
         </div>
         <div className="fx-row"><span>In</span>
           <button className="ghost small mono" onClick={() => selectClips([parent?.id ?? step.id])} title="Select it">{parent ? parent.cls : 'self.play'}</button>
@@ -724,8 +994,12 @@ function AnimInspector({ r }: { r: AnimRef }) {
           <button className="x-btn" disabled={at <= 0} title="Earlier" onClick={() => updateDoc((d) => reorder(d, anim.id, -1))}>↑</button>
           <button className="x-btn" disabled={at >= list.length - 1} title="Later" onClick={() => updateDoc((d) => reorder(d, anim.id, 1))}>↓</button>
         </div>
+        <EaseRow anim={anim} step={step} nested={!!parent} def={sig?.params.find((p) => p.name === 'rate_func')?.default} />
+        <KeyframesRow anim={anim} />
         <EnabledRow id={anim.id} disabled={anim.disabled} />
       </section>
+      {targetObj && <KeyframeChannels obj={targetObj} clip={anim.id} />}
+      {!targetObj && anim.target.trim() === CAMERA_NAME && <KeyframeChannels obj={CAMERA} clip={anim.id} />}
 
       {composition && (
         <>
@@ -747,6 +1021,266 @@ function AnimInspector({ r }: { r: AnimRef }) {
     </div>
   );
 }
+
+/** An animation written as an expression (`*[FadeOut(m) for m in dots]`, `make_anim(k)`): edited as code. */
+function ExprAnimInspector({ r }: { r: AnimRef }) {
+  const { anim, step, parent } = r;
+  const list = parent?.anims ?? step.anims ?? [];
+  const at = list.indexOf(anim);
+  return (
+    <div className="pad">
+      <h3>{animLabel(anim).name === 'code' ? 'Animation code' : `${animLabel(anim).name} (code)`}</h3>
+      <Diagnostics id={anim.id} />
+      <section className="fx-section">
+        <h4>Timing</h4>
+        <TimingRow id={anim.id} step={false} />
+        <p className="muted small"><Tip tip={CLIP_HELP.measured}>How long it runs</Tip> is measured by running the scene.</p>
+        <div className="fx-row"><span>In</span>
+          <button className="ghost small mono" onClick={() => selectClips([parent?.id ?? step.id])} title="Select it">{parent ? parent.cls : 'self.play'}</button>
+          <span className="muted small">{parent ? `#${at + 1} of ${list.length}` : `V${at + 1}`}</span>
+          <button className="x-btn" disabled={at <= 0} title="Earlier" onClick={() => updateDoc((d) => reorder(d, anim.id, -1))}>↑</button>
+          <button className="x-btn" disabled={at >= list.length - 1} title="Later" onClick={() => updateDoc((d) => reorder(d, anim.id, 1))}>↓</button>
+        </div>
+        <EnabledRow id={anim.id} disabled={anim.disabled} />
+      </section>
+      <section>
+        <h4><Tip tip={CLIP_HELP.exprSrc}>Animation code</Tip></h4>
+        <CodeArea value={anim.src ?? ''} minLines={2} onChange={(v) => setAnim(anim.id, (a) => void (a.src = v), 'src')} />
+      </section>
+      <ClipActions id={anim.id} />
+    </div>
+  );
+}
+
+const EASES: [label: string, rate: string, tip: string][] = [
+  ['Linear', 'linear', 'Constant speed from start to end'],
+  ['Ease in', 'rush_into', 'Starts slowly and ends at full speed (rush_into)'],
+  ['Ease out', 'rush_from', 'Starts at full speed and slows to a stop (rush_from)'],
+  ['Ease in-out', 'smooth', 'Slow at both ends (smooth, manim’s usual easing)'],
+  ['There and back', 'there_and_back', 'Goes all the way, then comes back (there_and_back)'],
+];
+const rateName = (v: string | undefined) => (v ?? '').trim().replace(/^rate_functions\./, '');
+
+/** Easing presets in front of rate_func (the full list stays in the arguments below). A rate_func given to self.play
+ * applies to every animation in it, so when there is one the presets change that. */
+function EaseRow({ anim, step, nested, def }: { anim: Anim; step: Step; nested: boolean; def?: string }) {
+  const onPlay = !nested && !!step.args?.rate_func;
+  const usual = rateName(def) || 'smooth';
+  const current = onPlay ? rateName(step.args!.rate_func) : rateName(anim.args.rate_func) || usual;
+  const set = (v: string) =>
+    onPlay
+      ? setStep(step.id, (s) => setArg((s.args ??= {}), 'rate_func', v), 'arg:rate_func')
+      : setAnim(anim.id, (a) => setArg(a.args, 'rate_func', v === usual ? '' : v), 'arg:rate_func');
+  const known = EASES.some(([, r]) => r === current);
+  return (
+    <>
+      <div className="fx-row ease-row"><Tip tip={CLIP_HELP.easing}>Easing</Tip>
+        <div className="seg ease" role="group" aria-label="Easing">
+          {EASES.map(([label, rate, tip]) => (
+            <button key={rate} className={current === rate ? 'on' : ''} aria-pressed={current === rate} title={tip + (rate === usual ? `\n${anim.cls}’s default` : '')} onClick={() => set(rate)}>
+              <svg className="rate-icon" viewBox="0 0 24 16" aria-hidden="true"><path d={ratePath(rate, 24, 16)} /></svg>{label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {(!known || onPlay) && (
+        <p className="muted small ease-note">
+          {!known && <>Easing: <span className="mono">{current}</span>. </>}
+          {onPlay && <>Set on <button className="link" onClick={() => selectClips([step.id])}>self.play</button>: it applies to every animation playing with this one.</>}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The keyframes of this animation's object(s): where each of their animations starts and ends. ◀ ▶ move the playhead
+ * from one to the next; a diamond selects the animation it belongs to. */
+function KeyframesRow({ anim }: { anim: Anim }) {
+  const doc = useStore((s) => s.doc);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const time = useStore((s) => s.time);
+  const names = new Set(targetsOf(anim));
+  if (!names.size) return null;
+  const keys: { t: number; id: string }[] = [];
+  for (const step of doc.timeline) {
+    if (step.kind !== 'play' || step.disabled) continue;
+    for (const a of walk(step.anims)) {
+      if (a.anims?.length || a.disabled || !targetsOf(a).some((n) => names.has(n))) continue;
+      const sp = lay.anims.get(a.id);
+      if (sp) keys.push({ t: sp.start, id: a.id }, { t: sp.end, id: a.id });
+    }
+  }
+  // in frames, as the playhead moves: a keyframe between two frames is where the playhead lands for it
+  const times = [...new Set(keys.map((k) => frameSnap(k.t)))].sort((a, b) => a - b);
+  const half = 0.5 / fps();
+  const prev = [...times].reverse().find((t) => t < time - half);
+  const next = times.find((t) => t > time + half);
+  const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
+  const end = Math.max(lay.end, EPS);
+  const who = [...names].join(', ');
+  return (
+    <div className="fx-row kf-row"><Tip tip={CLIP_HELP.keyframes}>Keyframes</Tip>
+      <button className="x-btn" disabled={prev === undefined} title={`Previous keyframe of ${who}`} aria-label={`Previous keyframe of ${who}`} onClick={() => go(prev)}>◀</button>
+      <div className="kf-strip" aria-label={`Keyframes of ${who}`}>
+        <i className="kf-now" style={{ left: `${(Math.min(time, end) / end) * 100}%` }} />
+        {keys.map((k, i) => (
+          <button key={i} className={`kf-dot ${k.id === anim.id ? 'mine' : ''}`} style={{ left: `${(k.t / end) * 100}%` }}
+            title={`${timecode(k.t)}: ${i % 2 ? 'end' : 'start'} of ${animLabel(findAnim(doc, k.id)!.anim).title}`}
+            aria-label={`${i % 2 ? 'End' : 'Start'} at ${timecode(k.t)}`}
+            onClick={() => { go(k.t); if (k.id !== anim.id) selectClips([k.id]); }} />
+        ))}
+      </div>
+      <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${who}`} aria-label={`Next keyframe of ${who}`} onClick={() => go(next)}>▶</button>
+    </div>
+  );
+}
+
+/**
+ * Run a keyframe edit: tried on a copy first, so one that can't be done changes nothing and says why.
+ */
+function kfEdit(fn: (d: SceneDoc) => string | null, coalesce?: string) {
+  const err = fn(structuredClone(getState().doc));
+  if (err) return void toast(err);
+  updateDoc((d) => void fn(d), coalesce);
+}
+
+const showColor = (v: KeyValue | undefined) => (typeof v === 'string' ? (v.startsWith('#') ? `"${v}"` : v) : '');
+
+/**
+ * One row per channel (position, scale, rotation, opacity, colour; a ValueTracker's value) of an object, at the
+ * playhead. ◆ adds or removes a keyframe there; the value edits the keyframe under the playhead, else adds one (or,
+ * with no keyframes yet, sets the value as created). Every keyframe is a plain manim clip, so this writes
+ * `obj.animate.move_to(...)`, `.scale(...)`, `Rotate(...)`… and nothing else.
+ */
+function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
+  const doc = useStore((s) => s.doc);
+  const measured = useStore((s) => s.timeline);
+  const lay = useStore((s) => docLayout(s.doc, s.timeline));
+  const time = useStore((s) => s.time);
+  const info = useStore((s) => s.frame?.objects.find((o) => o.id === obj.id));
+  const live = useStore((s) => s.frame?.values?.[obj.name]);
+  const keys = keyframes(doc, lay, measured, obj.name);
+  const half = 0.5 / fps();
+  const end = Math.max(lay.end, EPS);
+  const go = (t: number | undefined) => t !== undefined && setState({ time: frameSnap(t), showVideo: false });
+  const fixed = ownsPosition(obj) || isFollow(obj);
+  const redraw = isRedraw(obj);
+
+  /** Write `v` into the channel at the playhead. */
+  const write = (ch: Channel, v: KeyValue) =>
+    kfEdit((d) => {
+      const tl = getState().timeline;
+      const lay2 = layout(d, tl);
+      const own = keyframes(d, lay2, tl, obj.name).filter((k) => k.channel === ch);
+      const on = own.find((k) => Math.abs(frameSnap(k.t) - time) < half);
+      if (on) return setKeyValue(d, lay2, tl, on, v);
+      if (!own.length && obj !== CAMERA) {
+        const o = d.objects.find((x) => x.id === obj.id);
+        if (!o) return 'The object is gone';
+        setBaseValue(o, ch, v);
+        return null;
+      }
+      const r = addKey(d, tl, obj.name, ch, time, v);
+      return 'error' in r ? r.error : null;
+    }, `kf:${obj.id}:${ch}:${time}`);
+
+  return (
+    <section className="fx-section kf-channels">
+      <h4><Tip tip={CLIP_HELP.channels}>Keyframes of</Tip> <span className="mono kf-name">{obj.name}</span> <span className="muted small mono">{timecode(time)}</span></h4>
+      {channelsOf(obj).map((ch) => {
+        const meta = CHANNELS.find((c) => c.id === ch)!;
+        const own = keys.filter((k) => k.channel === ch);
+        const times = [...new Set(own.map((k) => frameSnap(k.t)))].sort((a, b) => a - b);
+        const prev = [...times].reverse().find((t) => t < time - half);
+        const next = times.find((t) => t > time + half);
+        const on = own.find((k) => Math.abs(frameSnap(k.t) - time) < half);
+        let value: KeyValue | undefined = on?.value;
+        if (value === undefined && ch === 'position' && info?.center) value = [info.center[0], info.center[1]];
+        if (value === undefined && ch === 'value' && typeof live === 'number') value = live;
+        if (value === undefined) value = valueBefore(own, obj, ch, time);
+        const why = redraw ? 'It is redrawn every frame (always_redraw), so animating it is overwritten: change what it is drawn from'
+          : on && !on.editable ? on.why : ch === 'position' && fixed ? 'Its position comes from its construction' : undefined;
+        const label = `${meta.label} of ${obj.name}`;
+        const toggle = () => {
+          if (on) return kfEdit((d) => deleteKey(d, layout(d, getState().timeline), on));
+          if (value === undefined) return void toast(`${label} here is not known yet: set a value instead`);
+          // with the value it has here; changing it right after is the same undo step
+          kfEdit((d) => {
+            const r = addKey(d, getState().timeline, obj.name, ch, time, value!);
+            return 'error' in r ? r.error : null;
+          }, `kf:${obj.id}:${ch}:${time}`);
+        };
+        const num = typeof value === 'number' ? value : null;
+        let editor;
+        const byArgs = on && !on.editable && !on.measuring && !redraw ? on : undefined; // a measurement on its way: not by arguments
+        if (byArgs) editor = <span className="small kf-why" title={byArgs.why}><span className="mono">{keyCode(byArgs)}</span> <span className="muted">{fmtKey(value)}</span></span>;
+        else if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
+        else if (ch === 'position') {
+          const p = Array.isArray(value) ? value : null;
+          editor = <>
+            <ScrubNumber value={p?.[0] ?? null} step={0.02} onChange={(x) => write(ch, [x, p?.[1] ?? 0])} />
+            <ScrubNumber value={p?.[1] ?? null} step={0.02} onChange={(y) => write(ch, [p?.[0] ?? 0, y])} />
+          </>;
+        } else if (ch === 'color') editor = <ColorField value={showColor(value)} placeholder="as created" onChange={(v) => v.trim() && write(ch, v)} />;
+        else if (ch === 'scale') editor = <ScrubNumber value={num} min={0.01} step={0.01} precision={3} suffix="×" onChange={(v) => write(ch, v)} />;
+        else if (ch === 'rotation') editor = <ScrubNumber value={num} step={0.5} precision={1} suffix="°" onChange={(v) => write(ch, v)} />;
+        else if (ch === 'opacity') editor = <ScrubNumber value={num} placeholder="1" min={0} max={1} step={0.01} onChange={(v) => write(ch, v)} />;
+        else if (ch === 'stroke') editor = <ScrubNumber value={num} placeholder="as created" min={0} step={0.5} precision={2} onChange={(v) => write(ch, v)} />;
+        else editor = <ScrubNumber value={num} step={0.05} precision={3} onChange={(v) => write(ch, v)} />;
+        return (
+          <div key={ch} className="kf-channel" data-channel={ch}>
+            <div className="fx-row">
+              <span>{meta.label}</span>
+              <button className="x-btn" disabled={prev === undefined} title={`Previous keyframe of ${label}`} aria-label={`Previous keyframe of ${label}`} onClick={() => go(prev)}>◀</button>
+              <button className={`x-btn kf-toggle ${on ? 'on' : ''}`} aria-pressed={!!on} disabled={redraw && !on} title={on ? `Remove this keyframe of ${label}` : `Add a keyframe of ${label} at ${timecode(time)}`} aria-label={on ? `Remove keyframe of ${label}` : `Add keyframe of ${label}`} onClick={toggle}>◆</button>
+              <button className="x-btn" disabled={next === undefined} title={`Next keyframe of ${label}`} aria-label={`Next keyframe of ${label}`} onClick={() => go(next)}>▶</button>
+              <div className="kf-value">{editor}</div>
+            </div>
+            {byArgs && <KeyArgs k={byArgs} label={label} />}
+            {own.length > 0 && (
+              <div className="kf-strip kf-lane" aria-label={`Keyframes of ${label}`}>
+                <i className="kf-now" style={{ left: `${(Math.min(time, end) / end) * 100}%` }} />
+                {own.map((k, i) => (
+                  <button key={i} className={`kf-dot ${k.anim === clip ? 'mine' : ''} ${k.editable ? '' : 'fixed'}`} style={{ left: `${(k.t / end) * 100}%` }}
+                    title={`${timecode(k.t)}: ${keyCode(k)} → ${fmtKey(k.value)}${k.editable ? '' : ` (${k.why})`}`}
+                    aria-label={`${meta.label} keyframe at ${timecode(k.t)}`}
+                    onClick={() => { go(k.t); if (clip && k.anim !== clip) selectClips([k.anim]); }} />
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+/**
+ * A keyframe whose value is an expression or relative to something else (`.next_to(g, UP)`): its method's arguments,
+ * edited as code, and (relative ones) Pin, which makes it `.move_to(…)` where it is now.
+ */
+function KeyArgs({ k, label }: { k: Key; label: string }) {
+  const tip = `${k.why ?? ''}${k.value !== undefined ? ` — now ${fmtKey(k.value)}` : ''}. Edit its arguments here.`;
+  return (
+    <span className="kf-args" title={tip}>
+      <Field className="mono" value={k.args} ariaLabel={`Arguments of ${keyCode(k)} for ${label}`} onChange={() => {}}
+        onBlur={(v) => kfEdit((d) => setKeyArgs(d, k, v))} />
+      {k.relative && (
+        <button className="x-btn kf-pin" disabled={!Array.isArray(k.value)}
+          title={Array.isArray(k.value) ? `Pin it where it is now: .${k.method}(…) becomes .move_to(${fmtKey(k.value)}), and it stops following what it was placed by` : 'Where it ends up is not measured yet'}
+          aria-label={`Pin ${label} where it is now`} onClick={() => kfEdit((d) => fixKey(d, k))}>Pin</button>
+      )}
+    </span>
+  );
+}
+
+function fmtKey(v: KeyValue | undefined): string {
+  if (v === undefined) return '?';
+  if (Array.isArray(v)) return `(${v.map((x) => Math.round(x * 100) / 100).join(', ')})`;
+  return typeof v === 'number' ? String(Math.round(v * 1000) / 1000) : v;
+}
+
+const keyCode = (k: Key) => (k.method === 'Rotate' ? 'Rotate(…)' : `.${k.method}(…)`);
 
 function MultiClipInspector({ ids }: { ids: string[] }) {
   const lay = useStore((s) => docLayout(s.doc, s.timeline));

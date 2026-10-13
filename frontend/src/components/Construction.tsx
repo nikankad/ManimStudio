@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { actionsFor, couplings, type Action } from '../actions';
 import { api } from '../api';
-import { dependentsOf, describeLink, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geoType, isFollow, linkState, literal, SOURCE_FIELDS, STANDALONE_KINDS } from '../construct';
+import { dependentsOf, describeLink, placeholders, EXPR_FIELDS, EXPR_LABELS, FOLLOW_KINDS, geoType, isFollow, linkState, literal, SOURCE_FIELDS, STANDALONE_KINDS } from '../construct';
 import { countMeets } from '../intersect';
 import { fmtPt, freeShape, writeShape, type Shape } from '../geometry';
 import {
@@ -11,7 +11,8 @@ import {
   timecode, toast, uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { allTemplates, detachInstance, syncInstances, updateTemplateFromInstance } from '../templates';
-import type { Link, Pt, SceneObject } from '../types';
+import { compounds, loopsAround, loopVar } from '../timeline';
+import type { Link, Pt, SceneDoc, SceneObject } from '../types';
 import { Field, ScrubNumber } from './ParamField';
 
 const GROUP_ORDER = ['Couple', 'Connect', 'Measure', 'Annotate', 'Terms'] as const;
@@ -25,7 +26,7 @@ export function Diagnostics({ id }: { id: string }) {
   return (
     <>
       {diags.map((d, i) => (
-        <div key={i} className={d.level === 'error' ? 'err-box' : 'warn'}>
+        <div key={i} className={d.level === 'error' ? 'err-box' : d.level === 'info' ? 'muted small' : 'warn'}>
           {d.message}
           {/LaTeX isn't installed/.test(d.message) && <> <CheckLatexButton /></>}
         </div>
@@ -82,24 +83,90 @@ export function ActionsSection({ ids, terms }: { ids: string[]; terms?: string[]
   );
 }
 
+/** The loop (its block step's id) whose counter is `v`: the one around the first step using `name`, else the first. */
+function loopFor(doc: SceneDoc, v: string, name: string): string | null {
+  const shapes = compounds(doc.timeline);
+  const blocks = doc.timeline.map((s, i) => [s, i] as const).filter(([s]) => loopVar(s) === v && shapes.has(s.id));
+  if (!blocks.length) return null;
+  const uses = new RegExp(`\\b${name}\\b`);
+  const first = doc.timeline.findIndex((s) => JSON.stringify([s.targets, s.anims, s.target]).match(uses));
+  const around = blocks.find(([s]) => { const c = shapes.get(s.id)!; return first > c.from && first < c.to; });
+  return (around ?? blocks[0])[0].id;
+}
+
+/** Offered when a field uses a loop's counter but its object is made outside the loop. */
+function InLoop({ obj, loop }: { obj: SceneObject; loop: string }) {
+  return <button className="ghost small" title="Each run of the loop then makes its own, using its counter" onClick={() => updateDoc((d) => {
+    const o = d.objects.find((x) => x.id === obj.id);
+    if (o) o.after = loop;
+  })}>Create it in the loop</button>;
+}
+
+/** The words of a text with values: math in braces, each checked by the backend like an expression field. */
+function TemplateField({ obj, template, onChange }: { obj: SceneObject; template: string; onChange: (v: string) => void }) {
+  const doc = useStore((s) => s.doc);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [counter, setCounter] = useState<string | null>(null); // an undefined name that is a loop's counter
+  const names = params(doc).map((p) => p.name);
+  const vars = loopsAround(doc.timeline, obj.after);
+  useEffect(() => {
+    const parts = placeholders(template);
+    const open = template.replace(/\{\{|\}\}/g, '').replace(/\{[^{}]*\}/g, '');
+    setCounter(null);
+    if (/[{}]/.test(open)) return setProblem('A brace has no partner. Write {{ or }} for a brace itself.');
+    if (parts.some((p) => !p.math.trim())) return setProblem('There is an empty {}: put a value in it, like {t:2}.');
+    let live = true;
+    const t = setTimeout(async () => {
+      for (const p of parts) {
+        if (literal(p.math) !== null) continue;
+        const r = await api.checkValue(p.math, names, getState().doc.defs, vars).catch(() => null);
+        if (!live) return;
+        if (r && !r.ok) {
+          setCounter(r.error?.startsWith('Undefined parameter') ? r.error.match(/'([^']+)'/)?.[1] ?? null : null);
+          return setProblem(`{${p.math}}: ${r.error}${r.hint ? ` ${r.hint}` : ''}`);
+        }
+      }
+      if (live) setProblem(null);
+    }, 250);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [template, names.join(','), vars.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loop = counter ? loopFor(doc, counter, obj.name) : null;
+  return (
+    <>
+      <label className="param"><span className="pname">text</span>
+        <Field className={`mono ${problem ? 'bad' : ''}`} value={template} ariaLabel="Text with values" placeholder="t = {t:2}" onChange={onChange} />
+      </label>
+      {problem ? <div className="expr-err">{problem}{loop && <InLoop obj={obj} loop={loop} />}</div>
+        : <p className="muted small">Math in braces shows its value: <code>{'{t:2}'}</code> with 2 decimals, <code>{'{ZEROS[k]:3}'}</code>, <code>{'{2 pi}'}</code>. With a parameter in it, the text follows it as it changes.</p>}
+    </>
+  );
+}
+
 /** An editable math expression over parameters, checked by the backend. */
-export function ExprField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+export function ExprField({ value, onChange, placeholder, vars = [], obj }: { value: string; onChange: (v: string) => void; placeholder?: string; vars?: string[]; obj?: SceneObject }) {
   const doc = useStore((s) => s.doc);
   const [check, setCheck] = useState<{ ok: boolean; error?: string; hint?: string; params?: string[] } | null>(null);
   const names = params(doc).map((p) => p.name);
   useEffect(() => {
     if (!value.trim() || literal(value) !== null) return setCheck(null);
-    const t = setTimeout(() => api.checkValue(value, names).then(setCheck).catch(() => setCheck(null)), 250);
+    const t = setTimeout(() => api.checkValue(value, names, getState().doc.defs, vars).then(setCheck).catch(() => setCheck(null)), 250);
     return () => clearTimeout(t);
-  }, [value, names.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const missing = check && !check.ok && check.error?.startsWith('Undefined parameter') ? check.error.match(/'([^']+)'/)?.[1] : undefined;
+  }, [value, names.join(','), vars.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  let missing = check && !check.ok && check.error?.startsWith('Undefined parameter') ? check.error.match(/'([^']+)'/)?.[1] : undefined;
+  // a loop's counter, used by an object created outside the loop: offer to create it in the loop
+  const loop = missing && obj ? loopFor(doc, missing, obj.name) : null;
+  if (loop) missing = undefined;
   return (
     <div className="expr-field">
       <Field value={value} onChange={onChange} placeholder={placeholder} className={`mono ${check && !check.ok ? 'bad' : ''}`} />
       {check && !check.ok && (
         <div className="expr-err">
           {check.error}{check.hint ? ` ${check.hint}` : ''}
-          {missing && <button className="ghost small" onClick={() => updateDoc((d) => void createParam(d, missing, 1, { min: -5, max: 5, step: 0.1 }))}>Create parameter {missing}</button>}
+          {missing && <button className="ghost small" onClick={() => updateDoc((d) => void createParam(d, missing!, 1, { min: -5, max: 5, step: 0.1 }))}>Create parameter {missing}</button>}
+          {loop && obj && <InLoop obj={obj} loop={loop} />}
         </div>
       )}
     </div>
@@ -111,7 +178,7 @@ function SourcePicker({ value, types, required, self, onChange }: { value: strin
   const options = doc.objects.filter((o) => o.id !== self && (!types || types.includes(geoType(o, doc))) && o.ctor !== 'ValueTracker');
   const missing = value && !doc.objects.some((o) => o.id === value);
   return (
-    <select className={`field mono ${missing ? 'bad' : ''}`} value={missing ? '__missing' : value ?? ''} onChange={(e) => onChange(e.target.value)}>
+    <select className={`field mono ${missing ? 'bad' : ''}`} aria-label="Source object" value={missing ? '__missing' : value ?? ''} onChange={(e) => onChange(e.target.value)}>
       {(!required || !value) && <option value="">{required ? '— choose —' : '— none —'}</option>}
       {missing && <option value="__missing">(deleted object)</option>}
       {options.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
@@ -175,7 +242,7 @@ export function CoupleSection({ obj }: { obj: SceneObject }) {
       <h4>Relationship <span className="tag">independent</span></h4>
       <div className="fx-row wide-row">
         <span>couple to</span>
-        <select className="field mono" value={src ? to : ''} onChange={(e) => setTo(e.target.value)}>
+        <select className="field mono" aria-label="Couple to" value={src ? to : ''} onChange={(e) => setTo(e.target.value)}>
           <option value="">— choose an object —</option>
           {candidates.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
@@ -247,7 +314,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {link.kind === 'measure' && (
         <div className="fx-row">
           <span>shows</span>
-          <select className="field" value={link.what} onChange={(e) => set((x) => void (x.what = e.target.value), 'what')}>
+          <select className="field" aria-label="Shows" value={link.what} onChange={(e) => set((x) => void (x.what = e.target.value), 'what')}>
             {['length', 'angle', 'slope', 'integral', 'value'].map((w) => <option key={w} value={w}>{w}</option>)}
           </select>
         </div>
@@ -297,7 +364,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {link.kind === 'riemann' && (
         <div className="fx-row">
           <span>sample</span>
-          <select className="field" value={link.sample ?? 'left'} onChange={(e) => set((x) => void (x.sample = e.target.value), 'sample')}>
+          <select className="field" aria-label="Sample" value={link.sample ?? 'left'} onChange={(e) => set((x) => void (x.sample = e.target.value), 'sample')}>
             {['left', 'right', 'center'].map((w) => <option key={w}>{w}</option>)}
           </select>
         </div>
@@ -307,7 +374,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       )}
       {(link.kind === 'brace') && (
         <div className="fx-row"><span>direction</span>
-          <select className="field mono" value={link.direction ?? 'DOWN'} onChange={(e) => set((x) => void (x.direction = e.target.value), 'dir')}>
+          <select className="field mono" aria-label="Direction" value={link.direction ?? 'DOWN'} onChange={(e) => set((x) => void (x.direction = e.target.value), 'dir')}>
             {['DOWN', 'UP', 'LEFT', 'RIGHT'].map((d) => <option key={d}>{d}</option>)}
           </select>
         </div>
@@ -317,10 +384,11 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
           {(['box', 'background', 'underline'] as const).map((m) => <button key={m} className={(link.style ?? 'box') === m ? 'on' : ''} onClick={() => set((x) => void (x.style = m), 'style')}>{m}</button>)}
         </div>
       )}
+      {link.kind === 'text' && <TemplateField obj={obj} template={link.template} onChange={(v) => set((x) => void (x.template = v), 'template')} />}
       {exprs.map((f) => (
         <div key={f} className="fx-row wide-row">
           <span>{EXPR_LABELS[f] ?? f}</span>
-          <ExprField value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : link.kind === 'parallel' && f === 'length' ? 'same as the line' : link.kind === 'perpendicular' && f === 'length' ? '4' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
+          <ExprField vars={loopsAround(doc.timeline, obj.after)} obj={obj} value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : link.kind === 'parallel' && f === 'length' ? 'same as the line' : link.kind === 'perpendicular' && f === 'length' ? '4' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
         </div>
       ))}
       {link.kind === 'graph' && <GraphFields obj={obj} link={link} />}
@@ -348,7 +416,7 @@ function GraphFields({ obj, link }: { obj: SceneObject; link: Extract<Link, { ki
   const set = (fn: (l: Extract<Link, { kind: 'graph' }>) => void, key: string) => setLink(obj.id, (x) => fn(x as Extract<Link, { kind: 'graph' }>), `${obj.id}:graph:${key}`);
   const known = Object.fromEntries(params(doc).map((p) => [p.name, values[p.name] ?? literal(p.args['*']) ?? 1]));
   useEffect(() => {
-    const t = setTimeout(() => api.analyzeFunction(link.expr, known, domain, axes?.y_range).then(setAnalysis).catch(() => undefined), 250);
+    const t = setTimeout(() => api.analyzeFunction(link.expr, known, domain, axes?.y_range, getState().doc.defs).then(setAnalysis).catch(() => undefined), 250);
     return () => clearTimeout(t);
   }, [link.expr, domain[0], domain[1], JSON.stringify(known)]); // eslint-disable-line react-hooks/exhaustive-deps
   const disc = link.discontinuities ?? [];
@@ -366,7 +434,7 @@ function GraphFields({ obj, link }: { obj: SceneObject; link: Extract<Link, { ki
       <div className="fx-row wide-row"><span>breaks at</span>
         <div className="chips">
           {disc.map((d, i) => (
-            <span key={i} className="chip value-chip mono">{d}<button className="x-btn" onClick={() => set((x) => void (x.discontinuities = disc.filter((_, k) => k !== i)), 'disc')}>×</button></span>
+            <span key={i} className="chip value-chip mono">{d}<button className="x-btn" title="Remove" aria-label="Remove" onClick={() => set((x) => void (x.discontinuities = disc.filter((_, k) => k !== i)), 'disc')}>×</button></span>
           ))}
           {analysis?.ok && analysis.discontinuities.join() !== disc.join() && (
             <button className="ghost small" title="Use the jumps found by sampling the function" onClick={() => set((x) => {
@@ -468,14 +536,20 @@ export function ParamSection({ obj }: { obj: SceneObject }) {
       <div className="fx-row"><span>Step</span><ScrubNumber value={meta.step} min={0.0001} step={0.01} precision={4} onChange={(v) => setMeta({ step: v })} /></div>
       <div className="row">
         <span className="muted small">Animate to</span>
-        <input className="field num narrow" value={to} onChange={(e) => setTo(e.target.value)} />
+        <input className="field num narrow mono" aria-label="Animate to" title="A number, or math: 2 pi, ZEROS[k] (a definition, a loop's counter)" value={to} onChange={(e) => setTo(e.target.value)} />
         <span className="muted small">over</span>
-        <input className="field num narrow" value={dur} onChange={(e) => setDur(e.target.value)} />
+        <input className="field num narrow" aria-label="Duration" value={dur} onChange={(e) => setDur(e.target.value)} />
         <span className="muted small">s</span>
-        <button className="ghost small" onClick={() => {
-          const v = Number(to), d = Number(dur);
-          if (Number.isNaN(v) || !(d > 0)) return toast('Enter a number and a duration');
-          animateParam(obj.name, v, d);
+        <button className="ghost small" onClick={async () => {
+          const d = Number(dur);
+          if (!(d > 0)) return toast('Enter a duration');
+          if (to.trim() !== '' && !Number.isNaN(Number(to))) return animateParam(obj.name, Number(to), d);
+          // math: worked out where the clip runs (a loop's counter is known there)
+          const s = getState().doc;
+          const counters = [...new Set(s.timeline.map(loopVar).filter((v): v is string => !!v))];
+          const r = await api.checkValue(to, params(s).map((p) => p.name), s.defs, counters).catch(() => null);
+          if (!r?.ok || !r.python) return toast(r?.error ? `${r.error}${r.hint ? ` ${r.hint}` : ''}` : 'Enter a number or a math value');
+          animateParam(obj.name, r.python, d);
         }}>Add at playhead</button>
       </div>
       {users.length > 0 ? <p className="muted small">Used by {users.map((u) => u.name).join(', ')}.</p> : <p className="muted small">Not used yet. Use its name in expressions, e.g. <code>{obj.name}*x^2</code>.</p>}

@@ -62,8 +62,33 @@ def resolve_project_path(path: str | Path) -> Path:
     return requested
 
 
+class ProjectError(ValueError):
+    """A file that can't be opened as a project. The message is written for the person who chose the file."""
+
+
+class MissingProject(ProjectError, FileNotFoundError):
+    """The project file isn't there (callers that check for a missing file still see FileNotFoundError)."""
+
+
 def load_project(path: str | Path) -> dict:
-    doc = json.loads(resolve_project_path(path).read_text(encoding="utf-8"))
+    p = resolve_project_path(path)
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise MissingProject(f"{p.name} doesn't exist any more. It may have been moved, renamed or deleted.") from None
+    except UnicodeDecodeError:
+        raise ProjectError(f"{p.name} isn't a Manim Studio project: it isn't a text file.") from None
+    except OSError as exc:
+        raise ProjectError(f"{p.name} can't be read: {exc.strerror or exc}.") from None
+    if not text.strip():
+        raise ProjectError(f"{p.name} is empty.")
+    try:
+        doc = json.loads(text)
+    except ValueError:
+        raise ProjectError(f"{p.name} isn't a Manim Studio project: its contents aren't valid project data. "
+                           "It may be damaged, or some other kind of file.") from None
+    if not isinstance(doc, dict):
+        raise ProjectError(f"{p.name} isn't a Manim Studio project: it doesn't hold a scene.")
     return upgrade(doc)
 
 
@@ -80,16 +105,33 @@ def upgrade(doc: dict) -> dict:
         doc = upgrade_v3(doc)
     base = new_project()
     base.update(doc)
-    base["config"] = {**new_project()["config"], **doc.get("config", {})}
+    base["config"] = {**new_project()["config"], **(doc.get("config") if isinstance(doc.get("config"), dict) else {})}
+    # A hand-edited or damaged file may hold nulls or the wrong kind of value where the editor expects a list:
+    # fall back to empty rather than failing later, inside the editor.
+    for key in ("objects", "timeline", "markers", "constructions"):
+        if not isinstance(base.get(key), list):
+            base[key] = []
+    if not isinstance(base.get("scene"), dict):
+        base["scene"] = new_project()["scene"]
+    if not isinstance(base.get("header"), str):
+        base["header"] = ""
     return base
 
 
 def save_project(path: str | Path, doc: dict) -> None:
     p = Path(path).expanduser()
-    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(p.suffix + ".tmp")
-    tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+        tmp.replace(p)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)  # no half-written file left beside the project
+        except OSError:
+            pass
+        reason = exc.strerror or str(exc)
+        raise ProjectError(f"{p.name} couldn't be saved in {p.parent}: {reason}. Save it somewhere else instead.") from None
 
 
 def upgrade_v2(doc: dict) -> dict:

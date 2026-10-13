@@ -214,7 +214,7 @@ export function TermsClipEditor({ anim: clip, onChange }: { anim: Anim; onChange
       {!src?.eq?.parts?.length && <p className="warn small">The source ({clip.target}) must be an equation split into terms.</p>}
       <div className="fx-row wide-row">
         <span>into</span>
-        <select className="field mono" value={dst?.id ?? ''} onChange={(e) => onChange((c) => void (c.terms = { to: e.target.value, pairs: [] }))}>
+        <select className="field mono" aria-label="Transform into" value={dst?.id ?? ''} onChange={(e) => onChange((c) => void (c.terms = { to: e.target.value, pairs: [] }))}>
           <option value="">— destination equation —</option>
           {equations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>

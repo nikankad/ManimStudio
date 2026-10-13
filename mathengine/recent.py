@@ -75,6 +75,10 @@ def set_thumbnail(path: str | Path, thumbnail: str) -> None:
         t.write_bytes(data)
 
 
+def has_thumbnail(path: str | Path) -> bool:
+    return _thumb(_norm(path)).is_file()
+
+
 def remove(path: str) -> None:
     """Take a project off the list (the file itself is left alone)."""
     entries = _load()

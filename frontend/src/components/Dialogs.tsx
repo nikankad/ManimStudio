@@ -39,7 +39,7 @@ export function GraphBuilder() {
   const values = { ...trackers, ...Object.fromEntries(Object.entries(defs).map(([k, v]) => [k, v.value])) };
 
   useEffect(() => {
-    const t = setTimeout(() => api.analyzeFunction(expr, values, dom, yr).then(setAnalysis).catch((e) => toast(String(e))), 250);
+    const t = setTimeout(() => api.analyzeFunction(expr, values, dom, yr, getState().doc.defs).then(setAnalysis).catch((e) => toast(String(e))), 250);
     return () => clearTimeout(t);
   }, [expr, JSON.stringify(values), dom[0], dom[1], yr[0], yr[1]]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -132,7 +132,7 @@ export function GraphBuilder() {
     };
   }, [previewKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const num = (v: number, set: (v: number) => void, w = 'narrow') => <input className={`field num ${w}`} value={v} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) set(n); }} />;
+  const num = (v: number, set: (v: number) => void, label: string, w = 'narrow') => <input className={`field num ${w}`} aria-label={label} value={v} onChange={(e) => { const n = Number(e.target.value); if (!Number.isNaN(n)) set(n); }} />;
 
   return (
     <Modal title="Graph a function" wide>
@@ -143,7 +143,7 @@ export function GraphBuilder() {
           </label>
           {analysis && !analysis.ok && <div className="err-box">{analysis.error}{analysis.hint ? <><br /><span className="muted">{analysis.hint}</span></> : null}</div>}
           {analysis?.ok && <p className="muted small">Reads as <code>y = {analysis.normalized}</code>{analysis.notes.length ? ` · ${analysis.notes.join(' ')}` : ''}</p>}
-          <p className="muted small">Supported: explicit functions of x with + − × ÷ ^, implicit multiplication (2x, 3(x+1)), sin cos tan exp ln log sqrt abs floor… and pi, e. Not yet: implicit equations (x² + y² = 1), inequalities, parametric or polar curves, piecewise definitions.</p>
+          <p className="muted small">Supported: explicit functions of x with + − × ÷ ^, implicit multiplication (2x, 3(x+1)), sin cos tan exp ln log sqrt abs floor… and pi, e; if(x &lt; 0, 0, x^2), sum(k, 1, n, …), mod, min, max, and the scene's definitions (Scene › Definitions). Not yet: implicit equations (x² + y² = 1), parametric or polar curves.</p>
 
           <h4>Parameters</h4>
           {(analysis?.params ?? []).length === 0 && <p className="muted small">None. Any other letter (like a, b, k) becomes a parameter slider you can animate on the timeline.</p>}
@@ -152,10 +152,10 @@ export function GraphBuilder() {
           ) : (
             <div key={p} className="row param-def">
               <span className="mono">{p}</span>
-              <span className="muted small">value</span>{num(defs[p]?.value ?? 1, (v) => setDefs({ ...defs, [p]: { ...defs[p], value: v } }))}
-              <span className="muted small">min</span>{num(defs[p]?.min ?? -5, (v) => setDefs({ ...defs, [p]: { ...defs[p], min: v } }))}
-              <span className="muted small">max</span>{num(defs[p]?.max ?? 5, (v) => setDefs({ ...defs, [p]: { ...defs[p], max: v } }))}
-              <span className="muted small">step</span>{num(defs[p]?.step ?? 0.1, (v) => setDefs({ ...defs, [p]: { ...defs[p], step: v } }))}
+              <span className="muted small">value</span>{num(defs[p]?.value ?? 1, (v) => setDefs({ ...defs, [p]: { ...defs[p], value: v } }), `${p} value`)}
+              <span className="muted small">min</span>{num(defs[p]?.min ?? -5, (v) => setDefs({ ...defs, [p]: { ...defs[p], min: v } }), `${p} min`)}
+              <span className="muted small">max</span>{num(defs[p]?.max ?? 5, (v) => setDefs({ ...defs, [p]: { ...defs[p], max: v } }), `${p} max`)}
+              <span className="muted small">step</span>{num(defs[p]?.step ?? 0.1, (v) => setDefs({ ...defs, [p]: { ...defs[p], step: v } }), `${p} step`)}
               {clashes.includes(p) && <span className="err-text small">{p === 'x' ? 'x is the variable' : 'name already used'}</span>}
             </div>
           ))}
@@ -176,12 +176,12 @@ export function GraphBuilder() {
           </label>
           {axesId === 'new' && (
             <>
-              <div className="row"><span className="muted small w60">x range</span>{num(ax.xmin, (v) => setAx({ ...ax, xmin: v }))}{num(ax.xmax, (v) => setAx({ ...ax, xmax: v }))}<span className="muted small">step</span>{num(ax.xstep, (v) => setAx({ ...ax, xstep: v }))}</div>
-              <div className="row"><span className="muted small w60">y range</span>{num(ax.ymin, (v) => setAx({ ...ax, ymin: v }))}{num(ax.ymax, (v) => setAx({ ...ax, ymax: v }))}<span className="muted small">step</span>{num(ax.ystep, (v) => setAx({ ...ax, ystep: v }))}</div>
-              <div className="row"><span className="muted small w60">size</span>{num(ax.xlen, (v) => setAx({ ...ax, xlen: v }))}<span className="muted small">×</span>{num(ax.ylen, (v) => setAx({ ...ax, ylen: v }))}</div>
+              <div className="row"><span className="muted small w60">x range</span>{num(ax.xmin, (v) => setAx({ ...ax, xmin: v }), 'x min')}{num(ax.xmax, (v) => setAx({ ...ax, xmax: v }), 'x max')}<span className="muted small">step</span>{num(ax.xstep, (v) => setAx({ ...ax, xstep: v }), 'x step')}</div>
+              <div className="row"><span className="muted small w60">y range</span>{num(ax.ymin, (v) => setAx({ ...ax, ymin: v }), 'y min')}{num(ax.ymax, (v) => setAx({ ...ax, ymax: v }), 'y max')}<span className="muted small">step</span>{num(ax.ystep, (v) => setAx({ ...ax, ystep: v }), 'y step')}</div>
+              <div className="row"><span className="muted small w60">size</span>{num(ax.xlen, (v) => setAx({ ...ax, xlen: v }), 'width')}<span className="muted small">×</span>{num(ax.ylen, (v) => setAx({ ...ax, ylen: v }), 'height')}</div>
             </>
           )}
-          <div className="row"><span className="muted small w60">domain</span>{num(dom[0], (v) => setDomain([v, dom[1]]))}{num(dom[1], (v) => setDomain([dom[0], v]))}{domain && <button className="ghost small" onClick={() => setDomain(null)}>= axes</button>}</div>
+          <div className="row"><span className="muted small w60">domain</span>{num(dom[0], (v) => setDomain([v, dom[1]]), 'domain start')}{num(dom[1], (v) => setDomain([dom[0], v]), 'domain end')}{domain && <button className="ghost small" onClick={() => setDomain(null)}>= axes</button>}</div>
           <div className="param"><span className="pname">Color</span><ColorField value={color} onChange={(c) => setColor(c || 'BLUE')} /></div>
 
           <h4>Discontinuities</h4>
@@ -189,7 +189,7 @@ export function GraphBuilder() {
             <>
               {breaks.length === 0 && <p className="muted small">None found in the domain.</p>}
               <div className="chips">
-                {breaks.map((b, i) => <span key={i} className="chip value-chip mono">x = {Math.round(b * 10000) / 10000}<button className="x-btn" onClick={() => setDisc(breaks.filter((_, k) => k !== i))}>×</button></span>)}
+                {breaks.map((b, i) => <span key={i} className="chip value-chip mono">x = {Math.round(b * 10000) / 10000}<button className="x-btn" title="Remove" aria-label="Remove" onClick={() => setDisc(breaks.filter((_, k) => k !== i))}>×</button></span>)}
               </div>
               {breaks.length > 0 && <p className="muted small">The curve is not drawn across these points (manim <code>discontinuities</code>, gap {analysis.gap ?? 0.01} on each side, chosen to keep asymptote branches inside the y range).</p>}
               {disc && <button className="ghost small" onClick={() => setDisc(null)}>Use detected</button>}

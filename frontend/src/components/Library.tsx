@@ -2,9 +2,12 @@ import { useMemo, useState } from 'react';
 import { api } from '../api';
 import { dependentsOf, describeLink, linkSources, linkState, type LinkState } from '../construct';
 import {
-  addAnimation, addObject, addStep, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
-  uncoupleObjects, updateDoc, useStore,
+  addAnimation, addObject, addStep, newObjectPos, coupleObjects, detachObjects, docLayout, getState, sceneCalls, selectClips, selectedObjectIds, selectObjects, setState, timecode, toast, toggleObjectSelection,
+  uncoupleObjects, updateDoc, useStore, addMarker, selectMarker,
 } from '../store';
+import { MARKER_CATEGORIES, markerTime } from '../timeline';
+import { markerWhere } from './Timeline';
+import type { MarkerCategory } from '../types';
 import { syncInstances } from '../templates';
 import type { Template } from '../types';
 import type { CatalogEntry } from '../types';
@@ -48,7 +51,7 @@ export function Library() {
     const selId = s.selection?.kind === 'object' ? s.selection.id : null;
     const sel = s.doc.objects.find((o) => o.id === selId);
     if (e.kind === 'mobject') {
-      addObject(e.name, [0, 0], sel?.name);
+      addObject(e.name, newObjectPos(e.name), sel?.name);
     } else {
       const target = sel?.name ?? s.doc.objects[s.doc.objects.length - 1]?.name ?? '';
       if (!target) return toast('Add an object first, then add animations');
@@ -71,7 +74,21 @@ export function Library() {
         <Constructions />
       ) : (
         <>
-          <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input className="search" placeholder={`Search ${tab === 'mobject' ? catalog?.mobjects.length ?? '' : catalog?.animations.length ?? ''} manim classes…`} value={query} onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setQuery('');
+                e.currentTarget.blur();
+              } else if (e.key === 'Enter') {
+                // Add the top result: type a name, press Enter.
+                const first = groups.flatMap(([, items]) => items)[0];
+                if (!first) return;
+                activate(first);
+                setQuery('');
+                e.currentTarget.blur();
+              }
+            }}
+          />
           {!catalog && <div className="muted pad">Loading manim…</div>}
           <div className="scroll">
             {tab === 'animation' && !query && (
@@ -126,12 +143,22 @@ function LibItem({ entry, onActivate, label }: { entry: CatalogEntry; onActivate
     <div
       className={`lib-item ${entry.kind}`}
       draggable
+      tabIndex={0}
+      role="button"
       title={entry.doc || entry.name}
+      onKeyDown={(ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return; // add it, as a double-click does
+        ev.preventDefault();
+        ev.stopPropagation();
+        leaveSearch();
+        onActivate(entry);
+      }}
       onDragStart={(ev) => {
         leaveSearch();
         ev.dataTransfer.setData(DND_TYPE, JSON.stringify({ kind: entry.kind, name: entry.name } satisfies DragPayload));
         ev.dataTransfer.effectAllowed = 'copy';
       }}
+      onClick={(ev) => ev.currentTarget.blur()} // keyboard focus only: after a mouse click Space plays again
       onDoubleClick={() => {
         leaveSearch();
         onActivate(entry);
@@ -147,15 +174,20 @@ function Outline() {
   const selection = useStore((s) => s.selection);
   const frame = useStore((s) => s.frame);
   const error = frame?.error;
-  const [view, setView] = useState<'objects' | 'relationships'>('objects');
+  const [view, setView] = useState<'objects' | 'order' | 'relationships' | 'markers'>('objects');
+  const markers = useStore((s) => s.doc.markers?.length ?? 0);
   const count = objects.filter((o) => o.link).length;
   const toggle = (
     <div className="seg outline-view">
       <button className={view === 'objects' ? 'on' : ''} onClick={() => setView('objects')}>Objects</button>
+      <button className={view === 'order' ? 'on' : ''} onClick={() => setView('order')} title="What is drawn on top of what at the playhead">Drawing order</button>
       <button className={view === 'relationships' ? 'on' : ''} onClick={() => setView('relationships')} title="Every relationship in the scene: what is coupled to what, and whether it is in effect">Relationships{count ? ` (${count})` : ''}</button>
+      <button className={view === 'markers' ? 'on' : ''} onClick={() => setView('markers')} title="Every marker: search them, filter by kind, jump to one">Markers{markers ? ` (${markers})` : ''}</button>
     </div>
   );
   if (view === 'relationships') return <div className="outline-wrap">{toggle}<Relationships /></div>;
+  if (view === 'order') return <div className="outline-wrap">{toggle}<DrawingOrder /></div>;
+  if (view === 'markers') return <div className="outline-wrap">{toggle}<CueList /></div>;
   return (
     <div className="outline-wrap">
     {toggle}
@@ -167,7 +199,21 @@ function Outline() {
           <div
             key={o.id}
             className={`outline-row ${selectedObjectIds(selection).includes(o.id) ? 'sel' : ''} ${error?.id === o.id ? 'err' : ''}`}
-            onClick={(e) => (e.shiftKey ? toggleObjectSelection(o.id) : selectObjects([o.id]))}
+            tabIndex={0}
+            role="button"
+            aria-pressed={selectedObjectIds(selection).includes(o.id)}
+            onClick={(e) => {
+              if (e.shiftKey) toggleObjectSelection(o.id);
+              else selectObjects([o.id]);
+              e.currentTarget.blur(); // keyboard focus only: after a mouse click Space plays again
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return; // select it
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.shiftKey) toggleObjectSelection(o.id);
+              else selectObjects([o.id]);
+            }}
           >
             <span className={`dot ${info?.visible ? 'on' : ''}`} title={info?.visible ? 'on screen now' : 'not on screen now'} />
             <span className="mono">{o.name}</span>
@@ -180,9 +226,87 @@ function Outline() {
   );
 }
 
+/**
+ * The objects on screen at the playhead, top first: manim draws later-added objects over earlier ones (z_index
+ * comes first). This is not the timeline's V lanes, which only order the animations of each Play together group.
+ */
+function DrawingOrder() {
+  const objects = useStore((s) => s.doc.objects);
+  const selection = useStore((s) => s.selection);
+  const frame = useStore((s) => s.frame);
+  const time = useStore((s) => s.time);
+  const shown = (frame?.objects ?? []).filter((i) => i.layer !== null && i.layer !== undefined && objects.some((o) => o.id === i.id))
+    .sort((a, b) => b.layer! - a.layer!);
+  const sel = selectedObjectIds(selection);
+  return (
+    <div className="scroll outline">
+      <p className="muted small pad order-note">
+        On screen at {timecode(time)}, top first. Objects added later are drawn over earlier ones; a <span className="mono">z_index</span> argument
+        overrides that. The timeline’s V1, V2… lanes don’t change it.
+      </p>
+      {shown.length === 0 && <div className="muted pad">Nothing is on screen at the playhead.</div>}
+      {shown.map((info, i) => {
+        const o = objects.find((x) => x.id === info.id)!;
+        return (
+          <div key={o.id} className={`outline-row ${sel.includes(o.id) ? 'sel' : ''}`} tabIndex={0} role="button" aria-pressed={sel.includes(o.id)}
+            aria-label={`${o.name}, ${i === 0 ? 'on top' : `${i + 1} from the top`}`}
+            onClick={(e) => { selectObjects([o.id]); e.currentTarget.blur(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectObjects([o.id]); } }}>
+            <span className="order-n muted">{i + 1}</span>
+            <span className="mono">{o.name}</span>
+            <span className="muted">{o.ctor}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const STATE_LABEL: Record<LinkState, string> = { coupled: 'coupled', uncoupled: 'paused', frozen: 'frozen' };
 
 /** Overview of every relationship: state, sources, timeline switches; couple, uncouple and forget from here. */
+/** Every marker in time order: search names and notes, filter by kind; a click jumps to it and shows its settings. */
+function CueList() {
+  const doc = useStore((s) => s.doc);
+  const timeline = useStore((s) => s.timeline);
+  const selection = useStore((s) => s.selection);
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<MarkerCategory | 'all'>('all');
+  const lay = docLayout(doc, timeline);
+  const all = (doc.markers ?? []).map((m) => ({ m, t: markerTime(m, lay) })).sort((a, b) => a.t - b.t);
+  const q = query.trim().toLowerCase();
+  const shown = all.filter(({ m }) => (kind === 'all' || m.category === kind) && (!q || `${m.label ?? ''} ${m.notes ?? ''}`.toLowerCase().includes(q)));
+  const kindLabel = (c?: MarkerCategory) => MARKER_CATEGORIES.find((k) => k.id === c)?.label;
+  return (
+    <div className="scroll outline cue-list">
+      <div className="cue-tools">
+        <input className="field" type="search" placeholder="Search markers" aria-label="Search markers" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <div className="seg cue-kinds" role="group" aria-label="Show markers of kind">
+          {[{ id: 'all' as const, label: 'All' }, ...MARKER_CATEGORIES].map((c) => (
+            <button key={c.id} className={kind === c.id ? 'on' : ''} aria-pressed={kind === c.id} onClick={() => setKind(c.id)}>{c.label}</button>
+          ))}
+        </div>
+      </div>
+      {all.length === 0 && (
+        <div className="muted pad">No markers yet. Press <kbd>M</kbd> or <button className="ghost small" onClick={() => selectMarker(addMarker())}>add one at the playhead</button>; with a clip selected, it is attached to the clip and moves with it.</div>
+      )}
+      {all.length > 0 && shown.length === 0 && <div className="muted pad">No marker matches.</div>}
+      {shown.map(({ m, t }) => (
+        <div key={m.id} className={`outline-row cue ${selection?.kind === 'marker' && selection.id === m.id ? 'sel' : ''}`} tabIndex={0} role="button"
+          aria-pressed={selection?.kind === 'marker' && selection.id === m.id} aria-label={`${m.label || 'Marker'} at ${timecode(t)}${m.category ? `, ${kindLabel(m.category)}` : ''}`}
+          title={`${markerWhere(m, doc)}${m.notes ? `\n${m.notes}` : ''}`}
+          onClick={(e) => { selectMarker(m.id); e.currentTarget.blur(); }}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectMarker(m.id); } }}>
+          <span className={`cue-dot ${m.category ?? ''}`} />
+          <span className="mono small">{timecode(t)}</span>
+          <span className="cue-name">{m.label || <i className="muted">Marker</i>}{m.anchor && <span className="muted" title={markerWhere(m, doc)}> ⛓</span>}</span>
+          {m.category && <span className="muted">{kindLabel(m.category)}</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Relationships() {
   const doc = useStore((s) => s.doc);
   const lay = useStore((s) => docLayout(s.doc, s.timeline));
@@ -200,7 +324,7 @@ function Relationships() {
   return (
     <div className="scroll relationships">
       <div className="rel-bar">
-        <select className="field" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
+        <select className="field" aria-label="Show" value={filter} onChange={(e) => setFilter(e.target.value as typeof filter)}>
           <option value="all">All ({linked.length})</option>
           <option value="coupled">Coupled</option>
           <option value="uncoupled">Paused</option>
@@ -255,7 +379,7 @@ function Constructions() {
   const row = (t: Template, remove?: () => void) => (
     <div key={t.id} className="construction-row" title={t.description}>
       <button className="construction-name" onClick={() => setState({ panel: 'insert', panelData: t })}>{t.name}</button>
-      <span className="muted small">{t.objects.length} objects</span>
+      <span className="muted small">{t.objects.length} {t.objects.length === 1 ? 'object' : 'objects'}</span>
       {!t.builtin && <button className="x-btn" title="Update linked instances of this template" onClick={() => syncInstances(t.id)}>⟳</button>}
       {remove && <button className="x-btn" title="Remove" onClick={() => { if (confirm(`Remove "${t.name}"?`)) remove(); }}>×</button>}
     </div>

@@ -8,7 +8,7 @@ import { ratePath } from './rates';
 import { Tip, type TipContent } from './Tip';
 
 /** Text input that keeps local state while typing and commits on every change. */
-export function Field({ value, onChange, placeholder, className, list, multiline, onBlur }: {
+export function Field({ value, onChange, placeholder, className, list, multiline, onBlur, autoFocus, ariaLabel }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -16,9 +16,12 @@ export function Field({ value, onChange, placeholder, className, list, multiline
   list?: string;
   multiline?: boolean;
   onBlur?: (v: string) => void;
+  autoFocus?: boolean; // focus it when it appears, with its text selected
+  ariaLabel?: string; // its name, when no visible label wraps it
 }) {
   const [local, setLocal] = useState(value);
   useEffect(() => setLocal(value), [value]);
+  const cancelled = useRef(false);
   const props = {
     value: local,
     placeholder,
@@ -28,7 +31,24 @@ export function Field({ value, onChange, placeholder, className, list, multiline
       setLocal(e.target.value);
       onChange(e.target.value);
     },
-    onBlur: () => onBlur?.(local),
+    onBlur: () => {
+      if (!cancelled.current) onBlur?.(local);
+      cancelled.current = false;
+    },
+    // a field that takes its value when left (a name): Enter takes it now, Esc puts the old one back
+    onKeyDown: onBlur && !multiline ? (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      if (e.key === 'Enter') e.currentTarget.blur();
+      else if (e.key === 'Escape') {
+        cancelled.current = true;
+        setLocal(value);
+        e.currentTarget.blur();
+      } else return;
+      e.preventDefault();
+      e.stopPropagation();
+    } : undefined,
+    autoFocus,
+    'aria-label': ariaLabel,
+    onFocus: autoFocus ? (e: { currentTarget: { select: () => void } }) => e.currentTarget.select() : undefined,
   };
   return multiline ? <textarea {...props} rows={Math.min(14, Math.max(2, local.split('\n').length + 1))} /> : <input {...props} list={list} />;
 }
@@ -107,7 +127,7 @@ export function ColorField({ value, onChange, placeholder }: { value: string; on
   return (
     <div className="row color-field">
       <button ref={btn} className={`swatch ${hex ? '' : 'none'}`} style={{ background: hex ?? undefined }} onClick={() => setOpen(!open)} title="Pick a color" />
-      <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" className="mono" />
+      <Field value={value} onChange={onChange} placeholder={placeholder} list="me-colors" className="mono" ariaLabel="Color" />
       {open && rect && createPortal(
         <>
           <div className="popover-back" onPointerDown={() => setOpen(false)} />
@@ -515,7 +535,7 @@ function ColorMapField({ value, onChange }: { value: string; onChange: (v: strin
         <div key={i} className="row list-row">
           <Field value={pyString(k) ?? k} placeholder="text" onChange={(t) => write(items.map((x, j) => (j === i ? [pyQuote(t), x[1]] : x)))} />
           <ColorField value={v} onChange={(c) => write(items.map((x, j) => (j === i ? [x[0], c || 'WHITE'] : x)))} />
-          <button className="x-btn" onClick={() => write(items.filter((_, j) => j !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, j) => j !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, ['"x"', 'YELLOW']])}>+ color a substring</button>
@@ -550,7 +570,7 @@ function DictField({ value, onChange, hint, def }: { value: string; onChange: (v
       })}
       <div className="row">
         {hintParams.length > 0 ? (
-          <select className="field mono" value="" onChange={(e) => add(e.target.value)}>
+          <select className="field mono" aria-label="Add" value="" onChange={(e) => add(e.target.value)}>
             <option value="">+ {hint} option…</option>
             {hintParams.filter((p) => !used.has(p.name)).map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
           </select>
@@ -606,7 +626,7 @@ function ValuesField({ value, onChange, star, def }: { value: string; onChange: 
         {items.map((it, i) => (
           <span key={i} className="chip value-chip">
             <Field value={it} className="mono" onChange={(v) => write(items.map((x, k) => (k === i ? v || '0' : x)))} />
-            <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+            <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
           </span>
         ))}
         <button className="ghost small" onClick={() => write([...items, fresh])}>+ add</button>
@@ -630,7 +650,7 @@ function PairsField({ value, onChange, star, vertices }: { value: string; onChan
       {items.map(([a, b], i) => (
         <div key={i} className="row list-row">
           {pick(a, (v) => end(i, 0, v))}<span className="muted">—</span>{pick(b, (v) => end(i, 1, v))}
-          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, [vertices[0] ?? '1', vertices[1] ?? vertices[0] ?? '2']])}>+ edge</button>
@@ -646,11 +666,11 @@ function AnimationField({ value, onChange }: { value: string; onChange: (v: stri
   const write = (c: string, t: string) => onChange(c ? `${c}(${t})` : '');
   return (
     <div className="row">
-      <select className="field mono" value={cls} onChange={(e) => write(e.target.value, target || names[0] || '')}>
+      <select className="field mono" aria-label="Animation" value={cls} onChange={(e) => write(e.target.value, target || names[0] || '')}>
         <option value="">— animation —</option>
         {catalog?.animations.map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
       </select>
-      <select className="field mono" value={target} disabled={!cls} onChange={(e) => write(cls, e.target.value)}>
+      <select className="field mono" aria-label="Target object" value={target} disabled={!cls} onChange={(e) => write(cls, e.target.value)}>
         {[...new Set([...names, target])].map((n) => <option key={n} value={n}>{n || '—'}</option>)}
       </select>
     </div>
@@ -666,7 +686,7 @@ function DictsField({ value, onChange, hint }: { value: string; onChange: (v: st
         <div key={i} className="row list-row">
           <span className="muted small idx">{i}</span>
           <DictField value={d === '{}' ? '' : d} hint={hint} def="" onChange={(v) => write(items.map((x, k) => (k === i ? v || '{}' : x)))} />
-          <button className="x-btn" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
+          <button className="x-btn" title="Remove" aria-label="Remove" onClick={() => write(items.filter((_, k) => k !== i))}>×</button>
         </div>
       ))}
       <button className="ghost small" onClick={() => write([...items, '{}'])}>+ add</button>

@@ -174,3 +174,9 @@ def test_v3_disabled_and_hidden_clips_are_kept_disabled():
     kinds = [(s["kind"], bool(s.get("disabled"))) for s in d["timeline"]]
     assert kinds == [("play", False), ("play", True), ("play", True)]
     assert body(d) == ["self.play(Create(sq), run_time=1)"]
+
+
+def test_an_object_coming_on_with_its_first_animation_is_only_noted():
+    d = scene(play(animate("move", "sq", ".shift(RIGHT)")), play(anim("later", "Indicate", "sq")))
+    by = {x["id"]: x for x in codegen.generate(d).diagnostics}
+    assert set(by) == {"move"} and by["move"]["level"] == "info", by

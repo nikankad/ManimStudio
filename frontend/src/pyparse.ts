@@ -88,7 +88,7 @@ export function renameIdentifiers(src: string, names: Map<string, string>): stri
 }
 
 /** Index of the bracket closing the one at `start`, or -1. */
-function closing(src: string, start: number): number {
+export function closing(src: string, start: number): number {
   let depth = 0;
   let quote: string | null = null;
   for (let i = start; i < src.length; i++) {

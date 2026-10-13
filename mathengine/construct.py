@@ -37,7 +37,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from . import mathexpr, timeline
+from . import defs, mathexpr, timeline
 
 # ----------------------------------------------------------------------------- classification
 
@@ -52,7 +52,10 @@ TEXT_CTORS = {"Text", "MarkupText", "DecimalNumber", "Integer", "Paragraph"}
 FOLLOW_KINDS = {"attach", "midpoint", "on_graph", "on_circle", "coords", "measure", "intersection", "projection"}
 REDRAW_KINDS = {"segment", "circle2", "polygon", "angle", "graph", "tangent", "secant", "area", "riemann", "brace", "highlight",
                 "perpendicular", "parallel"}
-KINDS = FOLLOW_KINDS | REDRAW_KINDS
+# A text whose string shows values: "t = {t:2}" (mathengine.construct._text_lines). Rebuilt when a parameter it
+# shows changes; with none, an ordinary Text.
+TEXT_KINDS = {"text"}
+KINDS = FOLLOW_KINDS | REDRAW_KINDS | TEXT_KINDS
 # Kinds whose object is an ordinary one while uncoupled (a point at its position, a line with its own ends…);
 # the others are built once from their sources while uncoupled.
 STANDALONE_KINDS = FOLLOW_KINDS | {"segment", "circle2", "polygon", "perpendicular", "parallel", "tangent", "secant"}
@@ -95,6 +98,7 @@ SOURCES: dict[str, list[tuple[str, set[str] | None, bool]]] = {
     "riemann": [("graph", {"graph"}, True), ("bounded", {"graph"}, False)],
     "brace": [("target", None, True)],
     "highlight": [("target", None, True)],
+    "text": [],
 }
 # Expression fields (math text over parameters) of each kind.
 EXPRS: dict[str, list[str]] = {
@@ -629,6 +633,7 @@ class Plan:
     invalid_anims: set[str] = field(default_factory=set)  # animations that can't be compiled (left out)
     trackers: set[str] = field(default_factory=set)
     mobject_names: set[str] = field(default_factory=set)  # objects that are drawn (not ValueTrackers)
+    helpers: set[str] = field(default_factory=set)  # math helpers its expressions need (mathexpr.HELPERS)
 
     def diag(self, oid: str, level: str, message: str, kind: str = "object") -> None:
         self.diagnostics.append(Diagnostic(oid, level, message, kind))
@@ -662,7 +667,8 @@ def _with(prefix: str, rest: str) -> str:
 
 
 def _join_chain(chain: str) -> str:
-    chain = " ".join(line.strip() for line in (chain or "").splitlines() if line.strip())
+    lines = [line.strip() for line in (chain or "").splitlines() if line.strip()]
+    chain = "".join(("" if not k or line.startswith(".") else " ") + line for k, line in enumerate(lines))  # .a() .b(): .a().b()
     if chain and not chain.startswith("."):
         chain = "." + chain
     return chain
@@ -677,7 +683,28 @@ class _Ctx:
         self.by_name = {o["name"]: o for o in self.objects}
         self.index = {o["id"]: i for i, o in enumerate(self.objects)}
         self.trackers = {o["name"] for o in self.objects if base_ctor(o) == "ValueTracker"}
+        self.scope = defs.scope(doc.get("defs") or [])  # the scene's definitions: math can use them by name
         self.tracker_index = {o["name"]: self.index[o["id"]] for o in self.objects if base_ctor(o) == "ValueTracker"}
+        # the loop counters around where each object is created (math can use them; see _expr)
+        self.loops: dict[str, list[str]] = {}
+        self.all_loops: set[str] = set()
+        stack: list[str | None] = []
+        around: dict[str, list[str]] = {}
+        for st in doc.get("timeline") or []:
+            if st.get("kind") == "block" and not timeline.is_clause(st):
+                v = defs.loop_var(st)
+                stack.append(v)
+                if v:
+                    self.all_loops.add(v)
+            elif st.get("kind") == "end" and stack:
+                stack.pop()
+            around[st["id"]] = [v for v in stack if v]
+        for o in self.objects:
+            self.loops[o["id"]] = around.get(o.get("after") or "", [])
+        self.bound: set[str] = set()  # the counters the object being built uses
+
+    def scope_for(self, obj: dict) -> dict[str, tuple]:
+        return {**self.scope, **{v: ("value", "loop") for v in self.loops.get(obj["id"], []) if v not in self.scope}}
 
     def name(self, oid: str) -> str:
         return self.by_id[oid]["name"]
@@ -797,7 +824,18 @@ def _check_link(obj: dict, ctx: _Ctx, cyclic: set[str]) -> str | None:
 
 def _expr(ctx: _Ctx, obj: dict, text, default: str, uses: list[str]) -> str:
     src = str(text if text not in (None, "") else default)
-    py, params = mathexpr.compile_value(src, ctx.trackers)
+    here = ctx.scope_for(obj)
+    try:
+        py, params = mathexpr.compile_value(src, ctx.trackers, here, ctx.plan.helpers)
+    except mathexpr.ExprError as e:
+        outside = next((v for v in sorted(ctx.all_loops - set(here)) if re.search(rf"\b{v}\b", src)), None)
+        if outside:
+            raise mathexpr.ExprError(f"{outside} is the counter of a Repeat, and {obj['name']} is created outside it.",
+                                     "Create it inside the Repeat: Properties › In the code › Created.") from e
+        raise
+    for v in ctx.loops.get(obj["id"], []):
+        if v not in ctx.scope and re.search(rf"\b{v}\b", py):
+            ctx.bound.add(v)
     me = ctx.index[obj["id"]]
     for p in params:
         if ctx.tracker_index[p] > me:
@@ -859,7 +897,7 @@ def plan(doc: dict) -> Plan:
                     p.switchable.add(obj["name"])
                 continue
             except mathexpr.ExprError as exc:
-                why = exc.message
+                why = f"{exc.message} {exc.hint}".strip()
             except KeyError as exc:
                 why = f"Missing source ({exc})."
         if off and link.get("kind") in STANDALONE_KINDS:
@@ -988,6 +1026,17 @@ def _equation(obj: dict, p: Plan) -> bool:
 
 
 def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
+    """Statements that build a constructed object (_build_link). Created in a loop and using its counter, the
+    functions it is kept up with keep the counter of their own run (``lambda m, k=k:``), not the loop's last."""
+    ctx.bound = set()
+    lines = _build_link(obj, ctx, switched)
+    if ctx.bound:
+        bind = ", ".join(f"{v}={v}" for v in sorted(ctx.bound))
+        lines = [ln.replace("lambda m: ", f"lambda m, {bind}: ").replace("lambda: ", f"lambda {bind}: ") for ln in lines]
+    return lines
+
+
+def _build_link(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     """Statements that build a constructed object. ``switched``: couple / uncouple steps switch it.
 
     An uncoupled (``off``) standalone object is emitted as an ordinary object; these are then the
@@ -1000,6 +1049,8 @@ def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     p = ctx.plan
     frozen = bool(link.get("frozen"))
     off = bool(link.get("off")) and not frozen
+    if kind == "text":
+        return _text_lines(obj, ctx, still=frozen or off)
     uses: list[str] = []  # parameters read
     srcs = [ctx.name(s) for s in link_sources(obj)]
     args = obj.get("args") or {}
@@ -1039,6 +1090,55 @@ def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     if off:
         return [f"{name} = {cvar}.redraw(lambda: {build}{deps()}, paused=True)"]
     return [f"{name} = {cvar}.redraw(lambda: {build}{deps()})"]
+
+
+_PLACEHOLDER_NAME = re.compile(r"[A-Za-z_][\w.]*(\(\)|\[\d+\])?")
+
+
+def template_source(obj: dict, ctx: _Ctx, uses: list[str]) -> str:
+    """The f-string of a text template. ``{expr}`` shows a math value (6 significant digits), ``{expr:2}`` with 2
+    decimals; ``{{`` and ``}}`` are braces themselves."""
+    text = str((obj.get("link") or {}).get("template") or "")
+    out, i = "", 0
+    while i < len(text):
+        ch = text[i]
+        if text.startswith("{{", i) or text.startswith("}}", i):
+            out += ch * 2
+            i += 2
+        elif ch == "{":
+            j = text.find("}", i)
+            if j < 0:
+                raise mathexpr.ExprError("A { in the text has no } to close it.", "Write {{ for a brace itself.")
+            m = re.fullmatch(r"(.*?)(?::\s*(\d+))?\s*", text[i + 1:j], re.S)
+            expr, digits = m.group(1), m.group(2)
+            if not expr.strip():
+                raise mathexpr.ExprError("There is an empty {} in the text.", "Put a value in it, like {t:2}.")
+            py = _expr(ctx, obj, expr, "0", uses)
+            if not _PLACEHOLDER_NAME.fullmatch(py):
+                py = f"({py})"
+            out += "{" + py + (f":.{int(digits)}f" if digits else ":g") + "}"
+            i = j + 1
+        elif ch == "}":
+            raise mathexpr.ExprError("A } in the text has no { before it.", "Write }} for a brace itself.")
+        else:
+            out += ch
+            i += 1
+    return f'f"{out}"' if not re.search(r'["\\\n]', out) else "f" + repr(out)
+
+
+def _text_lines(obj: dict, ctx: _Ctx, still: bool) -> list[str]:
+    """A Text showing values: built once where it is created, or rebuilt (keeping its place, size and the style
+    animations gave it) whenever a parameter it shows changes."""
+    name = obj["name"]
+    uses: list[str] = []
+    made = f"{base_ctor(obj)}({_with(template_source(obj, ctx, uses), _call_kwargs(obj.get('args') or {}, {'*'}))})"
+    after = _transforms(obj, name, with_pos=True)
+    if still or not uses:
+        return [f"{name} = {made}"] + after
+    p = ctx.plan
+    p.uses_constraints = True
+    build = made + "".join(line[len(name):] for line in after)  # each is name.method(…): chained on the new one
+    return [f"{name} = {p.constraints_var}.redraw(lambda: {build}{''.join(f', {u}' for u in uses)})"]
 
 
 def _offset(link: dict) -> str:
@@ -1208,7 +1308,7 @@ def _builder(obj: dict, ctx: _Ctx, uses: list[str]) -> str:
         return f"Angle({_with(', '.join([n(link['l1']), n(link['l2'])] + extra), kw('line1', 'line2', 'radius', 'other_angle', 'quadrant'))})"
     if kind == "graph":
         axes = n(link["axes"])
-        body, params = mathexpr.compile_function(str(link.get("expr", "")), ctx.trackers)
+        body, params = mathexpr.compile_function(str(link.get("expr", "")), ctx.trackers, scope=ctx.scope, helpers=ctx.plan.helpers)
         me = ctx.index[obj["id"]]
         for prm in params:
             if ctx.tracker_index[prm] > me:

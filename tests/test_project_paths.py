@@ -41,7 +41,7 @@ def test_open_and_cli_loading_resolve_renamed_legacy_project(renamed_project):
     path, old_path, doc = renamed_project
     app = handler()
     response = app.api_project_open({}, {"path": str(old_path)})
-    assert response == {"doc": doc, "path": str(path)}
+    assert response == {"doc": doc, "path": str(path), "recovery": []}
     assert app.app.project_path == str(path)
     assert load_project(old_path) == doc
 

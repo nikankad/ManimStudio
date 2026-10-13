@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { api, askPath, type LineKind } from '../api';
-import { getState, selectClips, selectObjects, setState, toast, updateDoc, useStore } from '../store';
+import { api, askPath, type CodeSpan, type LineKind } from '../api';
+import { getState, projectEpoch, selectClips, selectObjects, setState, toast, updateDoc, useStore } from '../store';
 import type { SceneDoc } from '../types';
+import { findAnim, rootName } from '../timeline';
 import { importManimFile } from './Panels';
 import { codeKeys, highlight } from './CodeArea';
+import { keys } from '../keys';
 
 type LineMap = Record<string, [LineKind, string]>;
 
@@ -19,27 +21,35 @@ export function CodeEditor() {
   const image = useStore((s) => s.frame?.image);
   const [text, setText] = useState('');
   const [linemap, setLinemap] = useState<LineMap>({});
+  const [spans, setSpans] = useState<Record<string, CodeSpan[]>>({});
   const [status, setStatus] = useState<{ kind: 'ok' | 'pending' | 'error'; message: string; line?: number | null; notes?: string[] }>({ kind: 'ok', message: '' });
   const [live, setLive] = useState(true);
+  const lines = useMemo(() => text.split('\n'), [text]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   // The document our own code edit produced, and the code text it came from: no need to rewrite the editor.
   const applied = useRef<{ doc: SceneDoc; text: string } | null>(null);
   const generated = useRef<{ doc: SceneDoc; text: string } | null>(null);
+  const generation = useRef(0);
   const edited = generated.current !== null && text !== generated.current.text && text !== applied.current?.text;
+  const runFailed = status.kind === 'ok' && !edited && !!error; // the code reads fine, but running the scene fails
 
   // Show the document's code: when it changes elsewhere, and after typing here (then on leaving the editor, so the
   // text isn't rewritten under the cursor).
   const regenerate = () => {
     const before = taRef.current?.value ?? '';
     const d = getState().doc;
+    const opened = projectEpoch();
+    const request = ++generation.current;
     api.code(d).then((r) => {
+      if (!taRef.current || projectEpoch() !== opened || getState().doc !== d || request !== generation.current) return;
       if ((taRef.current?.value ?? '') !== before) return; // typed meanwhile: that wins
       if (before && before !== generated.current?.text && before !== applied.current?.text) toast('The scene changed, so the code edits that weren’t applied were replaced');
       generated.current = { doc: d, text: r.code };
       applied.current = null;
       setLinemap(r.linemap);
+      setSpans(r.spans ?? {});
       setText(r.code);
       setStatus((st) => (st.kind === 'error' || st.kind === 'pending' ? { kind: 'ok', message: '' } : st));
     }).catch((e) => toast(String(e)));
@@ -60,8 +70,11 @@ export function CodeEditor() {
 
   async function apply(code: string) {
     const base = getState().doc;
+    const opened = projectEpoch();
     try {
       const res = await api.importCode(code, base, base.scene.name);
+      // Import runs asynchronously. Never replace a different project or newer timeline edits.
+      if (projectEpoch() !== opened || getState().doc !== base) return;
       if (taRef.current && taRef.current.value !== code) return; // typed on meanwhile; the next pause applies that
       if (!res.ok) return setStatus({ kind: 'error', message: res.error, line: res.line });
       updateDoc((d) => {
@@ -71,39 +84,81 @@ export function CodeEditor() {
       applied.current = { doc: getState().doc, text: code };
       setStatus({ kind: 'ok', message: 'Applied', notes: res.notes });
     } catch (e) {
+      if (projectEpoch() !== opened || getState().doc !== base) return;
       setStatus({ kind: 'error', message: String(e) });
     }
   }
 
-  // Lines of the selected element (and of the element with an error).
-  const refLines = (kind: string | null, id: string | null) =>
-    !kind || !id ? new Set<number>() : new Set(Object.entries(linemap).filter(([, r]) => r[1] === id && (r[0] === kind || (kind === 'step' && r[0] === 'anim') || (kind === 'anim' && r[0] === 'step'))).map(([l]) => Number(l)));
-  const selIds = selection?.kind === 'object' ? [selection.id] : selection?.kind === 'objects' ? selection.ids : selection?.kind === 'clips' ? selection.ids : [];
-  const selLines = useMemo(() => {
-    if (edited) return new Set<number>();
-    const ids = new Set(selIds);
-    return new Set(Object.entries(linemap).filter(([, r]) => ids.has(r[1])).map(([l]) => Number(l)));
-  }, [linemap, selIds.join(','), edited]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Where an element's code is: its own span, else the statement it is part of (an animation in a play kept as one).
+  const spansOf = (id: string): CodeSpan[] => {
+    if (spans[id]) return spans[id];
+    const r = findAnim(doc, id);
+    return r ? spansOf(r.parent?.id ?? r.step.id) : Object.entries(linemap).filter(([, x]) => x[1] === id).map(([l]) => [Number(l), 0, Number(l), Infinity]);
+  };
+  const linesOf = (list: CodeSpan[]) => new Set(list.flatMap(([l, , el]) => Array.from({ length: el - l + 1 }, (_, i) => l + i)));
+  const refLines = (kind: string | null, id: string | null) => (!kind || !id ? new Set<number>() : linesOf(spansOf(id)));
+  // What is selected: objects and clips (steps, animations); a marker stands for what it is attached to.
+  const selIds = selection?.kind === 'object' ? [selection.id] : selection?.kind === 'objects' ? selection.ids : selection?.kind === 'clips' ? selection.ids
+    : selection?.kind === 'marker' ? [doc.markers?.find((m) => m.id === selection.id)?.anchor?.id].filter((x): x is string => !!x) : [];
+  const { selLines, marks, relLines } = useMemo(() => {
+    const none = { selLines: new Set<number>(), marks: new Map<number, [number, number][]>(), relLines: new Set<number>() };
+    if (edited) return none;
+    // the block: an animation's whole statement (its self.play), anything else its own code
+    const own = selIds.flatMap((id) => spansOf(findAnim(doc, id)?.step.id ?? id));
+    // the exact code of each selected animation, part by part of its lines
+    const marks = new Map<number, [number, number][]>();
+    for (const id of selIds) {
+      if (!spans[id] || !findAnim(doc, id)) continue;
+      for (const [l, c, el, ec] of spans[id]) {
+        for (let n = l; n <= el; n++) {
+          const ln = lines[n - 1] ?? '';
+          const from = n === l ? c : ln.length - ln.trimStart().length;
+          marks.set(n, [...(marks.get(n) ?? []), [from, (n === el ? ec : ln.length) - from]]);
+        }
+      }
+    }
+    // the objects the selected clips animate or change: where they are made
+    const targets = new Set(selIds.flatMap((id) => {
+      const a = findAnim(doc, id)?.anim;
+      const step = doc.timeline.find((s) => s.id === id);
+      const t = a?.target ?? (step?.kind === 'apply' ? step.target : undefined) ?? '';
+      return t.split(',').map((x) => rootName(x.trim())).filter(Boolean);
+    }));
+    const rel = doc.objects.filter((o) => targets.has(o.name)).flatMap((o) => spansOf(o.id));
+    const selLines = linesOf(own);
+    return { selLines, marks, relLines: new Set([...linesOf(rel)].filter((n) => !selLines.has(n))) };
+  }, [spans, linemap, doc, selIds.join(','), edited, text]); // eslint-disable-line react-hooks/exhaustive-deps
   const errLines = useMemo(() => {
     if (status.kind === 'error' && status.line) return new Set([status.line]);
     return edited || !error ? new Set<number>() : refLines(error.kind, error.id);
-  }, [linemap, error, status, edited]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [linemap, spans, error, status, edited]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bring the selection into view (when the selection comes from elsewhere).
   useEffect(() => {
     const first = Math.min(...selLines);
+    const last = Math.max(...selLines);
     const ta = taRef.current;
     if (!ta || !Number.isFinite(first) || ta === document.activeElement) return;
     const lh = lineHeight(ta);
     const y = (first - 1) * lh;
-    if (y < ta.scrollTop || y > ta.scrollTop + ta.clientHeight - lh * 3) ta.scrollTop = Math.max(0, y - ta.clientHeight / 3);
+    const end = last * lh;
+    // the whole block in view (its top, when it is taller than the editor)
+    if (y < ta.scrollTop || end > ta.scrollTop + ta.clientHeight - lh) ta.scrollTop = Math.max(0, Math.min(y - lh * 2, end - ta.clientHeight + lh * 2));
   }, [selLines]);
 
   // Clicking a line selects what it is (an object, a statement, an animation).
   const pickAtCaret = () => {
     const ta = taRef.current;
     if (!ta || edited || ta.selectionStart !== ta.selectionEnd) return;
-    const line = ta.value.slice(0, ta.selectionStart).split('\n').length;
+    const before = ta.value.slice(0, ta.selectionStart).split('\n');
+    const line = before.length;
+    const col = before[line - 1].length;
+    // the innermost animation under the caret (one of several in a self.play, or inside a group)
+    const inside = ([l, c, el, ec]: CodeSpan) => (line > l || (line === l && col >= c)) && (line < el || (line === el && col <= ec));
+    const size = ([l, c, el, ec]: CodeSpan) => (el - l) * 1e4 + ec - c;
+    const hit = Object.entries(spans).filter(([id, list]) => findAnim(doc, id) && list.some(inside))
+      .sort(([, a], [, b]) => size(a[0]) - size(b[0]))[0];
+    if (hit) return void selectClips([hit[0]]);
     const ref = linemap[String(line)];
     if (!ref) return;
     if (ref[0] === 'object') selectObjects([ref[1]]);
@@ -129,7 +184,6 @@ export function CodeEditor() {
   };
   useLayoutEffect(syncScroll, [text]);
 
-  const lines = text.split('\n');
   const highlighted = useMemo(() => lines.map(highlight), [text]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -138,11 +192,11 @@ export function CodeEditor() {
         <button className="ghost small tab-btn" onClick={() => setState({ centerTab: 'program' })} title="Back to the canvas">Program</button>
         <span className="tab-btn on">Code: {doc.scene.name}.py</span>
         <span className="spacer" />
-        <span className={`code-status ${status.kind}`} title={status.message}>
-          {status.kind === 'pending' ? 'Reading…' : status.kind === 'error' ? `⚠ ${status.message}` : edited ? 'Edited' : 'In sync with the timeline'}
+        <span className={`code-status ${runFailed ? 'error' : status.kind}`} title={runFailed ? error!.message : status.message}>
+          {status.kind === 'pending' ? 'Reading…' : status.kind === 'error' ? `⚠ ${status.message}` : runFailed ? `⚠ ${error!.message}` : edited ? 'Edited' : 'In sync with the timeline'}
         </span>
         <label className="toggle" title="Read the code into the scene as you type (after a short pause)"><input type="checkbox" checked={live} onChange={(e) => setLive(e.target.checked)} /> Live</label>
-        {!live && <button className="primary small" disabled={!edited} onClick={() => void apply(text)} title="Read the code into the scene (⌘/Ctrl+Enter)">Apply</button>}
+        {!live && <button className="primary small" disabled={!edited} onClick={() => void apply(text)} title={`Read the code into the scene (${keys('⌘')}Enter)`}>Apply</button>}
         <button className="ghost small" onClick={() => navigator.clipboard.writeText(text).then(() => toast('Copied'))}>Copy</button>
         <button className="ghost small" title="Open a manim .py file as a new project" onClick={() => void importManimFile().catch((e) => toast(String(e)))}>Open .py…</button>
         <button className="ghost small" onClick={async () => {
@@ -158,7 +212,10 @@ export function CodeEditor() {
           <div className="code-back" ref={backRef} aria-hidden>
             <div className="code-lines">
               {highlighted.map((html, i) => (
-                <div key={i} className={`code-ln ${selLines.has(i + 1) ? 'sel' : ''} ${errLines.has(i + 1) ? 'err' : ''}`} dangerouslySetInnerHTML={{ __html: html || ' ' }} />
+                <div key={i} className={`code-ln ${blockClass(selLines, i + 1, 'sel')} ${blockClass(relLines, i + 1, 'rel')} ${errLines.has(i + 1) ? 'err' : ''}`}>
+                  <span dangerouslySetInnerHTML={{ __html: html || ' ' }} />
+                  {marks.get(i + 1)?.map(([c, n], k) => <i key={k} className="code-mark" style={{ left: `calc(var(--code-pad) + ${c}ch)`, width: `${n}ch` }} />)}
+                </div>
               ))}
             </div>
           </div>
@@ -194,6 +251,12 @@ export function CodeEditor() {
       )}
     </div>
   );
+}
+
+/** A highlighted line's place in its block (the lines highlighted together): one box around the block. */
+function blockClass(set: Set<number>, n: number, name: string): string {
+  if (!set.has(n)) return '';
+  return `${name}${set.has(n - 1) ? '' : ` ${name}-top`}${set.has(n + 1) ? '' : ` ${name}-bottom`}`;
 }
 
 function lineHeight(el: HTMLElement): number {

@@ -4,29 +4,14 @@
 
 import { useEffect, useState } from 'react';
 import { api, type AppInfo, type UpdateInfo } from '../api';
+import { pref, setPref } from '../prefs';
 import { setState, toast, useStore } from '../store';
 
 const CHECK_KEY = 'mathengine.checkUpdates';
 const DISMISS_KEY = 'mathengine.dismissedUpdate';
 
-function stored(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function store(key: string, value: string) {
-  try {
-    window.localStorage.setItem(key, value);
-  } catch {
-    /* private mode or blocked storage: the setting just isn't remembered */
-  }
-}
-
-export const checksForUpdates = () => stored(CHECK_KEY) !== 'off';
-export const setChecksForUpdates = (on: boolean) => store(CHECK_KEY, on ? 'on' : 'off');
+export const checksForUpdates = () => pref(CHECK_KEY) !== 'off';
+export const setChecksForUpdates = (on: boolean) => setPref(CHECK_KEY, on ? 'on' : 'off');
 
 /** "0.2.0 (nightly abc1234)" */
 export function versionLabel(info: AppInfo | null): string {
@@ -48,7 +33,7 @@ export function UpdateNotice() {
     if (!checksForUpdates()) return;
     const t = window.setTimeout(() => {
       api.updateCheck()
-        .then((u) => u.available && u.latest !== stored(DISMISS_KEY) && setUpdate(u))
+        .then((u) => u.available && u.latest !== pref(DISMISS_KEY) && setUpdate(u))
         .catch(() => undefined); // offline: no notice
     }, 3000); // after start-up work
     return () => clearTimeout(t);
@@ -57,7 +42,7 @@ export function UpdateNotice() {
   return (
     <span className="update-pill" title={`You have ${versionLabel(update)}. Open the release page to download ${update.latest}.`}>
       <button className="ghost small" onClick={() => openReleases(update.url ?? update.releases)}>Update {update.latest}</button>
-      <button className="x-btn" title="Hide until the next version" onClick={() => { store(DISMISS_KEY, update.latest ?? ''); setUpdate(null); }}>×</button>
+      <button className="x-btn" title="Hide until the next version" onClick={() => { setPref(DISMISS_KEY, update.latest ?? ''); setUpdate(null); }}>×</button>
     </span>
   );
 }

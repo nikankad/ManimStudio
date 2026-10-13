@@ -11,7 +11,13 @@ what the editor shows:
 * ``add`` / ``remove``: ``self.add(*targets)`` / ``self.remove(*targets)``.
 * ``call``: another method of the scene, ``self.<method>(**args)``: ``self.next_section(...)``,
   ``self.add_sound(...)``, ``self.bring_to_front(...)``, ``ThreeDScene.move_camera(...)``…
-* ``code``: any Python, run in place.
+* ``apply``: methods called on something, ``target.next_to(u, UP).set_color(RED)``: at once, like a jump.
+* ``assign``: a value given a name or a place, ``k = 2``, ``x += 1``, ``obj.color = RED``.
+* ``code``: any other Python statement, run in place.
+* ``block`` / ``end``: a compound statement around the steps between them: ``head`` is its header without the
+  colon (``for d in dots``, ``if k > 2``, ``with self.voiceover(...) as t``, ``try``). A block whose head starts
+  with ``elif``, ``else``, ``except`` or ``finally`` is the next clause of the open one. The steps in between are
+  its body, run as many times as the code runs it; manim's measurement says when each run happens.
 * ``couple`` / ``uncouple``: switch constructions (see construct.py) on or off.
 
 Timing is manim's: a step starts when the one before it ends, a ``self.play`` lasts as long as its
@@ -21,11 +27,35 @@ editor reads the measured times back from manim (runtime.py) instead of computin
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterator
 
 EPS = 1e-6
-INSTANT = ("add", "remove", "uncouple")
+INSTANT = ("add", "remove", "uncouple", "apply", "assign", "block", "end")
+CLAUSE = re.compile(r"\s*(elif|else|except|finally)\b")
+
+
+def is_clause(step: dict) -> bool:
+    """A block step that continues the open compound statement (``elif …``, ``else``, ``except …``, ``finally``)."""
+    return step.get("kind") == "block" and bool(CLAUSE.match(step.get("head") or ""))
+
+
+def compounds(steps_: list[dict]) -> dict[str, tuple[list[str], str | None]]:
+    """For each block step opening a compound statement: its clauses' ids and its end's id (None: not closed)."""
+    out: dict[str, tuple[list[str], str | None]] = {}
+    stack: list[str] = []
+    for s in steps_:
+        kind = s.get("kind")
+        if kind == "block" and not is_clause(s):
+            stack.append(s["id"])
+            out[s["id"]] = ([], None)
+        elif kind == "block" and stack:
+            out[stack[-1]][0].append(s["id"])
+        elif kind == "end" and stack:
+            opener = stack.pop()
+            out[opener] = (out[opener][0], s["id"])
+    return out
 
 
 def _id(prefix: str) -> str:

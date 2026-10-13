@@ -7,6 +7,7 @@ Host header, so other websites open in a browser can't drive it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import mimetypes
 import re
@@ -19,8 +20,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, importer, mathexpr, recent, render, runtime, samples, starters, tex, version
-from .project import load_project, new_project, resolve_project_path, save_project, upgrade_template
+from . import catalog, codegen, defs, importer, mathexpr, opener, prefs, recent, recovery, render, runtime, samples, starters, tex, version
+from .project import ProjectError, load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
 
@@ -34,7 +35,10 @@ class AppState:
         self.manim_lock = threading.Lock()
         self.jobs: dict[str, render.RenderJob] = {}
         self.catalog_cache: dict[str, dict] = {}
+        self.thumbnail_of: dict[str, str] = {}  # project path -> fingerprint of the document its preview was made from
         self.dialogs: Any = None  # set by the desktop shell (pywebview)
+        self.set_title: Any = None  # likewise: names the window after the project
+        self.dirty = False  # the open project has unsaved changes (reported by the page along with the title)
         self.port = 0
 
 
@@ -112,11 +116,21 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/project/open"): self.api_project_open,
             ("POST", "/api/project/save"): self.api_project_save,
             ("GET", "/api/home"): self.api_home,
+            ("GET", "/api/samples"): self.api_samples,
             ("POST", "/api/recent/remove"): self.api_recent_remove,
+            ("POST", "/api/recovery/save"): self.api_recovery_save,
+            ("POST", "/api/recovery/open"): self.api_recovery_open,
+            ("POST", "/api/recovery/clear"): self.api_recovery_clear,
             ("POST", "/api/samples/open"): self.api_sample_open,
             ("POST", "/api/export_code"): self.api_export_code,
             ("POST", "/api/dialog"): self.api_dialog,
+            ("POST", "/api/title"): self.api_title,
+            ("GET", "/api/prefs"): self.api_prefs,
+            ("POST", "/api/prefs"): self.api_set_pref,
+            ("POST", "/api/reveal"): self.api_reveal,
             ("POST", "/api/expr"): self.api_expr,
+            ("POST", "/api/repeat"): self.api_repeat,
+            ("POST", "/api/defs"): self.api_defs,
             ("POST", "/api/check_equation"): self.api_check_equation,
             ("GET", "/api/constructions"): self.api_constructions,
             ("POST", "/api/constructions"): self.api_save_constructions,
@@ -140,7 +154,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._file(job.result)
             self._json({"error": "not found"}, 404)
         except Exception as exc:  # report backend bugs to the UI instead of dropping the connection
-            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+            # A message meant for the person (a bad project file, a refused value) goes as it is; anything else names its type.
+            plain = type(exc) is ValueError or isinstance(exc, ProjectError)
+            self._json({"error": str(exc) if plain else f"{type(exc).__name__}: {exc}"}, 500)
 
     # ---- static & media -------------------------------------------------
     def _static(self, path: str) -> None:
@@ -245,7 +261,8 @@ class Handler(BaseHTTPRequestHandler):
         """The document as manim code, and which element each line comes from (written as if LaTeX is installed,
         so the code is the document's, wherever it's shown)."""
         gen = codegen.generate(body["doc"], latex=True)
-        return {"code": gen.source, "linemap": {str(k): list(v) for k, v in gen.linemap.items()}}
+        return {"code": gen.source, "linemap": {str(k): list(v) for k, v in gen.linemap.items()},
+                "spans": {k: [list(x) for x in v] for k, v in gen.spans.items()}}
 
     def api_import_code(self, _q: dict, body: dict) -> dict:
         """manim code -> a document. ``base``: the document the code was generated from (unchanged parts keep it)."""
@@ -283,14 +300,22 @@ class Handler(BaseHTTPRequestHandler):
     def api_project_initial(self, _q: dict, _b: dict) -> dict:
         """The project to start with. Launched without one, the editor starts at the Home screen."""
         path = self.app.project_path
+        error = None
         if path and Path(path).exists():
-            recent.add(path)
-            if path.endswith(".py"):
-                return {**self._import_file(path), "home": False}
-            return {"doc": load_project(path), "path": path, "home": False}
-        # No project given, or the file given doesn't exist (moved, renamed): start at Home.
+            try:
+                if path.endswith(".py"):
+                    out = {**self._import_file(path), "home": False}
+                else:
+                    out = {"doc": load_project(path), "path": path, "home": False, "recovery": recovery.for_path(path)}
+                recent.add(path)
+                return out
+            except ProjectError as exc:
+                error = str(exc)
+            except importer.CodeError as exc:
+                error = f"{Path(path).name}: {exc.message}"
+        # No project given, the file given doesn't exist (moved, renamed) or can't be opened: start at Home.
         self.app.project_path = None
-        return {"doc": new_project(), "path": None, "home": True, "missing": path}
+        return {"doc": new_project(), "path": None, "home": True, "missing": None if error else path, "error": error}
 
     def _import_file(self, path: str) -> dict:
         """A manim .py file opens as a new, unsaved project made from its code."""
@@ -311,14 +336,24 @@ class Handler(BaseHTTPRequestHandler):
         doc = load_project(path)
         self.app.project_path = path
         recent.add(path)
-        return {"doc": doc, "path": path}
+        return {"doc": doc, "path": path, "recovery": recovery.for_path(path)}
 
     def api_project_save(self, _q: dict, body: dict) -> dict:
         save_project(body["path"], body["doc"])
         self.app.project_path = body["path"]
         recent.add(body["path"])
-        threading.Thread(target=self._thumbnail, args=(body["path"], body["doc"]), daemon=True).start()
+        if self._wants_thumbnail(body["path"], body["doc"]):
+            threading.Thread(target=self._thumbnail, args=(body["path"], body["doc"]), daemon=True).start()
         return {"path": body["path"]}
+
+    def _wants_thumbnail(self, path: str, doc: dict) -> bool:
+        """A new preview for Home, unless this exact project already has one: rendering it holds the manim lock for a
+        moment, which stalls the canvas, and Ctrl+S is pressed often."""
+        key = hashlib.sha1(json.dumps(doc, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        if self.app.thumbnail_of.get(path) == key and recent.has_thumbnail(path):
+            return False
+        self.app.thumbnail_of[path] = key
+        return True
 
     def _thumbnail(self, path: str, doc: dict) -> None:
         """The Home screen's preview of a saved project: its frame at 70% of the video (in the background)."""
@@ -332,30 +367,75 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def api_home(self, _q: dict, _b: dict) -> dict:
-        with self.app.manim_lock:  # sample lengths are measured by running them once
-            listing = samples.sample_list()
-        return {"recent": recent.listing(), "samples": listing}
+        """What Home shows at once: recent projects and unsaved work (the samples come separately: see api_samples)."""
+        return {"recent": recent.listing(), "recovery": recovery.listing()}
+
+    def api_samples(self, _q: dict, _b: dict) -> dict:
+        with self.app.manim_lock:  # sample lengths are measured by running them once: seconds on a cold start
+            return {"samples": samples.sample_list()}
 
     def api_recent_remove(self, _q: dict, body: dict) -> dict:
         recent.remove(str(body.get("path", "")))
         return {"recent": recent.listing()}
+
+    def api_recovery_save(self, _q: dict, body: dict) -> dict:
+        """Keep the unsaved state of the open project, so a crash or a closed window doesn't lose it."""
+        path = body.get("path")
+        recovery.save(str(body.get("id", "")), str(path) if path else None, body["doc"])
+        return {"ok": True}
+
+    def api_recovery_open(self, _q: dict, body: dict) -> dict:
+        data = recovery.load(str(body.get("id", "")))
+        if not data:
+            raise ValueError("That unsaved work is gone")
+        return {"doc": data["doc"], "path": data.get("path")}
+
+    def api_recovery_clear(self, _q: dict, body: dict) -> dict:
+        recovery.clear(str(body.get("id", "")))
+        return {"recovery": recovery.listing()}
 
     def api_sample_open(self, _q: dict, body: dict) -> dict:
         """A sample opens as a new, unsaved project (saving asks where, so the sample itself never changes)."""
         return {"doc": samples.sample(str(body.get("id", ""))), "path": None}
 
     def api_expr(self, _q: dict, body: dict) -> dict:
-        """Analyse a math expression: a function for the graph builder, or a value over parameters."""
+        """Analyse a math expression: a function for the graph builder, or a value over parameters. ``defs``: the
+        scene's definitions, which it can use by name."""
+        found = body.get("defs") or []
+        scope = defs.scope(found)
+        for v in body.get("vars") or []:  # the counters of the loops around it
+            scope.setdefault(v, ("value", "loop"))
         if body.get("mode") == "value":
             try:
-                py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []))
+                py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []), scope)
                 return {"ok": True, "python": py, "params": params, "literal": mathexpr.literal(str(body.get("expr", "")))}
             except mathexpr.ExprError as exc:
                 return {"ok": False, "error": exc.message, "hint": exc.hint}
         dom = body.get("domain") or [-5, 5]
         yr = body.get("y_range")
         return mathexpr.analyze_function(str(body.get("expr", "")), {k: float(v) for k, v in (body.get("params") or {}).items()},
-                                         (float(dom[0]), float(dom[1])), (float(yr[0]), float(yr[1])) if yr else None)
+                                         (float(dom[0]), float(dom[1])), (float(yr[0]), float(yr[1])) if yr else None,
+                                         scope=scope, namespace=defs.namespace(found) if found else None)
+
+    def api_defs(self, _q: dict, body: dict) -> dict:
+        """Check the scene's definitions: each one's error, or its value (a list's items, a function at 1)."""
+        found = body.get("defs") or []
+        comp = defs.compile_defs(found, defs.manim_names())
+        out = defs.evaluate(found)
+        for did, (msg, hint) in comp.errors.items():
+            out[did] = {"error": msg, "hint": hint}
+        return {"defs": out}
+
+    def api_repeat(self, _q: dict, body: dict) -> dict:
+        """The for header of a Repeat (``{"var", "from", "to"}`` or ``{"var", "each"}``), or what is wrong with it.
+        ``vars``: the counters of the loops around it."""
+        sc = defs.scope(body.get("defs") or [])
+        for v in body.get("vars") or []:
+            sc.setdefault(v, ("value", "loop"))
+        try:
+            return {"head": defs.repeat_head(body.get("repeat") or {}, sc)}
+        except mathexpr.ExprError as e:
+            return {"error": e.message, "hint": e.hint}
 
     def api_check_equation(self, _q: dict, body: dict) -> dict:
         """Compile an equation's terms with manim's own MathTex and report glyphs per term."""
@@ -378,6 +458,27 @@ class Handler(BaseHTTPRequestHandler):
         tmp.write_text(json.dumps({"version": 1, "constructions": body.get("library", [])}, indent=2), encoding="utf-8")
         tmp.replace(LIBRARY_PATH)
         return {"path": str(LIBRARY_PATH)}
+
+    def api_reveal(self, _q: dict, body: dict) -> dict:
+        """Show an export in the file manager, or play it with the default app. Only the result of a render job."""
+        job = self.app.jobs.get(str(body.get("id", "")))
+        if not job or job.state != "done" or not job.result:
+            return {"ok": False}
+        return {"ok": opener.open_path(Path(job.result), reveal=body.get("how") == "show")}
+
+    def api_prefs(self, _q: dict, _b: dict) -> dict:
+        return {"prefs": prefs.load()}
+
+    def api_set_pref(self, _q: dict, body: dict) -> dict:
+        return {"prefs": prefs.set_pref(body.get("key"), body.get("value"))}
+
+    def api_title(self, _q: dict, body: dict) -> dict:
+        """Name the native window after the open project (a browser tab takes it from the page itself), and note
+        whether the project has unsaved changes, for asking before the window closes."""
+        self.app.dirty = bool(body.get("dirty"))
+        if self.app.set_title:
+            self.app.set_title(str(body.get("title", ""))[:200])
+        return {"ok": True}
 
     def api_dialog(self, _q: dict, body: dict) -> dict:
         if not self.app.dialogs:

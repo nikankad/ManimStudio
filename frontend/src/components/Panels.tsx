@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { api, askPath } from '../api';
 import {
-  addMarker, commitTransform, copyClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, loadDoc, selectedObjectIds,
-  pasteClips, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
+  addMarker, clearRange, playRange, setRangePoint, commitTransform, copyClips, cutClips, deleteSelection, docKey, previewFresh, renderPreview, duplicateObjects, editPoints, fps, frameSnap, getState, isOwnRecovery, loadDoc, selectedObjectIds,
+  pasteClips, projectEpoch, redo, sequenceEnd, setPlaying, setState, toast, toggleDisabled, undo, updateDoc, useStore,
 } from '../store';
+import { noteTry } from './TryThis';
 import { zoomBy, zoomToFit } from './Timeline';
 import type { Job } from '../types';
 import { Field } from './ParamField';
@@ -11,39 +12,109 @@ import { Modal } from './Modal';
 import { DeleteDialog, GraphBuilder, InsertConstruction, SaveConstruction } from './Dialogs';
 import { HelpPanel } from './Help';
 import { AppSettings, UpdateNotice } from './Updates';
+import { WordingDialog } from './Wording';
+import { clipsInWords, customCount, resetWording, setClipsInWords } from '../wording';
 import { NewProjectDialog } from './Home';
+import { keys } from '../keys';
 
 /** Project files: .manimstudio, and .mathengine from versions before the rename. */
 const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
 const PYTHON_FILES = 'manim code (*.py)';
 const PROJECT_EXT = /\.(manimstudio|mathengine)$/;
 
-export async function saveProject(saveAs = false) {
+// Keep writes in invocation order: a slow earlier save must not overwrite a newer one.
+let saving: Promise<void> = Promise.resolve();
+
+export function saveProject(saveAs = false): Promise<void> {
+  const opened = projectEpoch();
+  const next = saving.then(() => saveCurrentProject(saveAs, opened));
+  saving = next.catch(() => undefined);
+  return next;
+}
+
+async function saveCurrentProject(saveAs: boolean, opened: number) {
+  if (projectEpoch() !== opened) return;
   const s = getState();
   let path = s.path;
   const suggested = `${s.doc.scene.name.replace(/Scene$/, '') || 'scene'}.manimstudio`;
   if (!path || saveAs) path = await askPath('save', suggested, [PROJECT_FILES], 'Save project to path:');
-  if (!path) return;
+  if (!path || projectEpoch() !== opened) return;
   if (!PROJECT_EXT.test(path)) path += '.manimstudio'; // projects from earlier versions keep their .mathengine name
-  await api.saveProject(path, s.doc);
-  setState({ path, dirty: false });
+  // A native file chooser is asynchronous; include any edits made while it was open.
+  const snapshot = getState().doc;
+  await api.saveProject(path, snapshot);
+  if (projectEpoch() !== opened) return;
+  // Only this snapshot reached disk. Keep later edits dirty, and keep their recovery copy.
+  setState({ path, dirty: getState().doc !== snapshot });
   toast(`Saved ${path}`);
 }
 
-/** Leave the current project (asks first when it has unsaved changes). */
-export const discardOk = () => !getState().hasProject || !getState().dirty || confirm('Discard unsaved changes to the current project?');
+/** Leave the current project: when it has unsaved changes, asks to save them, drop them or stay. Resolves false to stay. */
+export async function discardOk(): Promise<boolean> {
+  if (!getState().hasProject || !getState().dirty) return true;
+  const choice = await new Promise<'save' | 'discard' | 'cancel'>((resolve) => setState({ leave: { resolve } }));
+  setState({ leave: null });
+  if (choice !== 'save') return choice === 'discard';
+  try {
+    await saveProject();
+  } catch (e) {
+    toast(`Couldn't save: ${e instanceof Error ? e.message : e}`);
+  }
+  return !getState().dirty; // still unsaved: the save was cancelled or failed, so stay
+}
+
+function LeaveDialog() {
+  const leave = useStore((s) => s.leave);
+  const path = useStore((s) => s.path);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!leave) return;
+    // Focus the dialog, not a button: this question often opens on an Enter keypress (Create in New project), and
+    // that same keypress would otherwise press the focused Save button before anyone has read the question.
+    box.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') leave.resolve('cancel');
+      else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) leave.resolve('save');
+      else if (e.key === 'Enter') e.stopPropagation(); // on a button (Tab moved there), Enter presses that button
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [leave]);
+  if (!leave) return null;
+  const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
+  return (
+    <div className="modal-back leave-back" onPointerDown={(e) => e.target === e.currentTarget && leave.resolve('cancel')}>
+      <div className="modal" role="alertdialog" aria-label="Unsaved changes" tabIndex={-1} ref={box}>
+        <div className="modal-head"><h3>Save changes to {name}?</h3></div>
+        <p className="muted">Your changes will be lost if you don’t save them.</p>
+        <div className="row actions">
+          <button onClick={() => leave.resolve('discard')}>Don’t save</button>
+          <span className="spacer" />
+          <button onClick={() => leave.resolve('cancel')}>Cancel</button>
+          <button className="primary" onClick={() => leave.resolve('save')}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export async function openPath(path: string) {
-  if (!discardOk()) return;
+  if (!(await discardOk())) return;
   try {
     const res = await api.openProject(path);
     loadDoc(res.doc, res.path);
+    // (not this window's own copy: its changes were just saved or discarded, and its clearing may not have landed yet)
+    const lost = res.recovery?.filter((r) => !isOwnRecovery(r.id));
+    if (lost?.length) setState({ restore: lost[0] });
     if (res.imported) {
       setState({ centerTab: 'code', dirty: true });
       toast(`Opened ${res.imported.split(/[\\/]/).pop()} as a new project${res.notes?.length ? `. ${res.notes.length} statement${res.notes.length === 1 ? ' is' : 's are'} kept as code` : ''}`);
     }
   } catch (e) {
-    toast(`Couldn't open ${path}: ${e instanceof Error ? e.message : e}`);
+    toast(`Couldn’t open it: ${e instanceof Error ? e.message : e}`);
   }
 }
 
@@ -52,40 +123,160 @@ export async function openProject() {
   if (path) await openPath(path);
 }
 
+/**
+ * A file dropped on the window. Without this the webview navigates to it and the editor is gone. The native app
+ * hands over the file's path (pywebviewFullPath); a browser doesn't, so a .py is read and imported, and a project
+ * file is pointed at Open….
+ */
+export async function openDropped(file: File) {
+  const full = (file as File & { pywebviewFullPath?: string }).pywebviewFullPath;
+  if (full) return openPath(full);
+  if (/\.py$/i.test(file.name)) {
+    if (!(await discardOk())) return;
+    const res = await api.importCode(await file.text(), null);
+    if (!res.ok) return toast(`${file.name}: ${res.error}`);
+    loadDoc(res.doc, null);
+    setState({ centerTab: 'code', dirty: true });
+    return toast(`Opened ${file.name} as a new project`);
+  }
+  toast(`Use Open… to choose ${file.name}: a browser doesn’t tell the page where a dropped file is`);
+}
+
 /** Open a manim .py file as a new project: its code becomes the timeline. */
 export async function importManimFile() {
   const path = await askPath('open', '', [PYTHON_FILES], 'manim .py file path:');
   if (path) await openPath(path);
 }
 
+/**
+ * Whether the toolbar has run out of room, so its toggles go into a menu. It folds when its content overflows and
+ * unfolds once the window is as wide as the full toolbar was: that depends on the project's name and the update
+ * notice as much as on the window, so it is measured rather than assumed.
+ */
+function useToolbarFold(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [folded, setFolded] = useState(false);
+  const needed = useRef(0); // the width the unfolded toolbar wanted when it last overflowed
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => {
+      if (!folded && el.scrollWidth > el.clientWidth + 1) {
+        needed.current = el.scrollWidth;
+        setFolded(true);
+      } else if (folded && el.clientWidth >= needed.current) setFolded(false);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    const mo = new MutationObserver(check); // the name or the update notice changed
+    mo.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, [folded, ref]);
+  return folded;
+}
+
+function SnapToggle() {
+  const snap = useStore((s) => s.snap);
+  return <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>;
+}
+
+function IntroToggle() {
+  const autoIntro = useStore((s) => s.autoIntro);
+  return <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>;
+}
+
+function RecordToggle() {
+  const record = useStore((s) => s.record);
+  return (
+    <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state">
+      <input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record
+    </label>
+  );
+}
+
+function AutoRenderToggle() {
+  const autoRender = useStore((s) => s.autoRender);
+  return (
+    <label className="toggle" title="Render a smooth preview with manim in the background after each edit; Space plays it">
+      <input type="checkbox" checked={autoRender} onChange={(e) => { setState({ autoRender: e.target.checked }); if (e.target.checked) void renderPreview(); }} /> Auto-render
+    </label>
+  );
+}
+
+/** The four toggles in one menu, for a window too narrow to show them in the toolbar. */
+function OptionsMenu() {
+  const record = useStore((s) => s.record);
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && (e.stopPropagation(), close());
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [at]);
+  return (
+    <>
+      <button
+        data-tour="record" className={`ghost ${at ? 'on' : ''} ${record ? 'rec' : ''}`} aria-haspopup="menu" aria-expanded={!!at}
+        title="Snap, Auto-intro, Record and Auto-render"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: r.left, y: r.bottom + 4 }); }}
+      >
+        {record ? '● ' : ''}Options ▾
+      </button>
+      {at && (
+        <div className="options-menu" role="menu" style={{ left: at.x, top: at.y }} onPointerDown={(e) => e.stopPropagation()}>
+          <SnapToggle />
+          <IntroToggle />
+          <RecordToggle />
+          <AutoRenderToggle />
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Toolbar() {
   const path = useStore((s) => s.path);
   const dirty = useStore((s) => s.dirty);
-  const snap = useStore((s) => s.snap);
-  const record = useStore((s) => s.record);
-  const autoIntro = useStore((s) => s.autoIntro);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
+  const bar = useRef<HTMLElement>(null);
+  const narrow = useToolbarFold(bar);
   const name = path ? path.split(/[\\/]/).pop() : 'Untitled';
   return (
-    <header className="toolbar">
-      <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />Manim Studio</button>
+    <header className={`toolbar ${narrow ? "folded" : ""}`} ref={bar}>
+      <button className="brand" title="Home: projects and samples" onClick={() => setState({ home: true })}><img className="brand-icon" src="icon.png" alt="" onError={(e) => (e.currentTarget.style.display = 'none')} />{!narrow && 'Manim Studio'}</button>
       <button className="ghost home-btn" title="Home: new, recent and sample projects" onClick={() => setState({ home: true })}>⌂ Home</button>
-      <span className="muted">{name}{dirty ? ' •' : ''}</span>
-      <button className="ghost" title="New project (choose its format)" onClick={() => setState({ panel: 'new-project' })}>New</button>
-      <button className="ghost" onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
-      <button className="ghost" onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
+      <span className="muted proj-name" title={path ?? 'Not saved yet'}>{name}{dirty ? ' •' : ''}</span>
+      <button className="ghost" title={`New project: choose its format (${keys('⌘N')})`} onClick={() => setState({ panel: 'new-project' })}>New</button>
+      <button className="ghost" title={`Open a project or manim file (${keys('⌘O')})`} onClick={() => openProject().catch((e) => toast(String(e)))}>Open</button>
+      <button className="ghost" title={`Save (${keys('⌘S')}); ${keys('⇧⌘S')} saves a copy`} onClick={() => saveProject().catch((e) => toast(String(e)))}>Save</button>
       <span className="sep" />
-      <button className="ghost" disabled={!canUndo} onClick={undo} title="Undo (⌘Z)">↶</button>
-      <button className="ghost" disabled={!canRedo} onClick={redo} title="Redo (⇧⌘Z)">↷</button>
+      <button className="ghost" disabled={!canUndo} onClick={undo} title={`Undo (${keys('⌘Z')})`}>↶</button>
+      <button className="ghost" disabled={!canRedo} onClick={redo} title={`Redo (${keys('⇧⌘Z')})`}>↷</button>
       <span className="sep" />
-      <label className="toggle" title="Snap positions to 0.25 units"><input type="checkbox" checked={snap} onChange={(e) => setState({ snap: e.target.checked })} /> Snap</label>
-      <label className="toggle" title="New objects get a Create/Write step automatically"><input type="checkbox" checked={autoIntro} onChange={(e) => setState({ autoIntro: e.target.checked })} /> Auto-intro</label>
-      <label data-tour="record" className={`toggle ${record ? 'rec' : ''}`} title="Canvas drags, resizes and rotations become .animate clips at the playhead instead of changing the starting state"><input type="checkbox" checked={record} onChange={(e) => setState({ record: e.target.checked })} /> ● Record</label>
+      {narrow ? <OptionsMenu /> : (
+        <>
+          <SnapToggle />
+          <IntroToggle />
+          <RecordToggle />
+        </>
+      )}
       <div className="spacer" />
       <UpdateNotice />
       <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
+        {!narrow && <AutoRenderToggle />}
         <PreviewButton />
         <CodeToggle />
         <button onClick={() => setState({ panel: 'settings' })}>Settings</button>
@@ -110,22 +301,23 @@ function CodeToggle() {
 function PreviewButton() {
   const video = useStore((s) => s.video);
   const fresh = useStore((s) => previewFresh(s));
-  const autoRender = useStore((s) => s.autoRender);
+  const key = useStore((s) => docKey(s.doc));
   const running = video && (video.state === 'running' || video.state === 'queued') && !fresh;
   const stale = !fresh && !running;
+  const failed = video?.state === 'error' && video.key === key;
+  const outdated = !fresh && !running && !failed && video?.state === 'done' && video.key !== key;
   return (
-    <>
-      <label className="toggle" title="Render a smooth preview with manim in the background after each edit; Space plays it">
-        <input type="checkbox" checked={autoRender} onChange={(e) => { setState({ autoRender: e.target.checked }); if (e.target.checked) void renderPreview(); }} /> Auto-render
-      </label>
-      <button
-        className={`render-status ${fresh ? 'ok' : running ? 'busy' : 'stale'}`}
-        title={fresh ? 'Smooth preview is up to date: Space plays it' : running ? video?.message : video?.state === 'error' ? video.message : 'Render a smooth preview now'}
-        onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview())}
-      >
-        {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : video?.state === 'error' && video.key === docKey(getState().doc) ? '● Render failed' : '● Render preview'}
-      </button>
-    </>
+    <button
+      className={`render-status ${fresh ? 'ok' : running ? 'busy' : failed ? 'failed' : 'stale'}`}
+      title={fresh ? 'Smooth preview is up to date: Space plays it'
+        : running ? video?.message
+        : failed ? `${video?.message ?? 'The preview didn’t render'}. Click to try again`
+        : outdated ? 'The scene changed since the preview was rendered: playback shows live frames until it is rendered again. Click to render it now'
+        : 'Render a smooth preview now'}
+      onClick={() => (fresh ? (setState({ time: getState().time >= sequenceEnd(getState().doc, getState().timeline) - 1e-3 ? 0 : getState().time }), setPlaying(true)) : stale && renderPreview(failed))}
+    >
+      {fresh ? '● Preview ready' : running ? `Rendering ${Math.round((video?.progress ?? 0) * 100)}%` : failed ? '● Render failed · Retry' : outdated ? '● Preview out of date' : '● Render preview'}
+    </button>
   );
 }
 
@@ -141,7 +333,51 @@ function poll(id: string, onUpdate: (j: Job) => boolean) {
   setTimeout(tick, 300);
 }
 
+/** A project was opened that has unsaved changes from an earlier session: restore them or keep the saved file. */
+function RestoreDialog() {
+  const r = useStore((s) => s.restore);
+  if (!r) return null;
+  const close = () => setState({ restore: null });
+  const restore = async () => {
+    close();
+    try {
+      const res = await api.openRecovery(r.id);
+      loadDoc(res.doc, res.path, r.id);
+      toast(`Restored the unsaved changes to ${r.name}. Save to keep them.`);
+    } catch (e) {
+      toast(String(e));
+    }
+  };
+  const keepSaved = () => {
+    close();
+    api.clearRecovery(r.id).catch(() => undefined);
+  };
+  return (
+    <div className="modal-back leave-back">
+      <div className="modal" role="alertdialog" aria-label="Unsaved changes found">
+        <div className="modal-head"><h3>Restore unsaved changes to {r.name}?</h3></div>
+        <p className="muted">The app closed before these changes were saved. The file on disk is the version you last saved.</p>
+        <div className="row actions">
+          <span className="spacer" />
+          <button onClick={keepSaved}>Keep the saved file</button>
+          <button className="primary" autoFocus onClick={() => void restore()}>Restore changes</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Panels() {
+  return (
+    <>
+      <PanelDialog />
+      <RestoreDialog />
+      <LeaveDialog />
+    </>
+  );
+}
+
+function PanelDialog() {
   const panel = useStore((s) => s.panel);
   if (panel === 'settings') return <SettingsPanel />;
   if (panel === 'export') return <ExportPanel />;
@@ -151,14 +387,36 @@ export function Panels() {
   if (panel === 'insert') return <InsertConstruction />;
   if (panel === 'save-construction') return <SaveConstruction />;
   if (panel === 'new-project') return <NewProjectDialog />;
+  if (panel === 'wording') return <WordingDialog />;
   return null;
 }
 
 export const RESOLUTIONS: [string, number, number][] = [['480p', 854, 480], ['720p', 1280, 720], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160], ['1080×1920 (vertical)', 1080, 1920], ['1080×1080 (square)', 1080, 1080]];
 
+const DEFAULT_BASES = ['Scene'];
+
+/** Settings › Timeline: clips named in words or as in the code, and the wording the user changed. */
+function TimelineWording() {
+  useStore((s) => s.wording);
+  const n = customCount();
+  return (
+    <section className="app-settings">
+      <h4>Timeline</h4>
+      <label className="check">
+        <input type="checkbox" checked={clipsInWords()} onChange={(e) => setClipsInWords(e.target.checked)} />
+        Name clips in words (“title · Fade in”, “Repeat, k = 1 to 6”); off, they read as in the code
+      </label>
+      <p className="muted small">
+        Right-click a clip › <b>Change wording…</b> to say how clips like it read.{' '}
+        {n > 0 && <>{n} changed · <button className="link" onClick={resetWording}>back to the defaults</button></>}
+      </p>
+    </section>
+  );
+}
+
 function SettingsPanel() {
   const doc = useStore((s) => s.doc);
-  const bases = useStore((s) => s.catalog?.scene_bases ?? ['Scene']);
+  const bases = useStore((s) => s.catalog?.scene_bases) ?? DEFAULT_BASES; // (a fallback made inside the selector is a new array every render: an endless loop)
   const set = (fn: (d: typeof doc) => void, key: string) => updateDoc(fn, 'settings:' + key);
   const res = `${doc.config.pixel_width}x${doc.config.pixel_height}`;
   return (
@@ -192,6 +450,7 @@ function SettingsPanel() {
           <Field className="mono" value={doc.config.background_color} onChange={(v) => /^#[0-9a-f]{6}$/i.test(v) && set((d) => void (d.config.background_color = v), 'bg')} />
         </div>
       </label>
+      <TimelineWording />
       <AppSettings />
     </Modal>
   );
@@ -202,6 +461,7 @@ function ExportPanel() {
   const path = useStore((s) => s.path);
   const [quality, setQuality] = useState('project');
   const [output, setOutput] = useState(() => (path ? path.replace(PROJECT_EXT, '.mp4') : ''));
+  const suggested = `${path ? path.split(/[\\/]/).pop()!.replace(PROJECT_EXT, '') : doc.scene.name || 'scene'}.mp4`;
   const [job, setJob] = useState<Job | null>(null);
   const jobRef = useRef<string | null>(null);
   useEffect(() => () => { jobRef.current = null; }, []);
@@ -209,13 +469,14 @@ function ExportPanel() {
   const start = async () => {
     let out = output;
     if (!out) {
-      out = (await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:')) ?? '';
+      out = (await askPath('save', suggested, ['MP4 video (*.mp4)'], 'Save video to path:')) ?? '';
       if (!out) return;
       setOutput(out);
     }
     const j = await api.render(doc, quality, out);
     setJob(j);
     if (!j.id || j.state === 'error') return;
+    noteTry('exported');
     jobRef.current = j.id;
     poll(j.id, (u) => {
       if (jobRef.current !== j.id) return false;
@@ -240,7 +501,7 @@ function ExportPanel() {
         <span className="pname">Output</span>
         <div className="row">
           <Field className="mono" value={output} placeholder="choose a file…" onChange={setOutput} />
-          <button className="ghost" onClick={async () => { const p = await askPath('save', 'scene.mp4', ['MP4 video (*.mp4)'], 'Save video to path:'); if (p) setOutput(p); }}>Browse</button>
+          <button className="ghost" onClick={async () => { const p = await askPath('save', suggested, ['MP4 video (*.mp4)'], 'Save video to path:'); if (p) setOutput(p); }}>Browse</button>
         </div>
       </label>
       {job && (
@@ -254,7 +515,15 @@ function ExportPanel() {
         {running ? (
           <button className="danger" onClick={() => job?.id && api.cancelJob(job.id).then(setJob)}>Cancel</button>
         ) : (
-          <button className="primary" onClick={() => start().catch((e) => toast(String(e)))}>Render with manim</button>
+          <>
+            {job?.state === 'done' && job.id && (
+              <>
+                <button onClick={() => api.reveal(job.id!, 'show').then((r) => r.ok || toast("Couldn't open the folder")).catch((e) => toast(String(e)))}>Show in folder</button>
+                <button onClick={() => api.reveal(job.id!, 'open').then((r) => r.ok || toast("Couldn't open the video")).catch((e) => toast(String(e)))}>Play</button>
+              </>
+            )}
+            <button className="primary" onClick={() => start().catch((e) => toast(String(e)))}>{job?.state === 'done' ? 'Render again' : 'Render with manim'}</button>
+          </>
         )}
       </div>
     </Modal>
@@ -265,7 +534,8 @@ export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      const typing = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
+      // A checkbox that still has focus after a click isn't a text field: Space plays, letters are shortcuts.
+      const typing = (el.tagName === 'INPUT' && !['checkbox', 'radio'].includes((el as HTMLInputElement).type)) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT';
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
       if (getState().home) {
@@ -275,6 +545,12 @@ export function useShortcuts() {
           if (k === 'o') void openProject().catch((err) => toast(String(err)));
           else setState({ panel: 'new-project' });
         } else if (e.key === 'F1') setState({ panel: 'help', panelData: null });
+        else if (e.key === 'Escape') {
+          // Close the open dialog; with none open, go back to the project behind Home.
+          const s = getState();
+          if (s.panel && (!typing || s.panel === 'help')) setState({ panel: null, panelData: null });
+          else if (!s.panel && !typing && s.hasProject) setState({ home: false });
+        }
         return;
       }
       if (mod && k === 's') {
@@ -287,11 +563,17 @@ export function useShortcuts() {
         void openProject().catch((err) => toast(String(err)));
         return;
       }
+      if (mod && k === 'n') {
+        e.preventDefault();
+        setState({ panel: 'new-project' });
+        return;
+      }
       if (e.key === 'F1') {
         e.preventDefault();
         setState({ panel: 'help', panelData: null });
         return;
       }
+      if (e.key === 'Escape' && typing && getState().panel === 'help') return setState({ panel: null, panelData: null }); // from its search box
       if (typing) return;
       const s = getState();
       if (e.key === '?' && !mod) {
@@ -307,10 +589,25 @@ export function useShortcuts() {
         else undo();
       } else if (mod && k === 'y') redo();
       else if (mod && k === 'c') copyClips();
+      else if (mod && e.shiftKey && k === 'x') {
+        e.preventDefault();
+        clearRange();
+      } else if (mod && k === 'x') cutClips();
       else if (mod && k === 'v') pasteClips();
       else if (mod && k === 'd') {
         e.preventDefault();
         if (selectedObjectIds().length) duplicateObjects(selectedObjectIds());
+      } else if (mod || e.altKey) {
+        // Any other Ctrl / ⌘ / Alt combination belongs to the system: ⌘M minimises, Ctrl+= zooms the page…
+      } else if (e.key === ' ' && e.shiftKey) {
+        e.preventDefault();
+        if (s.playingRange) setPlaying(false);
+        else playRange();
+      } else if (k === 'i' || k === 'o') {
+        if (e.shiftKey) {
+          const r = s.range[k === 'i' ? 'in' : 'out'];
+          if (r !== null) go(r);
+        } else setRangePoint(k === 'i' ? 'in' : 'out');
       } else if (e.key === ' ' || k === 'l') {
         e.preventDefault();
         setPlaying(e.key === ' ' ? !s.playing : true);
@@ -334,6 +631,12 @@ export function useShortcuts() {
         const pts = editPoints(s.doc, s.timeline);
         const t = e.key === 'ArrowDown' ? pts.find((p) => p > s.time + 1e-6) : [...pts].reverse().find((p) => p < s.time - 1e-6);
         if (t !== undefined) go(t);
+      } else if (e.key === '/' && !mod) {
+        const search = document.querySelector<HTMLInputElement>('.library .search'); // the library's search box
+        if (search) {
+          e.preventDefault();
+          search.focus();
+        }
       } else if (k === 'm') addMarker();
       else if (k === 's' && !mod) setState({ timelineSnap: !s.timelineSnap });
       else if (e.key === '=' || e.key === '+') zoomBy(1.4);
@@ -342,7 +645,21 @@ export function useShortcuts() {
       else if (e.shiftKey && k === 'e' && s.selection?.kind === 'clips') toggleDisabled(s.selection.ids);
       else if (e.key === 'Escape') setState({ selection: null, panel: null });
     };
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    const onDragOver = (e: DragEvent) => hasFiles(e) && e.preventDefault(); // (library drags carry no files: untouched)
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      const file = e.dataTransfer?.files[0];
+      if (file) void openDropped(file).catch((err) => toast(String(err)));
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
   }, []);
 }

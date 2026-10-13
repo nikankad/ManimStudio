@@ -1,4 +1,4 @@
-import type { Catalog, Job, RunResult, SceneDoc, Signature, Template } from './types';
+import type { Catalog, Def, DefInfo, Job, Repeat, RunResult, SceneDoc, Signature, Template } from './types';
 
 export interface FunctionAnalysis {
   ok: boolean;
@@ -20,11 +20,13 @@ export interface ValueCheck {
   error?: string;
   hint?: string;
   params?: string[];
+  python?: string; // what the math becomes in the code
   literal?: number | null;
 }
 
 /** What a line of the generated code comes from. */
 export type LineKind = 'object' | 'step' | 'anim' | 'header';
+export type CodeSpan = [number, number, number, number];
 
 export type ImportResult =
   | { ok: true; doc: SceneDoc; scenes: string[]; notes: string[] }
@@ -79,6 +81,13 @@ export interface RecentProject {
   exists: boolean;
   thumbnail: string | null; // data URL
 }
+export interface Recovery {
+  id: string;
+  path: string | null; // the project it was a copy of (none: untitled)
+  name: string;
+  scene: string;
+  saved: number; // seconds since the epoch
+}
 export interface Sample {
   id: string;
   name: string;
@@ -97,25 +106,36 @@ export const api = {
     post<Signature>('/api/signature', { expr, header, object_classes }),
   run: (doc: SceneDoc, t: number | null, render: boolean, width = 960) =>
     post<RunResult>('/api/run', { doc, t, render, width }),
-  code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]> }>('/api/code', { doc }),
+  // spans: where each element's code is, [line, col, end line, end col] (an animation: its exact expression)
+  code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]>; spans?: Record<string, CodeSpan[]> }>('/api/code', { doc }),
   importCode: (code: string, base: SceneDoc | null, scene?: string) => post<ImportResult>('/api/import_code', { code, base, scene }),
   exportCode: (doc: SceneDoc, path: string) => post<{ path: string }>('/api/export_code', { doc, path }),
   render: (doc: SceneDoc, quality: string, output?: string) => post<Job>('/api/render', { doc, quality, output }),
   job: (id: string) => get<Job>(`/api/render/${id}`),
+  reveal: (id: string, how: 'show' | 'open') => post<{ ok: boolean }>('/api/reveal', { id, how }),
   cancelJob: (id: string) => get<Job>(`/api/render/${id}/cancel`),
   mediaUrl: (id: string) => `/media/${id}.mp4?token=${encodeURIComponent(token)}`,
-  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; imported?: string }>('/api/project/initial'),
-  openProject: (path: string) => post<{ doc: SceneDoc; path: string | null; imported?: string; notes?: string[] }>('/api/project/open', { path }),
+  initialProject: () => get<{ doc: SceneDoc; path: string | null; home: boolean; missing?: string | null; error?: string | null; imported?: string; recovery?: Recovery[] }>('/api/project/initial'),
+  openProject: (path: string) => post<{ doc: SceneDoc; path: string | null; imported?: string; notes?: string[]; recovery?: Recovery[] }>('/api/project/open', { path }),
   saveProject: (path: string, doc: SceneDoc) => post<{ path: string }>('/api/project/save', { path, doc }),
-  home: () => get<{ recent: RecentProject[]; samples: Sample[] }>('/api/home'),
+  home: () => get<{ recent: RecentProject[]; recovery: Recovery[] }>('/api/home'),
+  samples: () => get<{ samples: Sample[] }>('/api/samples'),
   removeRecent: (path: string) => post<{ recent: RecentProject[] }>('/api/recent/remove', { path }),
+  saveRecovery: (id: string, path: string | null, doc: SceneDoc) => post<{ ok: boolean }>('/api/recovery/save', { id, path, doc }),
+  openRecovery: (id: string) => post<{ doc: SceneDoc; path: string | null }>('/api/recovery/open', { id }),
+  clearRecovery: (id: string) => post<{ recovery: Recovery[] }>('/api/recovery/clear', { id }),
   openSample: (id: string) => post<{ doc: SceneDoc; path: null }>('/api/samples/open', { id }),
-  analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number]) =>
-    post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range }),
-  checkValue: (expr: string, params: string[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params }),
+  analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number], defs?: Def[]) =>
+    post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range, defs }),
+  checkValue: (expr: string, params: string[], defs?: Def[], vars?: string[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params, defs, vars }),
+  repeatHead: (repeat: Repeat, defs: Def[] | undefined, vars: string[]) => post<{ head?: string; error?: string; hint?: string }>('/api/repeat', { repeat, defs, vars }),
+  checkDefs: (defs: Def[]) => post<{ defs: Record<string, DefInfo> }>('/api/defs', { defs }),
   checkEquation: (parts: string[], ctor: string) => post<EquationCheck>('/api/check_equation', { parts, ctor }),
   constructions: () => get<{ starters: Template[]; library: Template[]; path: string }>('/api/constructions'),
   saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),
+  prefs: () => get<{ prefs: Record<string, string> }>('/api/prefs'),
+  setPref: (key: string, value: string | null) => post<{ prefs: Record<string, string> }>('/api/prefs', { key, value }),
+  setTitle: (title: string, dirty: boolean) => post<{ ok: boolean }>('/api/title', { title, dirty }),
   dialog: (kind: 'open' | 'save', filename = '', types: string[] = []) =>
     post<{ path: string | null; unsupported?: boolean }>('/api/dialog', { kind, filename, types }),
 };
