@@ -1047,7 +1047,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         };
         const num = typeof value === 'number' ? value : null;
         let editor;
-        const byArgs = on && !on.editable && !redraw ? on : undefined;
+        const byArgs = on && !on.editable && !on.measuring && !redraw ? on : undefined; // a measurement on its way: not by arguments
         if (byArgs) editor = <span className="small kf-why" title={byArgs.why}><span className="mono">{keyCode(byArgs)}</span> <span className="muted">{fmtKey(value)}</span></span>;
         else if (why) editor = <span className="muted small kf-why" title={why}>{fmtKey(value)} <em>{why}</em></span>;
         else if (ch === 'position') {

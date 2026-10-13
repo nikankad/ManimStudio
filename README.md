@@ -167,8 +167,9 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     the scene runs exactly as written. Imports, helpers and custom Mobject classes stay at the top of the file,
     other methods of the scene class stay in it, and comments stay with their statements.
   - Code that is unchanged keeps what the editor knows about it: constructions, equation terms, disabled clips.
-  - Imported code comes back as it was written: chains inline or one call per line, arguments by position or by
-    keyword, statements wrapped over several lines, blank lines. A statement edited in the app is written the
+  - Imported code comes back as it was written: the top of the file (its imports and config, nothing added),
+    chains inline or one call per line, arguments by position or by keyword, statements wrapped over several
+    lines, blank lines. A statement edited in the app is written the
     usual way again; the rest stays as it was.
 - **Library** (left): drag any manim class onto the canvas or straight onto a track. The *Effects* tab holds
   animations; dropping one on a track targets the selected object. Double-clicking a class adds it too, at the

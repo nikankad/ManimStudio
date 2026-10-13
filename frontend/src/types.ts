@@ -162,6 +162,7 @@ export interface SceneDoc {
   config: { pixel_width: number; pixel_height: number; frame_rate: number; background_color: string };
   header: string;
   footer?: string; // module code after the scene class
+  top_written?: Written; // the top of the file (imports, config, header) as the imported code had it
   objects: SceneObject[];
   timeline: Step[];
   markers?: Marker[];

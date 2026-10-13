@@ -346,34 +346,19 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     steps = timeline.steps(doc)
     _check_timeline(steps, plan, skip)
 
-    emit("from manim import *")
-    if plan.uses_terms:
-        emit(construct.TERMS_IMPORT)
-    # ease_* rate functions aren't in manim's star export; import the ones this scene uses.
-    eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", json.dumps(doc))))
-    if eases:
-        emit(f"from manim.utils.rate_functions import {', '.join(eases)}")
-    emit("import numpy as np")
-    if "se.Path(" in json.dumps(doc):
-        emit("import svgelements as se")
-    if not preview:
-        bg = cfg.get("background_color")
-        if bg:
-            emit(f"config.background_color = {bg!r}")
-    if not latex:
-        emit("")
-        emit(tex.NUMBERS_SOURCE.strip("\n"))
-    header = (doc.get("header") or "").rstrip()
-    if header:
-        emit("")
-        emit(header, ("header", "header"))
-    for used, src in ((plan.uses_constraints, construct.CONSTRAINTS_SOURCE), (plan.uses_geometry, construct.GEOMETRY_SOURCE),
-                      (plan.uses_terms, construct.TERMS_SOURCE)):
-        if used:
+    top = top_lines(doc, plan, preview, latex)
+    written = doc.get("top_written")
+    if not preview and written and written.get("gen") == "\n".join(t for t, _ in top_lines(doc, plan, False, True)):
+        # the top of the file as the code had it (its imports, config, helpers, blank lines)
+        for line in written.get("as", "").split("\n"):
+            emit(line, ("header", "header"))
+        if not latex:
+            emit(tex.NUMBERS_SOURCE.strip("\n"))
             emit("")
-            emit(src.strip("\n"))
-    emit("")
-    emit("")
+            emit("")
+    else:
+        for text, ref in top:
+            emit(text, ref)
     decorators = (scene.get("decorators") or "").strip("\n")
     if decorators:
         emit(decorators, ("header", "header"))
@@ -411,6 +396,46 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         emit("")
         emit(footer, ("header", "header"))
     return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
+
+
+def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> list[tuple[str, tuple[str, str] | None]]:
+    """What codegen writes above the scene class: imports, config, the header (the code's own module-level code), the
+    helpers the document needs, and the blank lines before the class."""
+    out: list[tuple[str, tuple[str, str] | None]] = []
+
+    def emit(text: str, ref: tuple[str, str] | None = None) -> None:
+        out.extend((raw, ref) for raw in (text.splitlines() or [""]))
+
+    cfg = doc.get("config", {})
+    emit("from manim import *")
+    if plan.uses_terms:
+        emit(construct.TERMS_IMPORT)
+    # ease_* rate functions aren't in manim's star export; import the ones this scene uses.
+    eases = sorted(set(re.findall(r"\bease_[a-z_]+\b", json.dumps(doc))))
+    if eases:
+        emit(f"from manim.utils.rate_functions import {', '.join(eases)}")
+    emit("import numpy as np")
+    if "se.Path(" in json.dumps(doc):
+        emit("import svgelements as se")
+    if not preview:
+        bg = cfg.get("background_color")
+        if bg:
+            emit(f"config.background_color = {bg!r}")
+    if not latex:
+        emit("")
+        emit(tex.NUMBERS_SOURCE.strip("\n"))
+    header = (doc.get("header") or "").rstrip()
+    if header:
+        emit("")
+        emit(header, ("header", "header"))
+    for used, src in ((plan.uses_constraints, construct.CONSTRAINTS_SOURCE), (plan.uses_geometry, construct.GEOMETRY_SOURCE),
+                      (plan.uses_terms, construct.TERMS_SOURCE)):
+        if used:
+            emit("")
+            emit(src.strip("\n"))
+    emit("")
+    emit("")
+    return out
 
 
 def object_lines(obj: dict, plan: construct.Plan) -> list[str]:

@@ -84,6 +84,7 @@ export interface Key {
   why?: string; // why its value can't be set here
   args: string; // the method's arguments as written (Rotate: its angle)
   relative?: boolean; // it places the object relative to something else (next_to, to_edge…): fixKey can pin it
+  measuring?: boolean; // its value can be set once where it starts is measured
 }
 
 /** What a channel's value is made of before its first keyframe (the object as created). */
@@ -201,6 +202,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       let value: KeyValue | undefined;
       let editable = true;
       let why: string | undefined;
+      let measuring = false;
       const arg = firstArg(c.args);
       if (info.kind === 'other') {
         value = after(ch);
@@ -216,7 +218,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
           value = n !== null && Array.isArray(b) ? (info.kind === 'x' ? [n, b[1]] : [b[0], n]) : after(ch);
         }
         if (info.kind === 'x' || info.kind === 'y' ? !arg || evalNumber(arg.src) === null : !p) [editable, why] = [false, expr(arg?.src ?? '')];
-        else if (info.kind !== 'abs' && !Array.isArray(b)) [editable, why] = [false, 'Measuring where it starts…'];
+        else if (info.kind !== 'abs' && !Array.isArray(b)) [editable, why, measuring] = [false, 'Measuring where it starts…', true];
       } else if (ch === 'scale') {
         const k = arg ? evalNumber(arg.src) : null;
         const b = cur.scale;
@@ -242,9 +244,9 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         const b = before('value');
         value = info.kind === 'abs' ? v ?? after(ch) : v !== null && typeof b === 'number' ? b + v : after(ch);
         if (v === null) [editable, why] = [false, expr(arg?.src ?? '')];
-        else if (info.kind === 'rel' && typeof b !== 'number') [editable, why] = [false, 'Measuring where it starts…'];
+        else if (info.kind === 'rel' && typeof b !== 'number') [editable, why, measuring] = [false, 'Measuring where it starts…', true];
       }
-      push({ channel: ch, call: i, method: c.name, value, editable, why, relative: info.kind === 'other' && ch === 'position' }, c.args);
+      push({ channel: ch, call: i, method: c.name, value, editable, why, relative: info.kind === 'other' && ch === 'position', measuring }, c.args);
     });
   };
   const stepsMeasured: Measured = new Map((measured?.steps ?? []).map((x) => [x.id, x as MeasuredClip]));

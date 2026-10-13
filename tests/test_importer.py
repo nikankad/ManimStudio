@@ -386,6 +386,15 @@ def test_imported_code_comes_back_as_it_was_written():
     out = codegen.generate(doc).source
     assert _construct(out) == _construct(STYLE), out  # inline chains, lines of calls, positional args, blank lines
     assert import_code(out, base=doc).doc == doc
+    # the whole file, top included: no config line or import it didn't have, its blank lines before the class
+    top = "from manim import *\n\nclass S(Scene):\n    def construct(self):\n        self.wait()\n"
+    doc = import_code(top).doc
+    assert codegen.generate(doc, latex=True).source == top
+    for latex in (True, False):  # without LaTeX the number helper is added below it, and taken out when read back
+        assert import_code(codegen.generate(doc, latex=latex).source, base=doc).doc == doc
+    doc["config"]["background_color"] = "#222222"  # changed in the app: written the usual way
+    out = codegen.generate(doc, latex=True).source
+    assert "config.background_color = '#222222'" in out and "import numpy as np" in out, out
 
 
 def test_edited_code_falls_back_to_the_usual_style():

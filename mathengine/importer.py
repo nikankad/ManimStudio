@@ -655,6 +655,24 @@ def _keep_written(doc: dict, plan: construct.Plan) -> None:
             elem.pop("written", None)
 
 
+def _keep_top(code: str, scene: ast.ClassDef, doc: dict, plan: construct.Plan) -> None:
+    """The top of the file (above the scene class) as the code has it, while codegen would write it differently:
+    codegen writes it as it was for as long as what it is made from (imports, config, header) is unchanged."""
+    lines = code.split("\n")
+    at = next((i for i, ln in enumerate(lines) if re.match(rf"class\s+{re.escape(scene.name)}\b", ln)), None)
+    if at is None:
+        return
+    while at > 0 and lines[at - 1].startswith("@"):  # its decorators are written with the class
+        at -= 1
+    top = "\n".join(lines[:at])
+    numbers = "\n" + tex.NUMBERS_SOURCE.strip("\n") + "\n\n"  # what codegen adds below it when LaTeX is missing
+    if top.endswith(numbers):
+        top = top[: -len(numbers)]
+    gen = "\n".join(t for t, _ in codegen.top_lines(doc, plan, False, True))
+    if top not in (gen, "\n".join(t for t, _ in codegen.top_lines(doc, plan, False, False))):
+        doc["top_written"] = {"gen": gen, "as": top}
+
+
 def _set_gap(elem: dict, gap: bool) -> None:
     if gap:
         elem["gap"] = True
@@ -812,6 +830,7 @@ def _members(src: _Source, scene: ast.ClassDef, construct_fn: ast.FunctionDef) -
 
 def import_code(code: str, scene: str | None = None, base: dict | None = None) -> Imported:
     """Read manim code into a document. ``scene``: which Scene class (default: the first with a construct)."""
+    raw = code
     found = [h for h in _HELPERS if h.strip("\n") in code]
     for helper in found:
         code = code.replace(helper.strip("\n"), "")
@@ -874,4 +893,5 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
     if missing:
         extra = ([construct.TERMS_IMPORT] if construct.TERMS_SOURCE in missing else []) + [h.strip("\n") for h in missing]
         doc["header"] = "\n\n".join(x for x in [doc["header"].rstrip("\n"), *extra] if x) + "\n"
+    _keep_top(raw, node, doc, plan)
     return Imported(doc, [n.name for n in scenes], imp.notes)
