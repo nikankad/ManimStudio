@@ -1590,7 +1590,57 @@ def updaters(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def record_in_loop(b):
+    """Record with the playhead in a loop: a canvas drag during its first run is a clip in its body (it runs every
+    time); during a later run, drawn faintly, the clip goes after the loop."""
+    code = ("from manim import *\n\n\nclass R(Scene):\n    def construct(self):\n        s = Square().shift(LEFT * 4)\n"
+            "        c = Circle()\n        self.add(s, c)\n        for i in range(3):\n"
+            "            self.play(c.animate.shift(RIGHT * 0.5), run_time=0.5)\n        self.wait()\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "rec.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_function("document.querySelector('.tl-lanes .clip.anim') && !document.querySelector('.tl-lanes .clip.anim.estimated') && !document.querySelector('.tl-lanes .block-bar.estimated')", timeout=60000)
+
+        def source():
+            pg.wait_for_timeout(400)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        def seek(code):
+            pg.locator(".tl-header .timecode").click()
+            pg.locator(".tl-header input.timecode").fill(code)
+            pg.keyboard.press("Enter")
+            pg.wait_for_timeout(500)
+
+        def drag(x, dx):  # the object at (x, 0), dragged dx pixels to the right
+            box = pg.locator(".viewport svg.overlay").bounding_box()
+            px, py = box["x"] + box["width"] * (x + 64 / 9) / (128 / 9), box["y"] + box["height"] / 2
+            pg.mouse.move(px, py)
+            pg.mouse.down()
+            pg.mouse.move(px + dx, py, steps=8)
+            pg.mouse.up()
+            pg.wait_for_timeout(600)
+
+        pg.get_by_role("button", name="Program").click()
+        pg.locator(".toolbar").get_by_label("● Record").check()
+        seek("00:00:00:06")
+        drag(-4, 60)
+        src = source()
+        assert "        for i in range(3):\n            self.play(c.animate.shift(RIGHT * 0.5), s.animate.move_to(" in src, src
+        seek("00:00:01:12")
+        drag(-2.75, -60)
+        src = source()
+        assert "run_time=0.5)\n        self.play(s.animate.move_to(" in src and src.endswith("        self.wait()\n"), src
+        compile(src, "rec.py", "exec")
+        assert not pg.errors, pg.errors
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:
