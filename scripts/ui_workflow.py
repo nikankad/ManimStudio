@@ -1541,12 +1541,15 @@ def blocks(b):
         bar = pg.locator(".tl-lanes .clip.block-bar").first
         assert bar.get_attribute("aria-label").startswith("for i in range(3), ×3"), bar.get_attribute("aria-label")
         assert pg.locator(".tl-lanes .clip.anim.iter").count() == 2
-        # the header, edited: the loop runs 4 times once manim has measured it again
+        # a loop counting whole numbers opens as a Repeat (i from 0 to 2); its last value, edited: the loop runs 4
+        # times once manim has measured it again
         bar.click()
         assert pg.locator(".inspector h3", has_text="Block").count() == 1
-        head = pg.get_by_label("Header")
-        head.fill("for i in range(4)")
-        head.press("Enter")
+        assert pg.get_by_label("Loop kind").input_value() == "range" and pg.get_by_label("From").input_value() == "0"
+        last = pg.get_by_label("To", exact=True)
+        last.fill("3")
+        last.press("Enter")
+        pg.wait_for_timeout(800)
         assert "        for i in range(4):\n            self.play(c.animate.shift(RIGHT), run_time=0.5)\n" in source()
         pg.wait_for_function("document.querySelector('.tl-lanes .clip.block-bar')?.getAttribute('aria-label').includes('×4') && !document.querySelector('.tl-lanes .block-bar.estimated')", timeout=60000)
         assert pg.locator(".tl-lanes .clip.anim.iter").count() == 3
