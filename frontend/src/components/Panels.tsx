@@ -16,6 +16,7 @@ import { WordingDialog } from './Wording';
 import { clipsInWords, customCount, resetWording, setClipsInWords } from '../wording';
 import { NewProjectDialog } from './Home';
 import { keys } from '../keys';
+import { WorkspaceSwitch } from './Storyboard';
 
 /** Project files: .manimstudio, and .mathengine from versions before the rename. */
 const PROJECT_FILES = 'Manim Studio project (*.manimstudio;*.mathengine)';
@@ -274,6 +275,7 @@ export function Toolbar() {
       )}
       <div className="spacer" />
       <UpdateNotice />
+      <WorkspaceSwitch />
       <button data-tour="graph" className="ghost" title="Graph a function from an expression, with parameter sliders" onClick={() => setState({ panel: 'graph', panelData: null })}>ƒ Graph</button>
       <span className="toolbar-group" data-tour="output">
         {!narrow && <AutoRenderToggle />}

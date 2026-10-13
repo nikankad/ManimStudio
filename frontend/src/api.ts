@@ -104,8 +104,8 @@ export const api = {
   tex: () => post<{ latex: boolean; dir: string | null; hint: string }>('/api/tex', {}),
   signature: (expr: string, header: string, object_classes: Record<string, string>) =>
     post<Signature>('/api/signature', { expr, header, object_classes }),
-  run: (doc: SceneDoc, t: number | null, render: boolean, width = 960) =>
-    post<RunResult>('/api/run', { doc, t, render, width }),
+  run: (doc: SceneDoc, t: number | null, render: boolean, width = 960, boundary?: { id: string; edge: 'start' | 'end' }) =>
+    post<RunResult>('/api/run', { doc, t, render, width, boundary }),
   // spans: where each element's code is, [line, col, end line, end col] (an animation: its exact expression)
   code: (doc: SceneDoc) => post<{ code: string; linemap: Record<string, [LineKind, string]>; spans?: Record<string, CodeSpan[]> }>('/api/code', { doc }),
   importCode: (code: string, base: SceneDoc | null, scene?: string) => post<ImportResult>('/api/import_code', { code, base, scene }),

@@ -526,6 +526,8 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
                 hidden.append(0)
             else:
                 end = shapes.get(step["id"], ([], None))[1]
+                if preview:
+                    emit(f"self._me_boundary({step['id']!r}, 'start')", ("step", step["id"]), indent())
                 if preview and end:
                     emit(f"self._me_step({end!r})", ("step", end), indent())
                 at = len(w.lines)

@@ -6,7 +6,7 @@ import { meetSnaps, type MeetSnap } from '../intersect';
 import {
   addAnimation, addObject, animateParam, commitEdit, commitTransform, createLinked, deleteSelection, detachObjects, duplicateObjects, coupleObjects, uncoupleObjects, editPoints, fmt, fps,
   clearRange, playbackAt, playRange, setRangePoint, workArea,
-  frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
+  frameBoundary, frameSnap, getState, previewEdit, previewTransform, requestFrame, selectedObjectIds, selectObjects, sequenceEnd, setPlaying, setPreviewWidth, setState,
   timecode, toast, toggleObjectSelection, type TransformDelta, useStore,
 } from '../store';
 import type { ObjInfo, Pt, SceneDoc, SceneObject, Tool } from '../types';
@@ -74,7 +74,7 @@ export function Viewport() {
   const frame = useStore((s) => s.frame);
   const selection = useStore((s) => s.selection);
   const snap = useStore((s) => s.snap);
-  const record = useStore((s) => s.record);
+  const record = useStore((s) => s.record || s.workspace === 'storyboard' && s.targetEdit);
   const video = useStore((s) => s.video);
   const showVideo = useStore((s) => s.showVideo);
   const playing = useStore((s) => s.playing);
@@ -663,10 +663,10 @@ export function Viewport() {
         // Record mode: parameter drags become .animate.set_value clips at the playhead.
         const recorded: [string, number][] = [];
         const scratch = structuredClone(getState().doc);
-        const ok = applyGeoDrag(scratch, geoDrag, geoDrag.last, getState().record ? (name, v) => recorded.push([name, v]) : null);
+        const ok = applyGeoDrag(scratch, geoDrag, geoDrag.last, (getState().record || getState().workspace === 'storyboard' && getState().targetEdit) ? (name, v) => recorded.push([name, v]) : null);
         setState({ previewDoc: null });
         if (recorded.length) recorded.forEach(([name, v]) => animateParam(name, v));
-        else if (getState().record && ok) toast('Only parameters can be recorded; this edit changes the starting state');
+        else if ((getState().record || getState().workspace === 'storyboard' && getState().targetEdit) && ok) toast('This handle edits the construction. Animate a parameter or turn off Edit result.');
         if (ok && !recorded.length) commitEdit((d) => void applyGeoDrag(d, geoDrag, geoDrag.last, null));
       } else {
         setState({ previewDoc: null });
@@ -693,7 +693,7 @@ export function Viewport() {
       }
       return;
     }
-    if (getState().record && o && (!o.link || standsAlone(o))) return toast('Handles edit the starting shape; turn off Record to use them');
+    if ((getState().record || getState().workspace === 'storyboard' && getState().targetEdit) && o && (!o.link || standsAlone(o))) return toast('Handles edit the starting shape; turn off Record to use them');
     const p = localPoint(e, svg);
     setGeoDrag({ id, handle, start: p, moved: false, last: p });
   };
@@ -1024,7 +1024,7 @@ function Handles({ name, box, rotation, toPx, onDown, moveOnly, point }: {
  */
 function FrameStatus() {
   const failed = useStore((s) => s.frameFailed);
-  const behind = useStore((s) => !s.playing && !s.showVideo && !!s.frameAt && (s.frameAt.doc !== (s.previewDoc ?? s.doc) || Math.abs(s.frameAt.time - s.time) > 1e-6));
+  const behind = useStore((s) => !s.playing && !s.showVideo && !!s.frameAt && (s.frameAt.doc !== (s.previewDoc ?? s.doc) || Math.abs(s.frameAt.time - s.time) > 1e-6 || s.frameAt.boundary !== JSON.stringify(frameBoundary(s))));
   if (failed) {
     return (
       <div className="frame-status failed" role="alert">

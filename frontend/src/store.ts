@@ -5,6 +5,7 @@ import { dependentsOf, FOLLOW_KINDS, isCoupled, isRedraw, linkSources, standsAlo
 import { bakeTransform, freeShape, shapeCenter, writeShape } from './geometry';
 import { anchorTo, cloneAnim, cloneStep, compoundOf, compounds, findAnim, withBlocks, findStep, forgetObjects, landing, layout, markerTime, newAnim, settleMarkers, placeAnims, placeSteps, removeIds, renameInTimeline, stepEstimate, animEstimate, walk, ensureDefined, type Layout } from './timeline';
 import { setConstants } from './words';
+import { appendToBeat, beatBoundary, beatsFor } from './storyboard';
 import type { Anim, Args, Catalog, CatalogEntry, Job, Link, Marker, ObjInfo, ParamMeta, RunResult, SceneDoc, SceneObject, Selection, Signature, Step, StepKind, Template, Tool } from './types';
 
 export interface VideoState {
@@ -24,7 +25,7 @@ export interface AppState {
   selection: Selection;
   time: number;
   frame: RunResult | null;
-  frameAt: { doc: SceneDoc; time: number } | null; // what the frame shown was drawn for
+  frameAt: { doc: SceneDoc; time: number; boundary?: string } | null; // what the frame shown was drawn for
   frameFailed: string | null; // the last frame couldn't be drawn (the backend didn't answer): why
   timeline: RunResult | null;
   catalog: Catalog | null;
@@ -49,6 +50,10 @@ export interface AppState {
   autoIntro: boolean;
   record: boolean;
   centerTab: 'program' | 'code'; // the center panel shows the canvas or the code
+  workspace: 'storyboard' | 'timeline';
+  activeBeat: string | null;
+  canvasPhase: 'start' | 'result' | 'preview';
+  targetEdit: boolean;
   view: { pps: number; start: number }; // timeline zoom (pixels/second) and left edge (seconds)
   video: VideoState | null;
   app: AppInfo | null; // this build's version and release channel
@@ -105,6 +110,10 @@ let state: AppState = {
   autoIntro: true,
   record: false,
   centerTab: 'program',
+  workspace: 'storyboard',
+  activeBeat: null,
+  canvasPhase: 'result',
+  targetEdit: false,
   view: { pps: 110, start: 0 },
   video: null,
   app: null,
@@ -126,6 +135,13 @@ const subscribe = (l: () => void) => {
 
 export const getState = () => state;
 
+export function frameBoundary(s: AppState = state, doc = s.previewDoc ?? s.doc) {
+  if (s.workspace !== 'storyboard' || s.playing || s.canvasPhase === 'preview') return undefined;
+  const beats = beatsFor(doc), index = Math.max(0, beats.findIndex((b) => b.id === s.activeBeat));
+  const edge = s.canvasPhase === 'start' ? 'start' : 'end';
+  return beatBoundary(doc, beats[index], edge) ?? beats.slice(0, index).reverse().map((b) => beatBoundary(doc, b, 'end')).find(Boolean);
+}
+
 // The editor's switches are remembered between launches (prefs.json, through the backend).
 const SWITCHES = ['snap', 'timelineSnap', 'keepTiming', 'loop', 'autoIntro', 'autoRender'] as const;
 let applyingPrefs = false;
@@ -146,11 +162,18 @@ export function setState(patch: Partial<AppState> | ((s: AppState) => Partial<Ap
   const prev = state;
   state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) };
   if (state.doc !== prev.doc) {
-    scheduleTimeline();
-    requestFrame();
-    schedulePreviewRender();
-    if (state.showVideo) state = { ...state, showVideo: false };
-  } else if (state.time !== prev.time || state.previewDoc !== prev.previewDoc) {
+    if (docKey(state.doc) !== docKey(prev.doc)) {
+      scheduleTimeline();
+      requestFrame();
+      schedulePreviewRender();
+      if (state.showVideo) state = { ...state, showVideo: false };
+    } else {
+      // Naming/grouping/script edits do not change Manim. Keep the measured scene and video fresh.
+      if (state.timeline?.doc === prev.doc) state = { ...state, timeline: { ...state.timeline, doc: state.doc } };
+      if (state.frameAt?.doc === prev.doc) state = { ...state, frameAt: { ...state.frameAt, doc: state.doc } };
+      if (JSON.stringify(frameBoundary(state)) !== JSON.stringify(frameBoundary(prev))) requestFrame();
+    }
+  } else if (state.time !== prev.time || state.previewDoc !== prev.previewDoc || state.canvasPhase !== prev.canvasPhase || state.activeBeat !== prev.activeBeat || state.workspace !== prev.workspace || state.playing !== prev.playing) {
     requestFrame();
   }
   if (state.doc.header !== prev.doc.header) void loadCatalog();
@@ -171,6 +194,7 @@ let lastCoalesce: { key: string; at: number } | null = null;
 export function updateDoc(fn: (d: SceneDoc) => void, coalesce?: string) {
   const next = structuredClone(state.doc);
   fn(next);
+  if (next.storyboard) next.storyboard.beats = beatsFor(next);
   // markers attached to a step or animation move along; one whose step or animation is gone stays where it was
   const gone = next.markers?.some((m) => m.anchor) ? settleMarkers(next, docLayout(state.doc), layout(next, state.timeline)) : [];
   if (gone.length) {
@@ -208,7 +232,7 @@ export function loadDoc(doc: SceneDoc, path: string | null, recoverId?: string) 
     recoveryTouched = true;
   }
   epoch++; // answers still on their way for the project open before are dropped
-  setState({ range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, frameAt: null, frameFailed: null, home: false, hasProject: true });
+  setState({ activeBeat: null, targetEdit: false, canvasPhase: 'result', range: { in: null, out: null }, playingRange: false, video: null, showVideo: false,  doc, path, dirty: !!recoverId, past: [], future: [], selection: null, time: 0, timeline: null, frame: null, frameAt: null, frameFailed: null, home: false, hasProject: true });
 }
 
 // ---------------------------------------------------------------- unsaved-work recovery
@@ -288,13 +312,16 @@ async function pumpFrames() {
   // Like Premiere's playback resolution: half-res while playing live so frames keep up.
   const width = state.playing ? Math.max(320, Math.round(previewWidth / 2)) : previewWidth;
   try {
-    const frame = await api.run(doc, time, true, width);
+    const boundary = frameBoundary(state, doc);
+    const frame = await api.run(doc, time, true, width, boundary);
     if (ep !== epoch) throw new Stale();
     // While the scene is broken, keep showing the last good picture (dimmed by the viewport).
     if (frame.error && state.frame?.image) frame.image = state.frame.image;
     // Requests are sequential, so this is always the newest frame we have: show it even if
     // another one is already wanted (during playback one always is).
-    const patch: Partial<AppState> = { frame, frameAt: { doc, time }, frameFailed: null };
+    const currentDoc = state.previewDoc ?? state.doc;
+    const reflectedDoc = docKey(currentDoc) === docKey(doc) ? currentDoc : doc;
+    const patch: Partial<AppState> = { frame, frameAt: { doc: reflectedDoc, time, boundary: JSON.stringify(boundary) }, frameFailed: null };
     // After pausing a preview video, switch back to live frames once the exact frame is here.
     if (state.showVideo && !state.playing && time === state.time && doc === state.doc) patch.showVideo = false;
     setState(patch);
@@ -620,6 +647,12 @@ export interface At {
 
 /** Put animations on the timeline at a time (into the self.play there, or a new one); returns when they start. */
 export function placeAt(d: SceneDoc, anims: Anim[], at?: At): number {
+  if (state.workspace === 'storyboard' && !at) {
+    const step: Step = { id: uid('s'), kind: 'play', anims, args: {} };
+    appendToBeat(d, state.activeBeat ?? beatsFor(d)[0].id, [step]);
+    ensureDefined(d, step.id);
+    return layout(d, state.timeline).steps.get(step.id)?.start ?? 0;
+  }
   const lay = layout(d, state.timeline);
   const land = landing(d, lay, frameSnap(at?.start ?? state.time), true);
   const id = placeAnims(d, lay, land, anims, at?.row);
@@ -630,6 +663,11 @@ export function placeAt(d: SceneDoc, anims: Anim[], at?: At): number {
 /** Put steps on the timeline at a time; returns when they start. */
 export function placeStepAt(d: SceneDoc, step: Step | Step[], at?: At): number {
   const steps = Array.isArray(step) ? step : [step];
+  if (state.workspace === 'storyboard' && !at) {
+    appendToBeat(d, state.activeBeat ?? beatsFor(d)[0].id, steps);
+    for (const s of steps) ensureDefined(d, s.id);
+    return layout(d, state.timeline).steps.get(steps[0].id)?.start ?? 0;
+  }
   const lay = layout(d, state.timeline);
   const land = landing(d, lay, frameSnap(at?.start ?? state.time), false);
   placeSteps(d, lay, land, steps, steps.reduce((t, s) => t + stepEstimate(s), 0));
@@ -704,6 +742,17 @@ export function addAnimation(cls: string, target: string, at?: At): string {
   updateDoc((d) => void (start = placeAt(d, [a], at)));
   setState({ selection: { kind: 'clips', ids: [a.id] }, time: frameSnap(start + animEstimate(a)) });
   return a.id;
+}
+
+/** Append native statements inside the selected explanation, including a zero-duration planning card. */
+export function addBeatSteps(steps: Step[]) {
+  const beatId = state.activeBeat ?? beatsFor(state.doc)[0].id;
+  updateDoc((d) => {
+    appendToBeat(d, beatId, steps);
+    for (const s of steps) ensureDefined(d, s.id);
+  });
+  const end = docLayout().steps.get(steps.at(-1)!.id)?.end ?? state.time;
+  setState({ activeBeat: beatId, canvasPhase: 'result', time: frameSnap(end), selection: { kind: 'clips', ids: [steps.at(-1)!.id] } });
 }
 
 /** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, a value, a change, or couple / uncouple. */
@@ -1110,7 +1159,7 @@ export function createLinked(spec: LinkedSpec, opts: { select?: boolean; time?: 
   }
   const entry = state.catalog?.mobjects.find((m) => m.name === spec.ctor);
   const intro = spec.intro !== undefined ? spec.intro : state.autoIntro ? introFor(entry, spec.ctor) : null;
-  const at = { start: opts.time };
+  const at = opts.time === undefined ? undefined : { start: opts.time };
   let end: number | null = null;
   updateDoc((d) => {
     const name = uniqueName(d, spec.name ?? snake(spec.ctor.split('.').pop() || 'obj'));
@@ -1147,6 +1196,7 @@ export function setLink(id: string, fn: (l: Link) => void, coalesce?: string) {
 
 /** Apply an edit to a scratch copy shown on the canvas while dragging (not committed). */
 export function previewEdit(fn: (d: SceneDoc) => void) {
+  if (state.workspace === 'storyboard' && state.targetEdit) return;
   const doc = structuredClone(state.doc);
   fn(doc);
   setState({ previewDoc: doc });
@@ -1154,6 +1204,10 @@ export function previewEdit(fn: (d: SceneDoc) => void) {
 
 /** Commit a canvas edit. */
 export function commitEdit(fn: (d: SceneDoc) => void, coalesce?: string) {
+  if (state.workspace === 'storyboard' && state.targetEdit) {
+    toast('This handle changes the construction. Animate its parameter, or turn off Edit result to change the diagram.');
+    return;
+  }
   setState({ previewDoc: null });
   updateDoc(fn, coalesce);
 }
@@ -1285,7 +1339,7 @@ function applyTransform(o: SceneObject, t: TransformDelta, center: [number, numb
 
 /** Show a canvas drag/resize/rotate live without committing it. */
 export function previewTransform(id: string, t: TransformDelta, center: [number, number] | null) {
-  if (state.record) return;
+  if (state.record || state.workspace === 'storyboard' && state.targetEdit) return;
   const doc = structuredClone(state.doc);
   const o = doc.objects.find((x) => x.id === id);
   if (!o) return;
@@ -1298,6 +1352,15 @@ export function commitTransform(id: string, t: TransformDelta, center: [number, 
   setState({ previewDoc: null });
   const obj = state.doc.objects.find((o) => o.id === id);
   if (!obj) return;
+  if (state.workspace === 'storyboard' && state.targetEdit) {
+    let chain = '';
+    if (t.move && center) chain = `.move_to(np.array([${fmt(snapV(center[0] + t.move[0]))}, ${fmt(snapV(center[1] + t.move[1]))}, 0]))`;
+    else if (t.scale !== undefined) chain = `.scale(${round3(t.scale)})`;
+    else if (t.stretch) chain = `.stretch(${round3(t.stretch[0] !== 1 ? t.stretch[0] : t.stretch[1])}, ${t.stretch[0] !== 1 ? 0 : 1})`;
+    if (t.rotate) addBeatSteps([{ id: uid('s'), kind: 'play', anims: [newAnim('Rotate', obj.name, { angle: `${round3(t.rotate)} * DEGREES` })], args: { run_time: '1' } }]);
+    else if (chain) addBeatSteps([{ id: uid('s'), kind: 'play', anims: [{ ...newAnim('animate', obj.name), chain }], args: { run_time: '1' } }]);
+    return;
+  }
   if (!state.record) {
     updateDoc((d) => applyTransform(d.objects.find((x) => x.id === id)!, t, center));
     return;
@@ -1325,5 +1388,5 @@ export function commitTransform(id: string, t: TransformDelta, center: [number, 
 }
 
 export function docKey(doc: SceneDoc): string {
-  return JSON.stringify(doc);
+  return JSON.stringify({ ...doc, storyboard: undefined });
 }

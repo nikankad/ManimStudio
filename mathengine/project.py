@@ -115,6 +115,24 @@ def upgrade(doc: dict) -> dict:
         base["scene"] = new_project()["scene"]
     if not isinstance(base.get("header"), str):
         base["header"] = ""
+    if "storyboard" in base:
+        board = base["storyboard"]
+        beats = board.get("beats") if isinstance(board, dict) else None
+        clean = []
+        for beat in beats if isinstance(beats, list) else []:
+            if not isinstance(beat, dict) or not isinstance(beat.get("id"), str):
+                continue
+            cues = beat.get("cues")
+            clean.append({
+                "id": beat["id"], "title": beat.get("title") if isinstance(beat.get("title"), str) else "Explanation",
+                "steps": [s for s in beat.get("steps", []) if isinstance(s, str)] if isinstance(beat.get("steps"), list) else [],
+                "script": beat.get("script") if isinstance(beat.get("script"), str) else "",
+                "cues": [c for c in cues if isinstance(c, dict) and isinstance(c.get("id"), str)
+                         and isinstance(c.get("phrase"), str) and isinstance(c.get("step"), str)
+                         and c.get("edge") in ("start", "end") and isinstance(c.get("offset"), (int, float))]
+                        if isinstance(cues, list) else [],
+            })
+        base["storyboard"] = {"beats": clean}
     return base
 
 

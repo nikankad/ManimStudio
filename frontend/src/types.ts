@@ -211,6 +211,15 @@ export interface SceneDoc {
   markers?: Marker[];
   constructions?: Template[];
   defs?: Def[];
+  storyboard?: { beats: Beat[] }; // editor metadata: groups statements without changing their Python
+}
+
+export interface Beat {
+  id: string;
+  title: string;
+  steps: string[];
+  script: string;
+  cues: { id: string; phrase: string; step: string; edge: 'start' | 'end'; offset: number }[];
 }
 
 export interface Param {

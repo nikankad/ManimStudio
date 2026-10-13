@@ -254,7 +254,8 @@ class Handler(BaseHTTPRequestHandler):
         t = body.get("t")
         with self.app.manim_lock:
             res = runtime.run(body["doc"], None if t is None else float(t),
-                              render=body.get("render", True), preview_width=int(body.get("width", 960)))
+                              render=body.get("render", True), preview_width=int(body.get("width", 960)),
+                              boundary=body.get("boundary"))
         return res.to_json()
 
     def api_code(self, _q: dict, body: dict) -> dict:

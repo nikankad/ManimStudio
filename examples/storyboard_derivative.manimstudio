@@ -1,0 +1,384 @@
+{
+  "version": 4,
+  "scene": {
+    "name": "StoryboardDerivative",
+    "base": "Scene"
+  },
+  "config": {
+    "pixel_width": 1920,
+    "pixel_height": 1080,
+    "frame_rate": 60,
+    "background_color": "#000000"
+  },
+  "header": "",
+  "objects": [
+    {
+      "id": "title",
+      "name": "title",
+      "ctor": "Text",
+      "args": {
+        "*": "'From a secant to a tangent'",
+        "font_size": "38"
+      },
+      "pos": [
+        0,
+        3.45
+      ],
+      "chain": ""
+    },
+    {
+      "id": "x0",
+      "name": "x0",
+      "ctor": "ValueTracker",
+      "args": {
+        "*": "1"
+      },
+      "pos": null,
+      "chain": "",
+      "param": {
+        "min": -2.5,
+        "max": 2.5,
+        "step": 0.05
+      }
+    },
+    {
+      "id": "h",
+      "name": "h",
+      "ctor": "ValueTracker",
+      "args": {
+        "*": "1.5"
+      },
+      "pos": null,
+      "chain": "",
+      "param": {
+        "min": 0.01,
+        "max": 2,
+        "step": 0.01
+      }
+    },
+    {
+      "id": "ax",
+      "name": "axes",
+      "ctor": "Axes",
+      "args": {
+        "x_range": "[-3, 3, 1]",
+        "y_range": "[-2, 4, 1]",
+        "x_length": "8",
+        "y_length": "6"
+      },
+      "pos": null,
+      "chain": ""
+    },
+    {
+      "id": "g",
+      "name": "curve",
+      "ctor": "axes.plot",
+      "args": {
+        "color": "BLUE"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "graph",
+        "axes": "ax",
+        "expr": "y = 0.2x^3 - 0.5x + 1",
+        "x_min": -3,
+        "x_max": 3
+      }
+    },
+    {
+      "id": "P",
+      "name": "P",
+      "ctor": "Dot",
+      "args": {},
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "on_graph",
+        "graph": "g",
+        "x": "x0"
+      }
+    },
+    {
+      "id": "Q",
+      "name": "Q",
+      "ctor": "Dot",
+      "args": {
+        "color": "YELLOW"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "on_graph",
+        "graph": "g",
+        "x": "x0 + h"
+      }
+    },
+    {
+      "id": "sec",
+      "name": "secant",
+      "ctor": "Line",
+      "args": {
+        "color": "YELLOW"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "secant",
+        "graph": "g",
+        "x": "x0",
+        "dx": "h",
+        "length": "1.5"
+      }
+    },
+    {
+      "id": "tan",
+      "name": "tangent",
+      "ctor": "DashedLine",
+      "args": {
+        "color": "GREEN"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "tangent",
+        "graph": "g",
+        "x": "x0",
+        "length": "5"
+      }
+    },
+    {
+      "id": "ss",
+      "name": "secant_slope",
+      "ctor": "DecimalNumber",
+      "args": {
+        "*": "0",
+        "color": "YELLOW",
+        "font_size": "32"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "measure",
+        "what": "slope",
+        "of": "sec",
+        "offset": [
+          1.2,
+          0.6
+        ]
+      }
+    },
+    {
+      "id": "ts",
+      "name": "tangent_slope",
+      "ctor": "DecimalNumber",
+      "args": {
+        "*": "0",
+        "color": "GREEN",
+        "font_size": "32"
+      },
+      "pos": null,
+      "chain": "",
+      "link": {
+        "kind": "measure",
+        "what": "slope",
+        "of": "tan",
+        "offset": [
+          1.2,
+          -0.4
+        ]
+      }
+    }
+  ],
+  "timeline": [
+    {
+      "kind": "play",
+      "anims": [
+        {
+          "cls": "Write",
+          "target": "title",
+          "args": {},
+          "id": "a1"
+        },
+        {
+          "id": "a2",
+          "cls": "LaggedStart",
+          "target": "",
+          "args": {
+            "lag_ratio": "0.4"
+          },
+          "anims": [
+            {
+              "cls": "Create",
+              "target": "axes",
+              "args": {},
+              "id": "a3"
+            },
+            {
+              "cls": "Create",
+              "target": "curve",
+              "args": {},
+              "id": "a4"
+            }
+          ]
+        }
+      ],
+      "args": {
+        "run_time": "2"
+      },
+      "id": "s1"
+    },
+    {
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      },
+      "id": "s2"
+    },
+    {
+      "kind": "play",
+      "anims": [
+        {
+          "cls": "GrowFromCenter",
+          "target": "P",
+          "args": {},
+          "id": "a5"
+        },
+        {
+          "cls": "GrowFromCenter",
+          "target": "Q",
+          "args": {},
+          "id": "a6"
+        },
+        {
+          "cls": "Create",
+          "target": "secant",
+          "args": {},
+          "id": "a7"
+        },
+        {
+          "cls": "FadeIn",
+          "target": "secant_slope",
+          "args": {},
+          "id": "a8"
+        }
+      ],
+      "args": {
+        "run_time": "1.25"
+      },
+      "id": "s3"
+    },
+    {
+      "kind": "wait",
+      "args": {
+        "duration": "1"
+      },
+      "id": "s4"
+    },
+    {
+      "kind": "play",
+      "anims": [
+        {
+          "cls": "animate",
+          "target": "h",
+          "args": {},
+          "chain": ".set_value(0.1)",
+          "id": "a9"
+        }
+      ],
+      "args": {
+        "run_time": "3"
+      },
+      "id": "s5"
+    },
+    {
+      "kind": "wait",
+      "args": {
+        "duration": "0.5"
+      },
+      "id": "s6"
+    },
+    {
+      "kind": "play",
+      "anims": [
+        {
+          "cls": "Create",
+          "target": "tangent",
+          "args": {},
+          "id": "a10"
+        },
+        {
+          "cls": "FadeIn",
+          "target": "tangent_slope",
+          "args": {},
+          "id": "a11"
+        }
+      ],
+      "args": {
+        "run_time": "0.75"
+      },
+      "id": "s7"
+    },
+    {
+      "kind": "wait",
+      "args": {
+        "duration": "1.75"
+      },
+      "id": "s8"
+    }
+  ],
+  "markers": [],
+  "constructions": [],
+  "storyboard": {
+    "beats": [
+      {
+        "id": "explain_0",
+        "title": "Introduce the curve",
+        "steps": [
+          "s1",
+          "s2"
+        ],
+        "script": "Start with a curve. We want to understand its slope at one point.",
+        "cues": []
+      },
+      {
+        "id": "explain_1",
+        "title": "Construct a secant",
+        "steps": [
+          "s3",
+          "s4"
+        ],
+        "script": "These two points determine a secant. Its slope measures the average rate of change.",
+        "cues": []
+      },
+      {
+        "id": "explain_2",
+        "title": "Shrink the separation",
+        "steps": [
+          "s5",
+          "s6"
+        ],
+        "script": "Bring Q closer to P. As the separation shrinks, watch the secant and its slope change together.",
+        "cues": [
+          {
+            "id": "closer",
+            "phrase": "Bring Q closer to P",
+            "step": "s5",
+            "edge": "start",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "id": "explain_3",
+        "title": "Explain the tangent",
+        "steps": [
+          "s7",
+          "s8"
+        ],
+        "script": "The green tangent shows the limiting slope at P. We stop h above zero and construct the tangent explicitly.",
+        "cues": []
+      }
+    ]
+  }
+}

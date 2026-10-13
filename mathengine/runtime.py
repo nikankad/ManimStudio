@@ -104,8 +104,10 @@ class PreviewMixin:
 
     _me_target: float | None = None
 
-    def _me_init(self, target: float | None) -> None:
+    def _me_init(self, target: float | None, boundary: dict | None = None) -> None:
         self._me_target = target
+        self._me_boundary_target = boundary
+        self._me_boundary_reached = False
         self.renderer.play = self._me_render_play
         self._me_registry: dict[str, tuple[Any, str]] = {}
         self._me_open: dict[str, float] = {}
@@ -129,6 +131,7 @@ class PreviewMixin:
         return [oid for mob, oid in self._me_registry.values() if any(id(x) in on for x in mob.get_family())]
 
     def _me_step(self, sid: str) -> None:
+        self._me_boundary(sid, "start")
         self._me_current_step = sid
         self._me_open[sid] = self.renderer.time
         self._me_before[sid] = self._me_shown()
@@ -139,6 +142,13 @@ class PreviewMixin:
         if sid in self._me_states:
             timing.state0, timing.state1 = self._me_states.pop(sid)
         self._me_steps.append(timing)
+        self._me_boundary(sid, "end")
+
+    def _me_boundary(self, sid: str, edge: str) -> None:
+        """An exact statement boundary, including zero-time actions. Time alone cannot identify it."""
+        if self._me_boundary_target == {"id": sid, "edge": edge}:
+            self._me_boundary_reached = True
+            raise _Stop()
 
     def _me_enter(self, sid: str) -> None:
         """A block's body starts (once per run of a loop, when an if's branch is taken…): measuring run only."""
@@ -480,8 +490,13 @@ def _media_dir():
     return cache_root() / "preview-media"
 
 
-def run(doc: dict, target: float | None = None, render: bool = True, preview_width: int = 960) -> RunResult:
+def run(doc: dict, target: float | None = None, render: bool = True, preview_width: int = 960,
+        boundary: dict | None = None) -> RunResult:
     """Execute the document. With ``target`` set, stop at that time and render a frame."""
+    if boundary is not None:
+        if not isinstance(boundary, dict) or boundary.get("edge") not in ("start", "end") or not any(s["id"] == boundary.get("id") for s in doc.get("timeline", [])):
+            raise ValueError("Choose an existing statement and its start or end boundary.")
+        target = None  # execute complete native animations up to the chosen statement
     m = manim()
     t_start = _time.perf_counter()
     result = RunResult()
@@ -518,12 +533,14 @@ def run(doc: dict, target: float | None = None, render: bool = True, preview_wid
             scene_cls = ns[doc.get("scene", {}).get("name") or "MainScene"]
             preview_cls = type(scene_cls.__name__, (PreviewMixin, scene_cls), {})
             scene = preview_cls()
-            scene._me_init(target)
+            scene._me_init(target, boundary)
             scene.setup()
             try:
                 scene.construct()
             except _Stop:
                 pass
+            if boundary is not None and not scene._me_boundary_reached:
+                raise ValueError("This boundary did not execute (the action may be disabled or in a branch not taken).")
         except Exception as exc:  # user code errors are expected; report them
             result.error = _map_error(exc, filename, gen)
 

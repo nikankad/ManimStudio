@@ -189,7 +189,45 @@ def coupling() -> dict:
     return _doc("Coupling", objects, steps)
 
 
+
+def storyboard_derivative() -> dict:
+    """A complete explanation authored as four beats, with an explicit tangent at the end."""
+    from .starters import secant_to_tangent
+
+    objects = secant_to_tangent()["objects"]
+    objects.insert(0, _text("title", "title", "From a secant to a tangent", 38, pos=[0, 3.45]))
+    steps = [
+        _play(_a("Write", "title"),
+              {"id": "reveal_graph", "cls": "LaggedStart", "target": "", "args": {"lag_ratio": "0.4"},
+               "anims": [_a("Create", "axes"), _a("Create", "curve")]}, run_time=2),
+        _wait(0.5),
+        _play(_a("GrowFromCenter", "P"), _a("GrowFromCenter", "Q"), _a("Create", "secant"),
+              _a("FadeIn", "secant_slope"), run_time=1.25),
+        _wait(1),
+        _play(_animate("h", ".set_value(0.1)"), run_time=3),
+        _wait(0.5),
+        _play(_a("Create", "tangent"), _a("FadeIn", "tangent_slope"), run_time=0.75),
+        _wait(1.75),
+    ]
+    doc = _doc("StoryboardDerivative", objects, steps)
+    titles = ["Introduce the curve", "Construct a secant", "Shrink the separation", "Explain the tangent"]
+    scripts = [
+        "Start with a curve. We want to understand its slope at one point.",
+        "These two points determine a secant. Its slope measures the average rate of change.",
+        "Bring Q closer to P. As the separation shrinks, watch the secant and its slope change together.",
+        "The green tangent shows the limiting slope at P. We stop h above zero and construct the tangent explicitly.",
+    ]
+    doc["storyboard"] = {"beats": [
+        {"id": f"explain_{i}", "title": title, "steps": [s["id"] for s in doc["timeline"][2*i:2*i+2]],
+         "script": scripts[i], "cues": ([{"id": "closer", "phrase": "Bring Q closer to P", "step": doc["timeline"][4]["id"],
+                                         "edge": "start", "offset": 0}] if i == 2 else [])}
+        for i, title in enumerate(titles)
+    ]}
+    return doc
+
+
 SAMPLES = [
+    ("storyboard", "From secant to tangent", "Four explanation beats with a parameter sweep, live relationships and narration cues.", storyboard_derivative),
     ("derivative", "The derivative is a slope", "A tangent slides along a curve while its slope traces the derivative on the right.", derivative),
     ("riemann", "Riemann sums", "Rectangles under a curve get thinner until they fill the area; the area is computed live.", riemann),
     ("orthocenter", "Altitudes of a triangle", "The three altitudes meet in one point that follows the vertices wherever they go.", orthocenter),

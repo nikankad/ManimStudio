@@ -1088,7 +1088,7 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
 
     doc = project.new_project()
     if base:
-        doc.update({k: copy.deepcopy(v) for k, v in base.items() if k in ("config", "markers", "constructions")})
+        doc.update({k: copy.deepcopy(v) for k, v in base.items() if k in ("config", "markers", "constructions", "storyboard")})
     doc["scene"] = {"name": node.name, "base": ", ".join(ast.unparse(b) for b in node.bases) or "Scene"}
     if node.decorator_list:  # they can change the class (its attributes, its methods), so they stay
         doc["scene"]["decorators"] = "\n".join("@" + src.seg(d) for d in node.decorator_list)

@@ -9,6 +9,7 @@ import { Viewport } from './components/Viewport';
 import { CodeEditor } from './components/CodeEditor';
 import { Tour, WelcomeCard } from './components/Help';
 import { TryThis } from './components/TryThis';
+import { StoryboardNavigator, StoryboardWorkspace } from './components/Storyboard';
 import { Home } from './components/Home';
 import { getState, loadCatalog, loadDoc, setState, toast, useStore } from './store';
 import { useAutoLabels } from './a11y';
@@ -41,6 +42,7 @@ export function App() {
   const message = useStore((s) => s.toast);
   const home = useStore((s) => s.home);
   const centerTab = useStore((s) => s.centerTab);
+  const workspace = useStore((s) => s.workspace);
   const [tlHeight, setTlHeight] = useState(savedHeight);
   useShortcuts();
   useWindowTitle();
@@ -89,13 +91,12 @@ export function App() {
     );
 
   return (
-    <div className="app" style={{ gridTemplateRows: `44px minmax(220px, 1fr) 6px ${tlHeight}px` }}>
+    <div className={`app ${workspace === 'storyboard' ? 'storyboard-app' : ''}`} style={{ gridTemplateRows: workspace === 'storyboard' ? '44px minmax(0, 1fr)' : `44px minmax(220px, 1fr) 6px ${tlHeight}px` }}>
       <Toolbar />
-      <Library />
-      {centerTab === 'code' ? <CodeEditor /> : <Viewport />}
+      {workspace === 'storyboard' ? <StoryboardNavigator /> : <Library />}
+      {centerTab === 'code' ? <CodeEditor /> : workspace === 'storyboard' ? <StoryboardWorkspace /> : <Viewport />}
       <Inspector />
-      <div className="splitter" onPointerDown={startResize} title="Drag to resize the timeline" />
-      <Timeline />
+      {workspace === 'timeline' && <><div className="splitter" onPointerDown={startResize} title="Drag to resize the timeline" /><Timeline /></>}
       <Panels />
       <SharedLists />
       <Tour />
