@@ -194,3 +194,35 @@ class K(Scene):
     assert expr["keys"][0]["value"] == [0, 0] and expr["keys"][1]["value"][0] == 0
     assert "b = Square(color=RED)" in roundtrip(base_color["doc"])
     assert roundtrip(base_pos["doc"]).count("b.move_to(np.array([-2, 1, 0]))") == 1
+
+
+CHANGES = '''from manim import *
+
+
+class K(Scene):
+    def construct(self):
+        c = Square(color=BLUE)
+        label = Text("hi")
+        self.play(Create(c))
+        label.next_to(c, UP)
+        c.set_color(RED).shift(LEFT)
+        self.play(FadeIn(label))
+'''
+
+
+@needs_node
+def test_methods_called_later_are_keyframes_that_jump():
+    doc = import_code(CHANGES).doc
+    applies = [s for s in doc["timeline"] if s["kind"] == "apply"]
+    assert [(s["target"], s["chain"]) for s in applies] == [("label", ".next_to(c, UP)"), ("c", ".set_color(RED).shift(LEFT)")]
+    measured = runtime.run(doc, None, False).to_json()
+    by = {s["id"]: s for s in measured["steps"]}
+    assert by[applies[1]["id"]]["from"]["center"] == [0, 0] and by[applies[1]["id"]]["to"]["center"] == [-1, 0]
+    color, move = edit(doc, measured, {"op": "set", "name": "c", "channel": "color", "index": 0, "value": "GREEN"},
+                       {"op": "set", "name": "c", "channel": "position", "index": 0, "value": [-2, 1]})
+    k = color["keys"][0]
+    assert k["anim"] == applies[1]["id"] and k["start"] == k["t"] and k["editable"]  # a jump: no time before it
+    assert "c.set_color(GREEN).shift(LEFT)" in roundtrip(color["doc"])
+    assert "c.set_color(RED).shift(LEFT * 2 + UP)" in roundtrip(move["doc"])
+    gone = edit(doc, measured, {"op": "delete", "name": "c", "channel": "color", "index": 0})[0]
+    assert "        c.shift(LEFT)\n" in roundtrip(gone["doc"])

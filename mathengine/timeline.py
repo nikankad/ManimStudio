@@ -11,6 +11,7 @@ what the editor shows:
 * ``add`` / ``remove``: ``self.add(*targets)`` / ``self.remove(*targets)``.
 * ``call``: another method of the scene, ``self.<method>(**args)``: ``self.next_section(...)``,
   ``self.add_sound(...)``, ``self.bring_to_front(...)``, ``ThreeDScene.move_camera(...)``…
+* ``apply``: methods called on an object, ``target.next_to(u, UP).set_color(RED)``: at once, like a jump.
 * ``code``: any Python, run in place.
 * ``couple`` / ``uncouple``: switch constructions (see construct.py) on or off.
 
@@ -25,7 +26,7 @@ import uuid
 from collections.abc import Iterator
 
 EPS = 1e-6
-INSTANT = ("add", "remove", "uncouple")
+INSTANT = ("add", "remove", "uncouple", "apply")
 
 
 def _id(prefix: str) -> str:

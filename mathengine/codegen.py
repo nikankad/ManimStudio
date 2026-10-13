@@ -413,46 +413,61 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     return Generated("\n".join(w.lines) + "\n", w.linemap, [d.to_json() for d in plan.diagnostics], plan.part_index)
 
 
+def object_lines(obj: dict, plan: construct.Plan) -> list[str]:
+    """The statements that make an object (no comments), as codegen writes them."""
+    if obj["id"] in plan.lines:
+        return list(plan.lines[obj["id"]])
+    name = obj["name"]
+    out: list[str] = []
+    ctor = (obj.get("ctor") or "").strip()
+    made = f"{name} = {ctor}({_call_args(obj.get('args'), before_star=_leading(ctor), positional=obj.get('positional'))})"
+    chain = _join_chain(obj.get("chain", ""))
+    # Written as the code had it: methods on the line that makes it, and each line of calls after it. When the
+    # methods were changed since, the ones still on that line stay there and the others follow on one line.
+    layout = [_join_chain(p) for p in obj.get("chain_layout") or []]
+    if layout and "".join(layout) == chain:
+        out.append(made + layout[0])
+        out += [f"{name}{piece}" for piece in layout[1:] if piece]
+    elif layout and layout[0] and chain.startswith(layout[0]):
+        out.append(made + layout[0])
+        if chain[len(layout[0]):]:
+            out.append(f"{name}{chain[len(layout[0]):]}")
+    else:
+        out.append(made)
+        if chain:
+            out.append(f"{name}{chain}")
+    stretch = obj.get("stretch") or [1, 1]
+    for dim, f in enumerate(stretch[:2]):
+        if abs(float(f) - 1) > EPS:
+            out.append(f"{name}.stretch({_num(f)}, {dim})")
+    if obj.get("scale") not in (None, 1, 1.0):
+        out.append(f"{name}.scale({_num(obj['scale'])})")
+    if obj.get("rotation"):
+        out.append(f"{name}.rotate({_num(obj['rotation'])} * DEGREES)")
+    pos = obj.get("pos")
+    if pos is not None:
+        out.append(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0]))")
+    return out
+
+
+def as_written(elem: dict, lines: list[str]) -> list[str]:
+    """``lines`` of an element, or the code's own text for them (its line breaks, spacing, quotes) while the
+    element is unchanged since the code was read: ``written`` holds both."""
+    w = elem.get("written")
+    if w and w.get("gen") == "\n".join(lines):
+        return w.get("as", "").splitlines()
+    return lines
+
+
 def _emit_object(obj: dict, emit, B: int, preview: bool, plan: construct.Plan) -> None:
     ref = ("object", obj["id"])
     name = obj["name"]
     if obj.get("gap") and not preview:
         emit("")
     _emit_comment(obj, emit, B, ref)
-    if obj["id"] in plan.lines:
-        for line in plan.lines[obj["id"]]:
-            emit(line, ref, B)
-    else:
-        ctor = (obj.get("ctor") or "").strip()
-        made = f"{name} = {ctor}({_call_args(obj.get('args'), before_star=_leading(ctor), positional=obj.get('positional'))})"
-        chain = _join_chain(obj.get("chain", ""))
-        # Written as the code had it: methods on the line that makes it, and each line of calls after it. When the
-        # methods were changed since, the ones still on that line stay there and the others follow on one line.
-        layout = [_join_chain(p) for p in obj.get("chain_layout") or []]
-        if layout and "".join(layout) == chain:
-            emit(made + layout[0], ref, B)
-            for piece in layout[1:]:
-                if piece:
-                    emit(f"{name}{piece}", ref, B)
-        elif layout and layout[0] and chain.startswith(layout[0]):
-            emit(made + layout[0], ref, B)
-            if chain[len(layout[0]):]:
-                emit(f"{name}{chain[len(layout[0]):]}", ref, B)
-        else:
-            emit(made, ref, B)
-            if chain:
-                emit(f"{name}{chain}", ref, B)
-        stretch = obj.get("stretch") or [1, 1]
-        for dim, f in enumerate(stretch[:2]):
-            if abs(float(f) - 1) > EPS:
-                emit(f"{name}.stretch({_num(f)}, {dim})", ref, B)
-        if obj.get("scale") not in (None, 1, 1.0):
-            emit(f"{name}.scale({_num(obj['scale'])})", ref, B)
-        if obj.get("rotation"):
-            emit(f"{name}.rotate({_num(obj['rotation'])} * DEGREES)", ref, B)
-        pos = obj.get("pos")
-        if pos is not None:
-            emit(f"{name}.move_to(np.array([{_num(pos[0])}, {_num(pos[1])}, 0]))", ref, B)
+    lines = object_lines(obj, plan)
+    for line in lines if preview else as_written(obj, lines):
+        emit(line, ref, B)
     for line in plan.after.get(obj["id"], []):
         emit(line, ref, B)
     if preview:
@@ -568,6 +583,15 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
         if not IDENT.match(method):
             return []
         return [(f"self.{method}({_call_args(step.get('args'), before_star=_method_leading(doc, method), positional=step.get('positional'))})", ref)]
+    if kind == "apply":
+        target, chain = (step.get("target") or "").strip(), _join_chain(step.get("chain") or "")
+        if not target or not chain:
+            return []
+        line = f"{_primary(target)}{chain}"
+        if preview:  # its object before and after, for the keyframe editor (the measuring run only)
+            return [(f"self._me_state({step['id']!r}, {_primary(target)}, 0)", ref), (line, ref),
+                    (f"self._me_state({step['id']!r}, {_primary(target)}, 1)", ref)]
+        return [(line, ref)]
     if kind == "code":
         body = textwrap.dedent(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []
@@ -584,6 +608,10 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
 def _emit_step(step: dict, emit, B: int, preview: bool, doc: dict, plan: construct.Plan, skip: set[str]) -> None:
     lines = statement(step, doc, plan, preview, skip)
     ref = ("step", step["id"])
+    if not preview and lines:
+        written = as_written(step, [text for text, _ in lines])
+        if written != [text for text, _ in lines]:
+            lines = [(text, ref) for text in written]
     if lines and step.get("gap") and not preview:
         emit("")
     if lines:

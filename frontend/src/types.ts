@@ -21,6 +21,7 @@ export interface SceneObject {
   chain_layout?: string[]; // how the code spread the chain: [on the line that makes it, then each line of calls after it]
   positional?: string[]; // the arguments the code passed by position, in order
   gap?: boolean; // a blank line before it in the code
+  written?: Written;
 }
 
 /** Slider bounds of a parameter (a ValueTracker object; its value is args["*"]). */
@@ -102,7 +103,7 @@ export interface TemplateInput {
  * couple / uncouple: switch constructions · call: self.<method>(**args), any other method of the scene
  * (next_section, add_sound, move_camera…). A step starts when the one before it ends.
  */
-export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call';
+export type StepKind = 'play' | 'wait' | 'add' | 'remove' | 'code' | 'couple' | 'uncouple' | 'call' | 'apply';
 
 export interface Step {
   id: string;
@@ -118,6 +119,15 @@ export interface Step {
   duration?: number; // couple: glide back into place over this time
   positional?: string[]; // call: the arguments the code passed by position, in order
   gap?: boolean; // a blank line before it in the code
+  target?: string; // apply: the object (or part of one) its methods are called on
+  chain?: string; // apply: the methods, ".next_to(u, UP).set_color(RED)"
+  written?: Written;
+}
+
+/** The code's own text of an element (its line breaks, spacing…), written as is while codegen would write `gen`. */
+export interface Written {
+  gen: string;
+  as: string;
 }
 
 /** An animation: cls(target, **args), target.animate(**args).chain, or a composition of `anims`. */
@@ -265,7 +275,7 @@ export interface Diagnostic {
 export interface RunResult {
   duration: number;
   // when each statement runs (measured by manim), and which objects (ids) were on screen just before and after it
-  steps: { id: string; start: number; end: number; before?: string[]; after?: string[] }[];
+  steps: { id: string; start: number; end: number; before?: string[]; after?: string[]; from?: ObjState; to?: ObjState }[];
   // when manim runs each animation; curve: its progress over that time; from / to: its object then (measuring run, top-level)
   anims: { id: string; start: number; end: number; curve?: number[]; from?: ObjState; to?: ObjState }[];
   objects: ObjInfo[];

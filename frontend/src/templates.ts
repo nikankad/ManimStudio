@@ -115,6 +115,8 @@ function instanceStep(s: Step, nameMap: Map<string, string>, hidden: Set<string>
     if (!c.targets.length) return null;
   }
   if (c.code) c.code = rename(c.code);
+  if (c.target) c.target = rename(c.target);
+  if (c.chain) c.chain = rename(c.chain);
   if (c.anims) {
     const keep = (list: NonNullable<Step['anims']>): NonNullable<Step['anims']> => list.filter((a) => {
       a.target = a.target ? rename(a.target) : a.target;

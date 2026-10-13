@@ -627,6 +627,25 @@ function CommentField({ step }: { step: Step }) {
   );
 }
 
+/** An apply step: methods called on an object at once (`label.next_to(u, UP)`), and that object's keyframes. */
+function ApplySection({ step }: { step: Step }) {
+  const target = step.target ?? '';
+  const obj = useStore((s) => s.doc.objects.find((o) => o.name === target));
+  const cls = useChainClass(obj ? obj.name : target);
+  return (
+    <>
+      <section>
+        <p className="muted small">The methods run here, between the statements around it: the object changes at once, with no animation (a jump in its keyframes).</p>
+        <label className="param"><span className="pname"><Tip tip={CLIP_HELP.target}>Object</Tip></span>
+          <Field className="mono" value={target} list="me-targets" ariaLabel="Object" onChange={(v) => setStep(step.id, (s) => void (s.target = v), 'target')} />
+        </label>
+      </section>
+      <ChainEditor title="Methods" help={CLIP_HELP.methods} cls={cls} chain={step.chain ?? ''} placeholder=".next_to(other, UP)" onChange={(v) => setStep(step.id, (s) => void (s.chain = v), 'chain')} />
+      {obj && <KeyframeChannels obj={obj} clip={step.id} />}
+    </>
+  );
+}
+
 /** Effect Controls of a statement: self.play, self.wait, self.add / self.remove, any other scene method, code, couple / uncouple. */
 function StepInspector({ step }: { step: Step }) {
   const objects = useStore((s) => s.doc.objects);
@@ -650,7 +669,7 @@ function StepInspector({ step }: { step: Step }) {
   ].map((p) => ({ ...p, from: ['run_time', 'rate_func', 'lag_ratio'].includes(p.name) ? '' : p.name.startsWith('subcaption') ? 'subcaption' : 'every animation' }));
   return (
     <div className="pad">
-      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
+      <h3>{{ play: 'Play together', wait: 'Pause', add: 'Add', remove: 'Remove', code: 'Code', couple: 'Couple', uncouple: 'Uncouple', apply: 'Change at once' }[step.kind as string] ?? `self.${step.method}(…)`}</h3>
       {step.kind !== 'code' && <p className="muted small mono code-line">{label.title}</p>}
       {step.kind === 'call' && callSig?.doc && <p className="doc">{callSig.doc}</p>}
       <Diagnostics id={step.id} />
@@ -692,6 +711,8 @@ function StepInspector({ step }: { step: Step }) {
           <CodeArea value={step.code ?? ''} minLines={4} onChange={(v) => setStep(step.id, (s) => void (s.code = v), 'code')} />
         </section>
       )}
+
+      {step.kind === 'apply' && <ApplySection step={step} />}
 
       {(step.kind === 'add' || step.kind === 'remove') && (
         <section>

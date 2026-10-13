@@ -213,9 +213,12 @@ export function targetsOf(a: Anim): string[] {
 
 const STRING = /([rRbBuUfF]{0,2})("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g;
 
+/** The variable an expression starts from: `group` of `group[0].submobjects`. */
+export const rootName = (expr: string) => expr.trim().match(/^[A-Za-z_]\w*/)?.[0] ?? '';
+
 /** Every identifier a step's code reads (targets, arguments, chains, code), outside string literals. */
 export function namesUsed(s: Step): Set<string> {
-  const texts: string[] = [...(s.targets ?? []), s.code ?? '', ...Object.values(s.args ?? {})];
+  const texts: string[] = [...(s.targets ?? []), s.code ?? '', s.target ?? '', s.chain ?? '', ...Object.values(s.args ?? {})];
   for (const a of walk(s.anims)) texts.push(a.target ?? '', a.chain ?? '', ...Object.values(a.args ?? {}));
   return new Set(texts.flatMap((t) => t.replace(STRING, '').match(/[A-Za-z_]\w*/g) ?? []));
 }
@@ -223,6 +226,7 @@ export function namesUsed(s: Step): Set<string> {
 /** Names a step uses (targets of its animations, added/removed objects). */
 export function stepTargets(s: Step): string[] {
   if (s.kind === 'play') return (s.anims ?? []).flatMap(targetsOf);
+  if (s.kind === 'apply') return s.target ? [rootName(s.target)] : [];
   return s.targets ?? [];
 }
 
@@ -651,6 +655,8 @@ export function renameInTimeline(d: SceneDoc, names: Map<string, string>) {
   for (const s of d.timeline) {
     if (s.targets) s.targets = s.targets.map(rep);
     if (s.code) s.code = rep(s.code);
+    if (s.target) s.target = rep(s.target);
+    if (s.chain) s.chain = rep(s.chain);
     for (const k in s.args ?? {}) s.args![k] = rep(s.args![k]);
     for (const a of walk(s.anims)) {
       a.target = rep(a.target ?? '');
@@ -668,6 +674,7 @@ export function forgetObjects(d: SceneDoc, lay: Layout, names: Set<string>, ids:
       const ts = targetsOf({ ...a, anims: undefined });
       if ((ts.length && ts.every((t) => names.has(t))) || (a.terms && ids.has(a.terms.to))) gone.add(a.id);
     }
+    if (s.kind === 'apply' && names.has(rootName(s.target ?? ''))) gone.add(s.id);
     if (s.targets) {
       const had = s.targets.length;
       s.targets = s.targets.filter((t) => !names.has(t));

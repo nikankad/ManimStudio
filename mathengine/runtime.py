@@ -82,7 +82,8 @@ class RunResult:
         return {
             "duration": float(self.duration),
             "steps": [{"id": s.id, "start": float(s.start), "end": float(s.end),
-                       **({"before": s.shown_before, "after": s.shown_after} if s.shown_after is not None else {})}
+                       **({"before": s.shown_before, "after": s.shown_after} if s.shown_after is not None else {}),
+                       **({"from": s.state0, "to": s.state1} if s.state1 is not None else {})}
                       for s in self.steps],
             "anims": [{"id": s.id, "start": round(float(s.start), 6), "end": round(float(s.end), 6),
                        **({"curve": s.curve} if s.curve else {}),
@@ -110,6 +111,7 @@ class PreviewMixin:
         self._me_open: dict[str, float] = {}
         self._me_before: dict[str, list[str] | None] = {}
         self._me_steps: list[StepTiming] = []
+        self._me_states: dict[str, list] = {}
         self._me_anims: list[StepTiming] = []
         self._me_current_step: str | None = None
         self._me_plays = 0
@@ -133,7 +135,16 @@ class PreviewMixin:
 
     def _me_step_end(self, sid: str) -> None:
         start = self._me_open.pop(sid, self.renderer.time)
-        self._me_steps.append(StepTiming(sid, start, self.renderer.time, None, self._me_before.pop(sid, None), self._me_shown()))
+        timing = StepTiming(sid, start, self.renderer.time, None, self._me_before.pop(sid, None), self._me_shown())
+        if sid in self._me_states:
+            timing.state0, timing.state1 = self._me_states.pop(sid)
+        self._me_steps.append(timing)
+
+    def _me_state(self, sid: str, mob: Any, which: int) -> None:
+        """An apply step's object before (0) and after (1) it: its keyframe (measuring run only)."""
+        if self._me_target is None:
+            states = self._me_states.setdefault(sid, [None, None])
+            states[which] = _state(mob)
 
     def _me_tag(self, anim: Any, aid: str) -> Any:
         """Mark an animation of the timeline so its timing can be reported (manim's own prepare_animation)."""

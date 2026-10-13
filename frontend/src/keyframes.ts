@@ -10,7 +10,7 @@ import {
   EPS, findAnim, isMeasured, landing, layout, newAnim, numSrc, placeSteps, playStep, removeIds, setAnimDuration,
   ensureDefined, waitStep, walk, type Layout,
 } from './timeline';
-import type { Anim, Args, RunResult, SceneDoc, SceneObject } from './types';
+import type { Anim, Args, RunResult, SceneDoc, SceneObject, Step } from './types';
 
 export type Channel = 'position' | 'scale' | 'rotation' | 'opacity' | 'color' | 'value';
 export type KeyValue = number | [number, number] | string; // a point, a number, or colour source (`RED`, `"#ff0000"`)
@@ -142,7 +142,8 @@ function rotateAngle(a: Anim): string {
 
 const toDeg = (rad: number) => (rad * 180) / Math.PI;
 
-type Measured = Map<string, { from?: Record<string, unknown>; to?: Record<string, unknown> }>;
+type MeasuredClip = { from?: Record<string, unknown>; to?: Record<string, unknown> };
+type Measured = Map<string, MeasuredClip>;
 
 /**
  * The keyframes of `name` (an object's variable name), in time order, per channel. Values come from the code where it
@@ -155,8 +156,105 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
   // the value each channel has after the keyframes so far (undefined: not known from the code)
   const cur: Partial<Record<Channel, KeyValue | undefined>> = {};
   for (const ch of CHANNELS) cur[ch.id] = obj ? baseValue(obj, ch.id) : undefined;
+  /** The keyframes of one clip (an `.animate` or Rotate animation, or an apply step) that runs from `start` to `end`. */
+  const read = (a: { id: string; cls?: string; chain?: string; args?: Args }, sp: { start: number; end: number }, m: MeasuredClip | undefined, nested: boolean) => {
+    const after = (ch: Channel): KeyValue | undefined => {
+      const to = m?.to as Record<string, unknown> | undefined;
+      if (!to) return undefined;
+      if (ch === 'position' && Array.isArray(to.center)) return [to.center[0] as number, to.center[1] as number];
+      if (ch === 'opacity' && typeof to.opacity === 'number') return to.opacity;
+      if (ch === 'value' && typeof to.value === 'number') return to.value;
+      if (ch === 'color' && typeof to.color === 'string') return to.color;
+      return undefined;
+    };
+    const before = (ch: Channel): KeyValue | undefined => {
+      const from = m?.from as Record<string, unknown> | undefined;
+      if (ch === 'position' && from && Array.isArray(from.center)) return [from.center[0] as number, from.center[1] as number];
+      if (ch === 'value' && from && typeof from.value === 'number') return from.value;
+      return cur[ch];
+    };
+    const push = (k: Omit<Key, 'start' | 't' | 'anim'>) => {
+      const key: Key = { ...k, anim: a.id, start: sp.start, t: sp.end };
+      if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…): edit it there' });
+      keys.push(key);
+      cur[k.channel] = key.value;
+    };
+    if (a.cls === 'Rotate') {
+      const deg = evalNumber(rotateAngle(a as Anim));
+      const b = cur.rotation;
+      push({
+        channel: 'rotation', call: -1, method: 'Rotate',
+        value: deg !== null && typeof b === 'number' ? b + toDeg(deg) : undefined,
+        editable: deg !== null && typeof b === 'number', why: deg === null ? `The angle is an expression (${rotateAngle(a as Anim)}): edit it in the code` : undefined,
+      });
+      return;
+    }
+    const calls = chainCalls(a.chain ?? '');
+    if (!calls) return;
+    calls.forEach((c, i) => {
+      const info = METHODS[c.name];
+      if (!info) return;
+      const ch = info.channel;
+      const expr = (src: string) => `The value is an expression (${src.trim().slice(0, 40)}): edit it in the code`;
+      let value: KeyValue | undefined;
+      let editable = true;
+      let why: string | undefined;
+      const arg = firstArg(c.args);
+      if (info.kind === 'other') {
+        value = after(ch);
+        editable = false;
+        why = `.${c.name}(…) places it relative to something else: edit it in the code`;
+      } else if (ch === 'position') {
+        const p = arg ? vec2(arg.src) : null;
+        const b = before('position');
+        if (info.kind === 'abs') value = p ?? after(ch);
+        else if (info.kind === 'rel') value = p && Array.isArray(b) ? [b[0] + p[0], b[1] + p[1]] : after(ch);
+        else {
+          const n = arg ? evalNumber(arg.src) : null;
+          value = n !== null && Array.isArray(b) ? (info.kind === 'x' ? [n, b[1]] : [b[0], n]) : after(ch);
+        }
+        if (info.kind === 'x' || info.kind === 'y' ? !arg || evalNumber(arg.src) === null : !p) [editable, why] = [false, expr(arg?.src ?? '')];
+        else if (info.kind !== 'abs' && !Array.isArray(b)) [editable, why] = [false, 'Measuring where it starts…'];
+      } else if (ch === 'scale') {
+        const k = arg ? evalNumber(arg.src) : null;
+        const b = cur.scale;
+        value = k !== null && typeof b === 'number' ? b * k : undefined;
+        if (k === null) [editable, why] = [false, expr(arg?.src ?? '')];
+        else if (typeof b !== 'number') [editable, why] = [false, 'An earlier scale is an expression, so its size here is not known'];
+      } else if (ch === 'rotation') {
+        const r = arg ? evalNumber(arg.src) : null;
+        const b = cur.rotation;
+        value = r !== null && typeof b === 'number' ? b + toDeg(r) : undefined;
+        if (r === null) [editable, why] = [false, expr(arg?.src ?? '')];
+        else if (typeof b !== 'number') [editable, why] = [false, 'An earlier rotation is an expression, so its angle here is not known'];
+      } else if (ch === 'opacity') {
+        const o = arg ? evalNumber(arg.src) : null;
+        value = o ?? after(ch);
+        if (o === null) [editable, why] = [false, expr(arg?.src ?? '')];
+      } else if (ch === 'color') {
+        const col = colorArg(c);
+        value = col?.src ?? after(ch);
+        if (!col) [editable, why] = [false, `.${c.name}(…) here doesn't set a colour`];
+      } else if (ch === 'value') {
+        const v = arg ? evalNumber(arg.src) : null;
+        const b = before('value');
+        value = info.kind === 'abs' ? v ?? after(ch) : v !== null && typeof b === 'number' ? b + v : after(ch);
+        if (v === null) [editable, why] = [false, expr(arg?.src ?? '')];
+        else if (info.kind === 'rel' && typeof b !== 'number') [editable, why] = [false, 'Measuring where it starts…'];
+      }
+      push({ channel: ch, call: i, method: c.name, value, editable, why });
+    });
+  };
+  const stepsMeasured: Measured = new Map((measured?.steps ?? []).map((x) => [x.id, x as MeasuredClip]));
   for (const s of doc.timeline) {
-    if (s.kind !== 'play' || s.disabled) continue;
+    if (s.disabled) continue;
+    if (s.kind === 'apply') {
+      // methods called on it at once: a keyframe with no time before it (a jump)
+      const sp = lay.steps.get(s.id);
+      if (sp && s.target === name) read({ id: s.id, chain: s.chain }, sp, isMeasured(s, measured) ? stepsMeasured.get(s.id) : undefined, false);
+      continue;
+    }
+    if (s.kind !== 'play') continue;
     const stepMeasured = isMeasured(s, measured);
     for (const top of s.anims ?? []) {
       for (const a of walk([top])) {
@@ -164,94 +262,7 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
         const sp = lay.anims.get(a.id);
         if (!sp) continue;
         const nested = a !== top;
-        const m = stepMeasured && !nested ? ms.get(a.id) : undefined;
-        const after = (ch: Channel): KeyValue | undefined => {
-          const to = m?.to as Record<string, unknown> | undefined;
-          if (!to) return undefined;
-          if (ch === 'position' && Array.isArray(to.center)) return [to.center[0] as number, to.center[1] as number];
-          if (ch === 'opacity' && typeof to.opacity === 'number') return to.opacity;
-          if (ch === 'value' && typeof to.value === 'number') return to.value;
-          if (ch === 'color' && typeof to.color === 'string') return to.color;
-          return undefined;
-        };
-        const before = (ch: Channel): KeyValue | undefined => {
-          const from = m?.from as Record<string, unknown> | undefined;
-          if (ch === 'position' && from && Array.isArray(from.center)) return [from.center[0] as number, from.center[1] as number];
-          if (ch === 'value' && from && typeof from.value === 'number') return from.value;
-          return cur[ch];
-        };
-        const push = (k: Omit<Key, 'start' | 't' | 'anim'>) => {
-          const key: Key = { ...k, anim: a.id, start: sp.start, t: sp.end };
-          if (nested && key.editable) Object.assign(key, { editable: false, why: 'It is inside a group animation (LaggedStart, Succession…): edit it there' });
-          keys.push(key);
-          cur[k.channel] = key.value;
-        };
-        if (a.cls === 'Rotate') {
-          const deg = evalNumber(rotateAngle(a));
-          const b = cur.rotation;
-          push({
-            channel: 'rotation', call: -1, method: 'Rotate',
-            value: deg !== null && typeof b === 'number' ? b + toDeg(deg) : undefined,
-            editable: deg !== null && typeof b === 'number', why: deg === null ? `The angle is an expression (${rotateAngle(a)}): edit it in the code` : undefined,
-          });
-          continue;
-        }
-        if (a.cls !== 'animate') continue;
-        const calls = chainCalls(a.chain ?? '');
-        if (!calls) continue;
-        calls.forEach((c, i) => {
-          const info = METHODS[c.name];
-          if (!info) return;
-          const ch = info.channel;
-          const expr = (src: string) => `The value is an expression (${src.trim().slice(0, 40)}): edit it in the code`;
-          let value: KeyValue | undefined;
-          let editable = true;
-          let why: string | undefined;
-          const arg = firstArg(c.args);
-          if (info.kind === 'other') {
-            value = after(ch);
-            editable = false;
-            why = `.${c.name}(…) places it relative to something else: edit it in the code`;
-          } else if (ch === 'position') {
-            const p = arg ? vec2(arg.src) : null;
-            const b = before('position');
-            if (info.kind === 'abs') value = p ?? after(ch);
-            else if (info.kind === 'rel') value = p && Array.isArray(b) ? [b[0] + p[0], b[1] + p[1]] : after(ch);
-            else {
-              const n = arg ? evalNumber(arg.src) : null;
-              value = n !== null && Array.isArray(b) ? (info.kind === 'x' ? [n, b[1]] : [b[0], n]) : after(ch);
-            }
-            if (info.kind === 'x' || info.kind === 'y' ? !arg || evalNumber(arg.src) === null : !p) [editable, why] = [false, expr(arg?.src ?? '')];
-            else if (info.kind !== 'abs' && !Array.isArray(b)) [editable, why] = [false, 'Measuring where it starts…'];
-          } else if (ch === 'scale') {
-            const k = arg ? evalNumber(arg.src) : null;
-            const b = cur.scale;
-            value = k !== null && typeof b === 'number' ? b * k : undefined;
-            if (k === null) [editable, why] = [false, expr(arg?.src ?? '')];
-            else if (typeof b !== 'number') [editable, why] = [false, 'An earlier scale is an expression, so its size here is not known'];
-          } else if (ch === 'rotation') {
-            const r = arg ? evalNumber(arg.src) : null;
-            const b = cur.rotation;
-            value = r !== null && typeof b === 'number' ? b + toDeg(r) : undefined;
-            if (r === null) [editable, why] = [false, expr(arg?.src ?? '')];
-            else if (typeof b !== 'number') [editable, why] = [false, 'An earlier rotation is an expression, so its angle here is not known'];
-          } else if (ch === 'opacity') {
-            const o = arg ? evalNumber(arg.src) : null;
-            value = o ?? after(ch);
-            if (o === null) [editable, why] = [false, expr(arg?.src ?? '')];
-          } else if (ch === 'color') {
-            const col = colorArg(c);
-            value = col?.src ?? after(ch);
-            if (!col) [editable, why] = [false, `.${c.name}(…) here doesn't set a colour`];
-          } else if (ch === 'value') {
-            const v = arg ? evalNumber(arg.src) : null;
-            const b = before('value');
-            value = info.kind === 'abs' ? v ?? after(ch) : v !== null && typeof b === 'number' ? b + v : after(ch);
-            if (v === null) [editable, why] = [false, expr(arg?.src ?? '')];
-            else if (info.kind === 'rel' && typeof b !== 'number') [editable, why] = [false, 'Measuring where it starts…'];
-          }
-          push({ channel: ch, call: i, method: c.name, value, editable, why });
-        });
+        if (a.cls === 'Rotate' || a.cls === 'animate') read(a, sp, stepMeasured && !nested ? ms.get(a.id) : undefined, nested);
       }
     }
   }
@@ -338,22 +349,21 @@ function spliceChain(obj: SceneObject, start: number, end: number, text: string)
 export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null, key: Key, value: KeyValue): string | null {
   if (!key.editable) return key.why ?? 'This keyframe can only be edited in the code';
   if (same(key.value, value)) return null;
-  const ref = findAnim(d, key.anim);
-  if (!ref) return 'Its clip is gone';
-  const a = ref.anim;
+  const a = clipOf(d, key.anim);
+  if (!a) return 'Its clip is gone';
   const obj = d.objects.find((o) => o.name === a.target);
-  const keys = obj ? keyframes(d, lay, measured, a.target) : [];
+  const keys = obj ? keyframes(d, lay, measured, obj.name) : [];
   const i = keys.findIndex((k) => k.anim === key.anim && k.call === key.call && k.channel === key.channel);
   const prev = i > 0 ? keys.slice(0, i).filter((k) => k.channel === key.channel).pop() : undefined;
   const before = (): KeyValue | undefined => {
     if (key.channel === 'position' || key.channel === 'value') {
-      const m = measured?.anims.find((x) => x.id === key.anim) as { from?: { center?: number[]; value?: number } } | undefined;
+      const m = [...(measured?.anims ?? []), ...(measured?.steps ?? [])].find((x) => x.id === key.anim) as { from?: { center?: number[]; value?: number } } | undefined;
       if (key.channel === 'position' && m?.from?.center) return [m.from.center[0], m.from.center[1]];
       if (key.channel === 'value' && typeof m?.from?.value === 'number') return m.from.value;
     }
     return prev ? prev.value : obj ? baseValue(obj, key.channel) : undefined;
   };
-  if (key.method === 'Rotate') {
+  if (key.method === 'Rotate' && 'cls' in a) {
     const b = before();
     if (typeof b !== 'number' || typeof value !== 'number') return 'Its angle before this is not known';
     const src = angleSrc(value - b, rotateAngle(a));
@@ -406,9 +416,8 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
 
 /** Remove a keyframe: the method that sets it (the whole clip when that was all it did; its time stays as a pause). */
 export function deleteKey(d: SceneDoc, lay: Layout, key: Key): string | null {
-  const ref = findAnim(d, key.anim);
-  if (!ref) return 'Its clip is gone';
-  const a = ref.anim;
+  const a = clipOf(d, key.anim);
+  if (!a) return 'Its clip is gone';
   if (key.call >= 0) {
     const calls = chainCalls(a.chain ?? '');
     const call = calls?.[key.call];
@@ -421,6 +430,12 @@ export function deleteKey(d: SceneDoc, lay: Layout, key: Key): string | null {
   }
   removeIds(d, lay, new Set([a.id]), 'lift');
   return null;
+}
+
+/** What holds a keyframe's method: an animation, or an apply step (methods called at once). */
+function clipOf(d: SceneDoc, id: string): Anim | Step | undefined {
+  const step = d.timeline.find((s) => s.id === id);
+  return step?.kind === 'apply' ? step : findAnim(d, id)?.anim;
 }
 
 /** The clip a new keyframe makes: `.animate` with the method that sets the channel (Rotate for rotation). */

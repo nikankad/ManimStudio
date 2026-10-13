@@ -51,6 +51,7 @@ const STEP_COLORS: Record<Step['kind'], string> = {
   couple: '#2f7a74',
   uncouple: '#8a6a2f',
   call: '#4f5b2f',
+  apply: '#5a4f7a',
 };
 
 type Drag =
@@ -617,6 +618,7 @@ export function Timeline() {
           <button className="ghost small" onClick={() => addStep('code')} title="Any manim code at the playhead">+ Code</button>
           <button className="ghost small" onClick={() => addStep('add', { targets: objNames() })} title="self.add(...) at the playhead: objects appear without an animation">+ Add</button>
           <button className="ghost small" onClick={() => addStep('remove', { targets: objNames() })} title="self.remove(...) at the playhead: objects disappear without an animation">+ Remove</button>
+          <button className="ghost small" onClick={() => addStep('apply', { target: objNames()[0] })} title="Call methods on an object at the playhead (obj.next_to(…), .set_color(…)…): it changes at once, without an animation">+ Change</button>
           <button className="ghost small" onClick={() => addStep('uncouple', { targets: objNames() })} title="Uncouple objects at the playhead: they stay where they are and can be animated freely">+ Uncouple</button>
           <button className="ghost small" onClick={() => addStep('couple', { targets: objNames() })} title="Couple objects again at the playhead (give it a duration to glide back into place)">+ Couple</button>
           <select className="inline scene-call" value="" title="Call another method of the scene at the playhead: sections, sounds, subcaptions, the camera (ThreeDScene)…"
@@ -904,6 +906,12 @@ export function clipText(a: Anim): { name: string; sub: string } {
   return a.target ? { name: a.target, sub: a.cls } : { name: a.cls, sub: a.args['*'] || '' };
 }
 
+/** `.next_to(…)` of `.next_to(u, UP).set_color(RED)`: the first method, for a short label. */
+const firstCall = (chain: string) => {
+  const names = [...chain.matchAll(/\.([A-Za-z_]\w*)\s*\(/g)].map((m) => m[1]);
+  return names.length ? `.${names[0]}(…)${names.length > 1 ? ` +${names.length - 1}` : ''}` : '';
+};
+
 /** What a step shows on the timeline, in plain words. */
 export function stepText(s: Step): { name: string; sub: string } {
   const targets = (s.targets ?? []).join(', ');
@@ -918,6 +926,8 @@ export function stepText(s: Step): { name: string; sub: string } {
       return { name: 'Add', sub: targets };
     case 'remove':
       return { name: 'Remove', sub: targets };
+    case 'apply':
+      return { name: s.target ?? '', sub: firstCall(s.chain ?? '') };
     default: {
       const l = stepLabel(s);
       return { name: l.name, sub: l.sub };
@@ -946,6 +956,8 @@ export function stepLabel(s: Step): { name: string; sub: string; title: string }
       const kw = Object.entries(s.args ?? {}).map(([k, v]) => (k === '*' ? v : `${k}=${v}`)).join(', ');
       return { name: `self.${s.method}`, sub: kw, title: `self.${s.method}(${kw})` };
     }
+    case 'apply':
+      return { name: s.target ?? '', sub: firstCall(s.chain ?? ''), title: `${s.target ?? ''}${(s.chain ?? '').trim()}` };
     default:
       return { name: s.kind === 'add' ? '+ add' : '− remove', sub: targets, title: `self.${s.kind}(${targets})` };
   }

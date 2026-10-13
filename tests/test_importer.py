@@ -399,3 +399,66 @@ def test_edited_code_falls_back_to_the_usual_style():
     assert "line = Line(end=RIGHT, color=BLUE)\n        line.set_color(GREEN)\n" in out, out
     assert "a = Dot().shift(LEFT * 2)\n        a.scale(2)\n" in out, out
     assert "ex = Exclusion(Square(), Circle(), color=YELLOW)" in out
+
+
+LATER = '''from manim import *
+
+
+class S(MovingCameraScene):
+    def construct(self):
+        g = VGroup(Dot(), Square())
+        label = Text("hi")
+        self.add(g, label)
+        self.wait()
+        label.next_to(g, UP, buff=0.5)
+        g[0].set_color(RED)
+        self.camera.frame.scale(1.5)
+        self.play(FadeOut(label))
+'''
+
+
+def test_methods_called_later_become_steps_that_can_be_edited():
+    doc = import_code(LATER).doc
+    applies = [s for s in doc["timeline"] if s.get("kind") == "apply"]
+    assert [(s["target"], s["chain"]) for s in applies] == [
+        ("label", ".next_to(g, UP, buff=0.5)"), ("g[0]", ".set_color(RED)"), ("self.camera.frame", ".scale(1.5)")]
+    assert _construct(codegen.generate(doc).source) == _construct(LATER)
+    applies[0]["chain"] = ".next_to(g, DOWN)"  # edited in the inspector
+    out = codegen.generate(doc).source
+    assert "        label.next_to(g, DOWN)\n        g[0].set_color(RED)\n" in out, out
+    r = runtime.run(doc, render=False)
+    assert r.error is None, r.error
+
+
+def test_a_call_on_something_unknown_stays_code():
+    src = LATER.replace("        g[0].set_color(RED)\n", "        helper.set_color(RED)\n")
+    doc = import_code(src).doc
+    assert not any(s.get("target") == "helper" for s in doc["timeline"] if s.get("kind") == "apply")
+
+
+WRAPPED = '''from manim import *
+
+
+class S(Scene):
+    def construct(self):
+        a = Text(
+            "long",
+            font_size=30,
+        )
+        self.play(
+            Write(a),
+            run_time=2,
+        )
+'''
+
+
+def test_statements_written_over_several_lines_come_back_the_same():
+    doc = import_code(WRAPPED).doc
+    out = codegen.generate(doc).source
+    assert _construct(out) == _construct(WRAPPED), out
+    assert import_code(out, base=doc).doc == doc
+    play = next(s for s in doc["timeline"] if s.get("kind") == "play")
+    play["args"]["run_time"] = "3"  # edited: the statement is written the usual way again
+    out = codegen.generate(doc).source
+    assert "self.play(Write(a), run_time=3)" in out, out
+    assert 'a = Text(\n            "long",\n            font_size=30,\n        )\n' in out, out

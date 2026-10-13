@@ -7,6 +7,8 @@ Each statement of ``construct()`` becomes the document element that codegen comp
 * ``self.play(Create(c), c.animate.shift(UP), run_time=2)``: a play step with its animations.
   Compositions (``AnimationGroup``, ``LaggedStart``, ``Succession``) keep their child animations.
 * ``self.wait(1)``, ``self.add(a, b)``, ``self.remove(a)``: wait, add and remove steps.
+* ``obj.next_to(u, UP)``, ``group[0].set_color(RED)``: methods called on an object later in the scene, an apply
+  step (it happens at once, between the statements around it).
 * anything else (loops, updaters, helper variables…): a code step, kept as written. Consecutive
   statements of this kind form one code step.
 
@@ -116,6 +118,20 @@ class _Source:
             return ""
         rest = self.lines[end - 1].encode("utf-8")[col:].decode("utf-8", "ignore").strip()  # (offsets count bytes)
         return rest if rest.startswith("#") else ""
+
+    def verbatim(self, first: ast.stmt, last: ast.stmt) -> str | None:
+        """The text of statements ``first``..``last`` as written (indentation relative to the first), or None when
+        they share a line with other code (``a = 1; b = 2``)."""
+        end = last.end_lineno or last.lineno
+        lines = self.lines[first.lineno - 1:end]
+        col = first.col_offset
+        tail = lines[-1].encode("utf-8")
+        cut = tail[:last.end_col_offset or len(tail)].decode("utf-8", "ignore")
+        if lines[0][:col].strip() or (rest := tail[last.end_col_offset or len(tail):].decode("utf-8", "ignore").strip()) and not rest.startswith("#"):
+            return None
+        lines[-1] = cut
+        out = [lines[0][col:]] + [ln[col:] if not ln[:col].strip() else ln.lstrip() for ln in lines[1:]]
+        return "\n".join(out).rstrip()
 
     def blank_between(self, after: int, before: int) -> bool:
         """Whether a blank line separates line ``after`` from line ``before`` (1-based, both excluded)."""
@@ -397,7 +413,29 @@ class _Importer:
         _keep_positional(step, given, values)
         return step
 
+    def apply(self, stmt: ast.stmt) -> dict | None:
+        """``obj.next_to(u, UP)``, ``group[0].set_color(RED)``, ``self.camera.frame.save_state()``: methods called
+        on one of the scene's objects (or a part of one, or the camera's frame), later in the scene."""
+        if not isinstance(stmt, ast.Expr):
+            return None
+        mc = _method_calls(stmt.value)
+        if mc is None:
+            return None
+        root, calls = mc
+        base = root
+        while isinstance(base, (ast.Attribute, ast.Subscript)):
+            base = base.value
+        camera = ast.unparse(root) == "self.camera.frame"
+        if not camera and not (isinstance(base, ast.Name) and base.id in self.known):
+            return None
+        if any(c.func.attr == "animate" for c in calls):  # type: ignore[union-attr]
+            return None
+        chain = "".join(f".{c.func.attr}({self.call_args(c)})" for c in calls)  # type: ignore[union-attr]
+        return {"id": _id("s"), "kind": "apply", "target": self.s.seg(root), "chain": chain}
+
     def statement_step(self, stmt: ast.stmt) -> dict | None:
+        if (step := self.apply(stmt)) is not None:
+            return step
         if (call := _self_call(stmt, "play")) is not None:
             return self.play(call)
         if (call := _self_call(stmt, "wait")) is not None:
@@ -558,6 +596,7 @@ class _Importer:
                     obj["chain_layout"] = [obj["chain"], *pieces]
                 obj["chain"] += "".join(pieces)
                 self.flush()
+                obj["_src"] = self.s.verbatim(stmt, body[j - 1])
                 self.add_object(obj, _join_comments(comment, self.s.comment_after(body[j - 1])))
                 self.known[obj["name"]] = cls
                 prev_end = body[j - 1].end_lineno or body[j - 1].lineno
@@ -565,6 +604,7 @@ class _Importer:
                 continue
             step = self.statement_step(stmt)
             if step is not None:
+                step["_src"] = self.s.verbatim(stmt, stmt)
                 self.flush()
                 self.add_step(step, _join_comments(comment, self.s.comment_after(stmt)))
             else:
@@ -594,6 +634,25 @@ def _expr(src: str) -> ast.AST:
 
 def _join_comments(above: str, trailing: str) -> str:
     return "\n".join(c for c in (above, trailing) if c)
+
+
+def _keep_written(doc: dict, plan: construct.Plan) -> None:
+    """Where codegen would write an element differently from the code (its own line breaks, spacing, quotes), keep
+    the code's text: codegen writes it as it was for as long as the element is unchanged."""
+    skip = plan.invalid_anims
+    for elem in [*doc["objects"], *doc["timeline"]]:
+        if "_src" not in elem:
+            continue
+        src = elem.pop("_src")
+        if "kind" in elem:
+            lines = [text for text, _ in codegen.statement(elem, doc, plan, False, skip)]
+        else:
+            lines = codegen.object_lines(elem, plan)
+        gen = "\n".join(lines)
+        if src is not None and src != gen and lines:
+            elem["written"] = {"gen": gen, "as": src}
+        else:
+            elem.pop("written", None)
 
 
 def _set_gap(elem: dict, gap: bool) -> None:
@@ -805,8 +864,9 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
     imp.run(body, construct_fn.lineno)
     doc["objects"] = imp.objects
     doc["timeline"] = _restore_disabled(base, imp.steps, imp.reused_steps) if base else imp.steps
-    # Helpers codegen writes only for constructions: when the document no longer has those, the code still needs them.
     plan = construct.plan(doc)
+    _keep_written(doc, plan)
+    # Helpers codegen writes only for constructions: when the document no longer has those, the code still needs them.
     emitted = {construct.CONSTRAINTS_SOURCE: plan.uses_constraints, construct.GEOMETRY_SOURCE: plan.uses_geometry,
                construct.TERMS_SOURCE: plan.uses_terms,
                tex.NUMBERS_SOURCE: not tex.latex_available()}  # written again by codegen when LaTeX is missing

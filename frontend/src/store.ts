@@ -677,9 +677,13 @@ export function addAnimation(cls: string, target: string, at?: At): string {
 }
 
 /** A statement at the playhead (or `at`): self.wait, self.add, self.remove, code, or couple / uncouple. */
-export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: string[]; method?: string }): string {
+export function addStep(kind: Exclude<StepKind, 'play'>, at?: At & { targets?: string[]; method?: string; target?: string }): string {
   const step: Step = { id: uid('s'), kind };
   if (kind === 'code') step.code = '# any manim code; every object variable is in scope\n';
+  else if (kind === 'apply') {
+    step.target = at?.target ?? at?.targets?.[0] ?? state.doc.objects[0]?.name ?? '';
+    step.chain = '.shift(RIGHT)';
+  }
   else if (kind === 'wait') step.args = { duration: '1' };
   else if (kind === 'call') {
     step.method = at?.method ?? 'next_section';
