@@ -31,7 +31,7 @@ import textwrap
 import tokenize
 from dataclasses import dataclass, field
 
-from . import construct, tex, timeline
+from . import construct, defs, tex, timeline
 
 IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 EPS = 1e-6
@@ -629,6 +629,12 @@ def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> li
     if not latex:
         emit("")
         emit(tex.NUMBERS_SOURCE.strip("\n"))
+    comp = defs.compile_defs(doc.get("defs") or [], defs.manim_names())
+    comp.helpers |= plan.helpers
+    if comp.source:
+        emit("")
+        emit("")
+        emit(comp.source.rstrip("\n"), ("header", "defs"))
     header = (doc.get("header") or "").rstrip()
     if header:
         emit("")

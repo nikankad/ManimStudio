@@ -1640,7 +1640,77 @@ def record_in_loop(b):
         assert not pg.errors, pg.errors
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def definitions(b):
+    """Scene › Definitions: a value, a list and functions (with a where-name and a sum) written in math, checked as
+    you type; the ƒ Graph dialog plots one; renaming it renames its uses; the code has them above the scene."""
+    code = "from manim import *\n\n\nclass D(Scene):\n    def construct(self):\n        self.wait()\n"
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "defs.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_selector(".tl-lanes .clip", timeout=60000)
+        panel = pg.locator(".defs-panel")
+        row = lambda name: panel.locator(f'.def-row[data-def="{name}"]')
+
+        def add(kind, name):
+            panel.get_by_role("button", name=f"+ {kind}").click()
+            pg.wait_for_timeout(200)
+            box = panel.locator(".def-row").last.locator("input.def-name").first
+            box.fill(name)
+            box.press("Enter")
+            pg.wait_for_timeout(200)
+            return row(name)
+
+        def source():
+            pg.wait_for_timeout(400)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        r = add("value", "period")
+        r.get_by_label("Expression of period").fill("2 q")
+        r.locator(".err-box", has_text="isn't defined").wait_for(timeout=10000)
+        r.get_by_label("Expression of period").fill("2 pi")
+        r.get_by_text("= 6.283185").wait_for(timeout=10000)
+        r = add("list", "ZEROS")
+        r.get_by_label("Items of ZEROS").fill("14.134725, 21.02204, 25.010858")
+        r.get_by_text("3 items").wait_for(timeout=10000)
+        r = add("function", "theta")
+        r.get_by_label("Expression of theta").fill("t/2 ln(t/period) - t/2 - pi/8 + 1/(48t)")
+        r = add("function", "Z")
+        r.get_by_role("button", name="+ where").click()
+        r.locator(".def-where input").nth(0).fill("n")
+        r.locator(".def-where input").nth(1).fill("floor(sqrt(t/period))")
+        r.get_by_label("Expression of Z").fill("2 sum(k, 1, n, cos(theta(t) - t ln(k))/sqrt(k))")
+        r.get_by_text("Z(1) = 0").wait_for(timeout=10000)  # n is 0 at t = 1: an empty sum
+
+        pg.locator("[data-tour=graph]").click()
+        dlg = pg.locator(".modal")
+        dlg.locator("input.big").fill("y = Z(x)")
+        dlg.get_by_text("Reads as").wait_for(timeout=10000)
+        for label, v in [("x min", "10"), ("x max", "40"), ("x step", "5"), ("y min", "-4"), ("y max", "4")]:
+            dlg.get_by_label(label, exact=True).fill(v)
+        dlg.get_by_role("button", name="Create graph").click()
+        pg.wait_for_timeout(800)
+        src = source()
+        assert "period = 2 * np.pi\nZEROS = [14.134725, 21.02204, 25.010858]\n\n\ndef theta(t):" in src, src
+        assert "def Z(t):\n    n = np.floor(np.sqrt(t / period))\n" in src and "Z(x)" in src, src
+        assert src.index("def Z(t):") < src.index("class D(Scene):"), src
+
+        pg.locator(".viewport svg.overlay").click(position={"x": 6, "y": 6})  # nothing selected: the Scene inspector
+        box = row("Z").get_by_label("Name of Z")
+        box.fill("hardy_z")
+        box.press("Enter")
+        src = source()
+        assert "def hardy_z(t):" in src and "hardy_z(x)" in src and "Z(x)" not in src.replace("hardy_z(x)", ""), src
+        assert not pg.errors, pg.errors
+        ctx.close()
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

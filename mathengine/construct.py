@@ -37,7 +37,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
-from . import mathexpr, timeline
+from . import defs, mathexpr, timeline
 
 # ----------------------------------------------------------------------------- classification
 
@@ -629,6 +629,7 @@ class Plan:
     invalid_anims: set[str] = field(default_factory=set)  # animations that can't be compiled (left out)
     trackers: set[str] = field(default_factory=set)
     mobject_names: set[str] = field(default_factory=set)  # objects that are drawn (not ValueTrackers)
+    helpers: set[str] = field(default_factory=set)  # math helpers its expressions need (mathexpr.HELPERS)
 
     def diag(self, oid: str, level: str, message: str, kind: str = "object") -> None:
         self.diagnostics.append(Diagnostic(oid, level, message, kind))
@@ -677,6 +678,7 @@ class _Ctx:
         self.by_name = {o["name"]: o for o in self.objects}
         self.index = {o["id"]: i for i, o in enumerate(self.objects)}
         self.trackers = {o["name"] for o in self.objects if base_ctor(o) == "ValueTracker"}
+        self.scope = defs.scope(doc.get("defs") or [])  # the scene's definitions: math can use them by name
         self.tracker_index = {o["name"]: self.index[o["id"]] for o in self.objects if base_ctor(o) == "ValueTracker"}
 
     def name(self, oid: str) -> str:
@@ -797,7 +799,7 @@ def _check_link(obj: dict, ctx: _Ctx, cyclic: set[str]) -> str | None:
 
 def _expr(ctx: _Ctx, obj: dict, text, default: str, uses: list[str]) -> str:
     src = str(text if text not in (None, "") else default)
-    py, params = mathexpr.compile_value(src, ctx.trackers)
+    py, params = mathexpr.compile_value(src, ctx.trackers, ctx.scope, ctx.plan.helpers)
     me = ctx.index[obj["id"]]
     for p in params:
         if ctx.tracker_index[p] > me:
@@ -1208,7 +1210,7 @@ def _builder(obj: dict, ctx: _Ctx, uses: list[str]) -> str:
         return f"Angle({_with(', '.join([n(link['l1']), n(link['l2'])] + extra), kw('line1', 'line2', 'radius', 'other_angle', 'quadrant'))})"
     if kind == "graph":
         axes = n(link["axes"])
-        body, params = mathexpr.compile_function(str(link.get("expr", "")), ctx.trackers)
+        body, params = mathexpr.compile_function(str(link.get("expr", "")), ctx.trackers, scope=ctx.scope, helpers=ctx.plan.helpers)
         me = ctx.index[obj["id"]]
         for prm in params:
             if ctx.tracker_index[prm] > me:

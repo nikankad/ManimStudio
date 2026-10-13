@@ -89,7 +89,7 @@ export function ExprField({ value, onChange, placeholder }: { value: string; onC
   const names = params(doc).map((p) => p.name);
   useEffect(() => {
     if (!value.trim() || literal(value) !== null) return setCheck(null);
-    const t = setTimeout(() => api.checkValue(value, names).then(setCheck).catch(() => setCheck(null)), 250);
+    const t = setTimeout(() => api.checkValue(value, names, getState().doc.defs).then(setCheck).catch(() => setCheck(null)), 250);
     return () => clearTimeout(t);
   }, [value, names.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
   const missing = check && !check.ok && check.error?.startsWith('Undefined parameter') ? check.error.match(/'([^']+)'/)?.[1] : undefined;
@@ -348,7 +348,7 @@ function GraphFields({ obj, link }: { obj: SceneObject; link: Extract<Link, { ki
   const set = (fn: (l: Extract<Link, { kind: 'graph' }>) => void, key: string) => setLink(obj.id, (x) => fn(x as Extract<Link, { kind: 'graph' }>), `${obj.id}:graph:${key}`);
   const known = Object.fromEntries(params(doc).map((p) => [p.name, values[p.name] ?? literal(p.args['*']) ?? 1]));
   useEffect(() => {
-    const t = setTimeout(() => api.analyzeFunction(link.expr, known, domain, axes?.y_range).then(setAnalysis).catch(() => undefined), 250);
+    const t = setTimeout(() => api.analyzeFunction(link.expr, known, domain, axes?.y_range, getState().doc.defs).then(setAnalysis).catch(() => undefined), 250);
     return () => clearTimeout(t);
   }, [link.expr, domain[0], domain[1], JSON.stringify(known)]); // eslint-disable-line react-hooks/exhaustive-deps
   const disc = link.discontinuities ?? [];

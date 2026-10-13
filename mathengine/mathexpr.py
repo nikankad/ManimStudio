@@ -8,8 +8,13 @@ functions numerically (extent, undefined regions, discontinuities) for the
 graph builder.
 
 Only explicit 2D functions of ``x`` are supported. Implicit equations,
-inequalities, parametric/polar curves and piecewise definitions are rejected
+inequalities as curves and parametric/polar curves are rejected
 with an explanation. Nothing here evaluates arbitrary Python.
+
+Beyond the graph builder, expressions can use the scene's definitions (mathengine/defs.py): values and lists
+(``ZEROS[k]``, counting from 1) and functions (``Z(t)``), and a few forms for writing them: ``sum(k, 1, n, 1/k^2)`` and
+``prod(…)``, ``if(t < 10, 0, t)`` with comparisons, ``mod``, ``min``, ``max``, ``atan2``, ``round``, ``isprime``
+and ``len``.
 """
 
 from __future__ import annotations
@@ -39,6 +44,18 @@ _NUMPY = {
 }
 CONSTANTS = {"pi": ("np.pi", math.pi), "e": ("np.e", math.e), "tau": ("(2 * np.pi)", math.tau)}
 VARIABLE = "x"
+# functions of several arguments: name -> (numpy source, number of arguments)
+MULTI: dict[str, tuple[str, int]] = {"mod": ("np.mod", 2), "min": ("np.minimum", 2), "max": ("np.maximum", 2),
+                                     "atan2": ("np.arctan2", 2), "round": ("np.round", 1)}
+SPECIAL = {"sum", "prod", "if", "isprime", "len"}  # forms with their own syntax
+COMPARISONS = ("<", "<=", ">", ">=", "==", "!=")
+# the Python of the helpers an expression can need (written once at the top of the scene's file)
+HELPERS = {"isprime": (
+    "def isprime(n):\n"
+    "    n = int(n)\n"
+    "    return n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))\n"
+)}
+RESERVED = set(FUNCTIONS) | set(CONSTANTS) | set(MULTI) | SPECIAL | {VARIABLE, "y"}
 
 
 class ExprError(ValueError):
@@ -59,13 +76,15 @@ class Expr:
     params: list[str] = field(default_factory=list)  # free names other than x, in first-use order
     uses_x: bool = False
     notes: list[str] = field(default_factory=list)
+    names: list[str] = field(default_factory=list)  # definitions it uses (mathengine/defs.py)
+    helpers: set[str] = field(default_factory=set)  # HELPERS it needs
 
 
 # ----------------------------------------------------------------------------- tokenizer
 
-_TOKEN = re.compile(r"\s*(?:(\d+\.\d*|\.\d+|\d+)(?:[eE]([+-]?\d+))?|([A-Za-z_][A-Za-z0-9_]*)|(\*\*|[-+*/^(),|=<>!{}\[\];:]))")
+_TOKEN = re.compile(r"\s*(?:(\d+\.\d*|\.\d+|\d+)(?:[eE]([+-]?\d+))?|([A-Za-z_][A-Za-z0-9_]*)|(\*\*|<=|>=|==|!=|[-+*/^(),|=<>!{}\[\];:]))")
 _UNICODE = {"π": "pi", "τ": "tau", "·": "*", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3", "√": "sqrt",
-            "≤": "<", "≥": ">", "≠": "!"}
+            "≤": "<=", "≥": ">=", "≠": "!="}
 
 
 def _tokens(text: str) -> list[tuple[str, str]]:
@@ -92,7 +111,8 @@ def _tokens(text: str) -> list[tuple[str, str]]:
 # ----------------------------------------------------------------------------- parser
 
 class _Parser:
-    def __init__(self, toks: list[tuple[str, str]], known_params: set[str], allow_x: bool):
+    def __init__(self, toks: list[tuple[str, str]], known_params: set[str], allow_x: bool,
+                 scope: dict[str, tuple] | None = None, local: set[str] | None = None):
         self.toks = toks
         self.i = 0
         self.known = known_params
@@ -100,6 +120,12 @@ class _Parser:
         self.params: list[str] = []
         self.uses_x = False
         self.notes: list[str] = []
+        # definitions: name -> ("value",) | ("list",) | ("func", number of inputs); local: a function's inputs and
+        # where-names, a sum's index
+        self.scope = scope or {}
+        self.local = set(local or ())
+        self.names: list[str] = []
+        self.helpers: set[str] = set()
 
     def peek(self, k: int = 0) -> tuple[str, str] | None:
         j = self.i + k
@@ -118,7 +144,7 @@ class _Parser:
             raise ExprError(f"Expected {op!r} but found {t[1]!r}.")
 
     def parse(self) -> tuple:
-        node = self.expr()
+        node = self.cmp()
         t = self.peek()
         if t is not None:
             if t == ("op", ","):
@@ -127,6 +153,78 @@ class _Parser:
                 raise ExprError("Factorials aren't supported.")
             raise ExprError(f"Unexpected {t[1]!r}.")
         return node
+
+    def cmp(self) -> tuple:
+        """An expression, or a comparison of two (``t < 10``: true or false, for if())."""
+        node = self.expr()
+        t = self.peek()
+        if t is not None and t[0] == "op" and t[1] in COMPARISONS:
+            op = self.take()[1]
+            node = ("cmp", op, node, self.expr())
+        return node
+
+    def args(self, name: str, count: int | None = None) -> list[tuple]:
+        """``(a, b, …)`` after a function's name."""
+        self.expect("(")
+        out = [self.cmp()]
+        while self.peek() == ("op", ","):
+            self.take()
+            out.append(self.cmp())
+        self.expect(")")
+        if count is not None and len(out) != count:
+            raise ExprError(f"{name}() takes {count} input{'s' if count != 1 else ''}, not {len(out)}.")
+        return out
+
+    def special(self, val: str) -> tuple:
+        if val in ("sum", "prod"):
+            self.expect("(")
+            t = self.take()
+            if t[0] != "name":
+                raise ExprError(f"{val}() starts with the name of its index: {val}(k, 1, n, …).")
+            var = t[1]
+            self.expect(",")
+            lo = self.expr()
+            self.expect(",")
+            hi = self.expr()
+            self.expect(",")
+            had = var in self.local
+            self.local.add(var)
+            body = self.cmp()
+            if not had:
+                self.local.discard(var)
+            self.expect(")")
+            return ("sum", val, var, lo, hi, body)
+        if val == "if":
+            c, a, b = self.args("if", 3)
+            return ("if", c, a, b)
+        if val == "isprime":
+            self.helpers.add("isprime")
+            return ("isprime", self.args("isprime", 1)[0])
+        # len(list)
+        self.expect("(")
+        t = self.take()
+        if t[0] != "name" or self.scope.get(t[1], ("",))[0] != "list":
+            raise ExprError("len() takes the name of a list.")
+        self.expect(")")
+        self.names.append(t[1]) if t[1] not in self.names else None
+        return ("len", t[1])
+
+    def defined(self, val: str) -> tuple:
+        sym = self.scope[val]
+        if val not in self.names:
+            self.names.append(val)
+        if sym[0] == "list":
+            if self.peek() != ("op", "["):
+                raise ExprError(f"{val} is a list: use one of its items, {val}[1] (the first), {val}[k]…")
+            self.take()
+            k = self.expr()
+            self.expect("]")
+            return ("index", val, k)
+        if sym[0] == "func":
+            if self.peek() != ("op", "("):
+                raise ExprError(f"{val} is a function: give it its input{'s' if sym[1] != 1 else ''}, {val}(…).")
+            return ("ucall", val, self.args(val, sym[1]))
+        return ("name", val)
 
     def expr(self) -> tuple:
         node = self.term()
@@ -175,7 +273,7 @@ class _Parser:
         if kind == "num":
             return ("num", val)
         if t == ("op", "("):
-            node = self.expr()
+            node = self.cmp()
             self.expect(")")
             return node
         if t == ("op", "|"):
@@ -192,6 +290,15 @@ class _Parser:
 
     def name(self, val: str) -> tuple:
         low = val
+        if low in self.local:
+            return ("name", low)
+        if low in self.scope:
+            return self.defined(low)
+        if low in SPECIAL and self.peek() == ("op", "("):
+            return self.special(low)
+        if low in MULTI and self.peek() == ("op", "("):
+            fn, count = MULTI[low]
+            return ("mcall", low, self.args(low, count))
         if low in FUNCTIONS:
             if self.peek() != ("op", "("):
                 # sin x -> sin(x): take the next power-level operand
@@ -239,24 +346,32 @@ class _Parser:
         return ("param", name)
 
 
-def parse(text: str, known_params: set[str] | None = None, allow_x: bool = True) -> Expr:
-    """Parse an expression (no ``y =`` prefix)."""
+def parse(text: str, known_params: set[str] | None = None, allow_x: bool = True,
+          scope: dict[str, tuple] | None = None, local: set[str] | None = None) -> Expr:
+    """Parse an expression (no ``y =`` prefix). ``scope``: the definitions it can use; ``local``: plain names it can
+    use (a function's inputs)."""
     if not text or not text.strip():
         raise ExprError("The expression is empty.")
     toks = _tokens(text)
+    depth = 0
     for t in toks:
-        if t in (("op", "<"), ("op", ">")):
-            raise ExprError("Inequalities aren't supported.", "Enter an explicit function such as y = x^2, then use 'Shade interval' for regions.")
+        if t[0] == "op" and t[1] in "([":
+            depth += 1
+        elif t[0] == "op" and t[1] in ")]":
+            depth -= 1
+        elif t[0] == "op" and t[1] in COMPARISONS and depth == 0 and allow_x:
+            raise ExprError("Inequalities aren't supported.", "Enter an explicit function such as y = x^2, then use 'Shade interval' "
+                            "for regions. (A comparison can choose between two values: if(x < 0, -x, x).)")
         if t == ("op", "="):
             raise ExprError("Only one '=' is allowed, in the form y = f(x).")
         if t in (("op", ";"), ("op", ":")):
             raise ExprError(f"{t[1]!r} isn't supported.")
-    p = _Parser(toks, set(known_params or ()), allow_x)
+    p = _Parser(toks, set(known_params or ()), allow_x, scope, local)
     ast = p.parse()
-    return Expr(text=text.strip(), ast=ast, params=p.params, uses_x=p.uses_x, notes=p.notes)
+    return Expr(text=text.strip(), ast=ast, params=p.params, uses_x=p.uses_x, notes=p.notes, names=p.names, helpers=p.helpers)
 
 
-def parse_function(text: str, known_params: set[str] | None = None) -> Expr:
+def parse_function(text: str, known_params: set[str] | None = None, scope: dict[str, tuple] | None = None) -> Expr:
     """Parse ``y = f(x)``, ``f(x) = …`` or a bare right-hand side as an explicit function of x."""
     src = (text or "").strip()
     if not src:
@@ -280,7 +395,7 @@ def parse_function(text: str, known_params: set[str] | None = None) -> Expr:
                             "Only explicit functions y = f(x) are supported. Solve for y first, e.g. y = sqrt(1 - x^2).")
         else:
             raise ExprError(f"The left-hand side {lhs!r} isn't y or f(x).", "Write it as y = f(x).")
-    expr = parse(src, known_params, allow_x=True)
+    expr = parse(src, known_params, allow_x=True, scope=scope)
     return expr
 
 
@@ -289,8 +404,9 @@ def parse_function(text: str, known_params: set[str] | None = None) -> Expr:
 _PREC = {"+": 1, "-": 1, "*": 2, "/": 2, "neg": 3, "^": 4}
 
 
-def to_python(node: tuple, param_source: dict[str, str] | None = None, x_source: str = "x") -> str:
-    """Python source for the AST. ``param_source`` maps parameter names to Python (default ``name.get_value()``)."""
+def to_python(node: tuple, param_source: dict[str, str] | None = None, x_source: str = "x", _math: bool = False) -> str:
+    """Python source for the AST. ``param_source`` maps parameter names to Python (default ``name.get_value()``).
+    (``_math``: the forms of the math language instead, for to_text.)"""
     ps = param_source or {}
 
     def go(n: tuple, parent: int = 0, right: bool = False) -> str:
@@ -308,6 +424,41 @@ def to_python(node: tuple, param_source: dict[str, str] | None = None, x_source:
             inner = go(n[2][0])
             out = f"({fn}({inner}))" if fn.startswith("1 /") else f"{fn}({inner})"
             return out
+        if kind == "name":
+            return n[1]
+        if kind == "index":  # lists count from 1, as in math: ZEROS[1] is the first
+            k = n[2]
+            if _math:
+                return f"{n[1]}[{go(k)}]"
+            if k[0] == "num" and re.fullmatch(r"\d+", k[1]):
+                return f"{n[1]}[{int(k[1]) - 1}]"
+            return f"{n[1]}[int({go(k)}) - 1]"
+        if kind == "ucall":
+            return f"{n[1]}({', '.join(go(a) for a in n[2])})"
+        if kind == "mcall":
+            if _math:
+                return f"{n[1]}({', '.join(go(a) for a in n[2])})"
+            return f"{MULTI[n[1]][0]}({', '.join(go(a) for a in n[2])})"
+        if kind == "isprime":
+            return f"isprime({go(n[1])})"
+        if kind == "len":
+            return f"len({n[1]})"
+        if kind == "cmp":
+            s = f"{go(n[2], 1)} {n[1]} {go(n[3], 1)}"
+            return f"({s})" if parent > 0 else s
+        if kind == "if":
+            if _math:
+                return f"if({go(n[1])}, {go(n[2])}, {go(n[3])})"
+            return f"({go(n[2])} if {go(n[1])} else {go(n[3])})"
+        if kind == "sum":
+            _, op, var, lo, hi, body = n
+            if _math:
+                return f"{op}({var}, {go(lo)}, {go(hi)}, {go(body)})"
+            whole = lambda b: b[0] == "num" and re.fullmatch(r"\d+", b[1])  # noqa: E731
+            start = lo[1] if whole(lo) else f"int({go(lo)})"
+            stop = str(int(hi[1]) + 1) if whole(hi) else f"int({go(hi)}) + 1"
+            gen = f"{go(body)} for {var} in range({start}, {stop})"
+            return f"sum({gen})" if op == "sum" else f"np.prod([{gen}])"
         if kind == "neg":
             s = "-" + go(n[1], _PREC["neg"])
             return f"({s})" if parent > _PREC["neg"] else s
@@ -324,13 +475,43 @@ def to_python(node: tuple, param_source: dict[str, str] | None = None, x_source:
 
 def to_text(node: tuple) -> str:
     """Normalized math text (for display)."""
-    return to_python(node, {}, "x").replace(".get_value()", "").replace("np.", "").replace("**", "^").replace("log10", "log").replace("arcsin", "asin").replace("arccos", "acos").replace("arctan", "atan")
+    return to_python(node, {}, "x", _math=True).replace(".get_value()", "").replace("np.", "").replace("**", "^").replace("log10", "log").replace("arcsin", "asin").replace("arccos", "acos").replace("arctan", "atan")
 
 
-def evaluate(node: tuple, x: np.ndarray | float, params: dict[str, float]) -> np.ndarray:
-    """Evaluate with numpy (invalid operations give nan/inf, never raise)."""
+_PLAIN = {"num", "var", "const", "param", "call", "neg", "bin"}
+
+
+def _plain(node) -> bool:
+    """Whether the expression only uses what numpy evaluates on whole arrays (no sums, ifs, definitions…)."""
+    if not isinstance(node, tuple) or not node:
+        return True
+    if isinstance(node[0], str) and node[0] in ("num", "var", "const", "param"):
+        return True
+    if node[0] not in _PLAIN:
+        return False
+    return all(_plain(c) for part in node[1:] for c in (part if isinstance(part, list) else [part]) if isinstance(c, tuple))
+
+
+def evaluate(node: tuple, x: np.ndarray | float, params: dict[str, float], namespace: dict | None = None) -> np.ndarray:
+    """Evaluate with numpy (invalid operations give nan/inf, never raise). ``namespace``: the definitions'
+    Python (mathengine/defs.py), for expressions that use them; those are evaluated point by point."""
     with np.errstate(all="ignore"):
-        return np.asarray(_ev(node, x, params), dtype=float)
+        if _plain(node):
+            return np.asarray(_ev(node, x, params), dtype=float)
+        ns = {"np": np, "isprime": _isprime, **(namespace or {})}
+        f = eval(f"lambda x, _p: {to_python(node, {k: f'_p[{k!r}]' for k in params})}", ns)  # our own Python, from the AST
+
+        def one(v):
+            try:
+                return float(f(v, params))
+            except Exception:  # an undefined value (log of 0, an index past the end…) is a gap in the graph
+                return math.nan
+        return np.vectorize(one, otypes=[float])(x)
+
+
+def _isprime(n) -> bool:
+    n = int(n)
+    return n > 1 and all(n % d for d in range(2, int(n ** 0.5) + 1))
 
 
 def _ev(n: tuple, x, ps: dict[str, float]):
@@ -360,21 +541,28 @@ def _ev(n: tuple, x, ps: dict[str, float]):
     return np.power(np.asarray(a, dtype=float), b)
 
 
-def compile_value(text: str, params: set[str]) -> tuple[str, list[str]]:
-    """Python for a scalar expression (no x) over known parameters; raises ExprError for unknown names."""
-    e = parse(str(text), params, allow_x=False)
+def compile_value(text: str, params: set[str], scope: dict[str, tuple] | None = None,
+                  helpers: set[str] | None = None) -> tuple[str, list[str]]:
+    """Python for a scalar expression (no x) over known parameters and definitions; raises ExprError for unknown
+    names. ``helpers`` collects the HELPERS it needs."""
+    e = parse(str(text), params, allow_x=False, scope=scope)
+    if helpers is not None:
+        helpers.update(e.helpers)
     unknown = [p for p in e.params if p not in params]
     if unknown:
-        raise ExprError(f"Undefined parameter {unknown[0]!r}.", "Create it as a parameter (a ValueTracker) or use a number.")
+        raise ExprError(f"Undefined parameter {unknown[0]!r}.", "Create it as a parameter (a ValueTracker) or a definition (Scene › Definitions), or use a number.")
     return to_python(e.ast), e.params
 
 
-def compile_function(text: str, params: set[str], x_source: str = "x") -> tuple[str, list[str]]:
+def compile_function(text: str, params: set[str], x_source: str = "x", scope: dict[str, tuple] | None = None,
+                     helpers: set[str] | None = None) -> tuple[str, list[str]]:
     """Python for the body of ``lambda x: …``; raises ExprError for unknown names."""
-    e = parse_function(str(text), params)
+    e = parse_function(str(text), params, scope)
+    if helpers is not None:
+        helpers.update(e.helpers)
     unknown = [p for p in e.params if p not in params]
     if unknown:
-        raise ExprError(f"Undefined parameter {unknown[0]!r}.", "Create it as a parameter (a ValueTracker) or use a number.")
+        raise ExprError(f"Undefined parameter {unknown[0]!r}.", "Create it as a parameter (a ValueTracker) or a definition (Scene › Definitions), or use a number.")
     return to_python(e.ast, x_source=x_source), e.params
 
 
@@ -407,7 +595,8 @@ def _refine_jump(f, a: float, b: float, threshold: float) -> float | None:
 
 
 def analyze_function(text: str, params: dict[str, float] | None = None, domain: tuple[float, float] = (-5, 5),
-                     y_range: tuple[float, float] | None = None, samples: int = 4001) -> dict:
+                     y_range: tuple[float, float] | None = None, samples: int = 4001,
+                     scope: dict[str, tuple] | None = None, namespace: dict | None = None) -> dict:
     """Parse and sample an explicit function for the graph builder.
 
     Returns the parameters it needs (``undefined`` lists the ones not in ``params``), the Python
@@ -420,10 +609,12 @@ def analyze_function(text: str, params: dict[str, float] | None = None, domain: 
                  "normalized": "", "discontinuities": [], "gap": None, "undefined_intervals": [], "y_extent": None,
                  "kind": "explicit"}
     try:
-        e = parse_function(text, set(params))
+        e = parse_function(text, set(params), scope)
     except ExprError as exc:
         out.update(error=exc.message, hint=exc.hint)
         return out
+    if not _plain(e.ast):
+        samples = min(samples, 801)  # evaluated point by point
     out.update(ok=True, notes=e.notes, params=e.params, undefined=[p for p in e.params if p not in params],
                python=to_python(e.ast), normalized=to_text(e.ast))
     if not e.uses_x:
@@ -434,7 +625,7 @@ def analyze_function(text: str, params: dict[str, float] | None = None, domain: 
         return out
     values = {p: params.get(p, 1.0) for p in e.params}
     xs = np.linspace(lo, hi, samples)
-    ys = evaluate(e.ast, xs, values) * np.ones_like(xs)
+    ys = evaluate(e.ast, xs, values, namespace) * np.ones_like(xs)
     finite = np.isfinite(ys)
     if finite.any():
         out["y_extent"] = [float(np.min(ys[finite])), float(np.max(ys[finite]))]
@@ -458,7 +649,7 @@ def analyze_function(text: str, params: dict[str, float] | None = None, domain: 
                             "so narrow the domain to where it is defined.")
 
     # Jumps: a step between neighbouring samples far larger than typical that doesn't shrink when refined.
-    f = lambda v: float(evaluate(e.ast, v, values))  # noqa: E731
+    f = lambda v: float(evaluate(e.ast, v, values, namespace))  # noqa: E731
     span = (y_range[1] - y_range[0]) if y_range else (out["y_extent"][1] - out["y_extent"][0] if out["y_extent"] else 1.0)
     span = max(span, 1e-6)
     dy = np.abs(np.diff(ys))

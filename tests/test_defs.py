@@ -1,0 +1,87 @@
+"""Definitions (Scene › Definitions): values, lists and functions written in math become Python above the scene,
+graphs and constructions use them by name, and reading the code back keeps them."""
+
+import math
+
+import pytest
+
+from conftest import add_all, doc, obj
+from mathengine import codegen, defs, importer, mathexpr as M, runtime
+
+THETA = {"id": "d1", "name": "theta", "kind": "function", "params": ["t"],
+         "expr": "t/2 ln(t/(2pi)) - t/2 - pi/8 + 1/(48t)"}
+Z = {"id": "d2", "name": "Z", "kind": "function", "params": ["t"],
+     "where": [{"name": "n", "expr": "floor(sqrt(t/(2pi)))"}],
+     "expr": "2 sum(k, 1, n, cos(theta(t) - t ln(k))/sqrt(k))"}
+ZEROS = {"id": "d3", "name": "ZEROS", "kind": "list", "items": ["14.134725", "21.02204", "25.010858"]}
+TAU = {"id": "d4", "name": "period", "kind": "value", "expr": "2 pi"}
+
+
+def hardy_z(t):
+    theta = t / 2 * math.log(t / (2 * math.pi)) - t / 2 - math.pi / 8 + 1 / (48 * t)
+    n = math.floor(math.sqrt(t / (2 * math.pi)))
+    return 2 * sum(math.cos(theta - t * math.log(k)) / math.sqrt(k) for k in range(1, n + 1))
+
+
+def test_math_forms():
+    sc = {"L": ("list",), "f": ("func", 2), "c": ("value",)}
+    py = lambda text, **kw: M.to_python(M.parse(text, set(), allow_x=False, scope=sc, **kw).ast)
+    assert py("sum(k, 1, 10, 1/k^2)") == "sum(1 / k ** 2 for k in range(1, 11))"
+    assert py("L[1] + L[len(L)]") == "L[0] + L[int(len(L)) - 1]"
+    assert py("if(c < 0, 0, f(c, 2))") == "(0 if c < 0 else f(c, 2))"
+    assert "isprime" in M.parse("isprime(7)", set(), allow_x=False, scope=sc).helpers
+    assert M.parse("q + c(1)", set(), allow_x=False, scope=sc).params == ["q"]  # c(1) is c times 1, as a(x+1) is
+    for bad, fragment in [("L", "[1]"), ("f(1)", "2 inputs"), ("L(2)", "[1]")]:
+        with pytest.raises(M.ExprError) as e:
+            M.parse(bad, set(), allow_x=False, scope=sc)
+        assert fragment in e.value.message + e.value.hint
+
+
+def test_compile_and_evaluate():
+    found = [THETA, Z, ZEROS, TAU]
+    comp = defs.compile_defs(found)
+    assert not comp.errors
+    ns = defs.namespace(found)
+    for t in (12.0, 14.134725, 30.5, 77.0):
+        assert ns["Z"](t) == pytest.approx(hardy_z(t), abs=1e-12)
+    info = defs.evaluate(found)
+    assert info["d4"]["value"] == pytest.approx(2 * math.pi)
+    assert info["d3"]["length"] == 3
+
+
+@pytest.mark.parametrize("d,fragment", [
+    ({"id": "a", "name": "sin", "kind": "value", "expr": "1"}, "already"),
+    ({"id": "a", "name": "Circle", "kind": "value", "expr": "1"}, "manim"),
+    ({"id": "a", "name": "2x", "kind": "value", "expr": "1"}, "can't be a name"),
+    ({"id": "a", "name": "v", "kind": "value", "expr": "a + 1"}, "isn't defined"),
+])
+def test_errors_are_explained(d, fragment):
+    comp = defs.compile_defs([d], defs.manim_names())
+    msg, hint = comp.errors["a"]
+    assert fragment in msg + hint
+
+
+def test_graph_uses_a_definition_and_round_trips():
+    d = doc([
+        obj("ox", "axes", "Axes", args={"x_range": "[10, 40, 5]", "y_range": "[-4, 4, 1]"}),
+        obj("og", "graph", "axes.plot", link={"kind": "graph", "axes": "ox", "expr": "y = Z(x)", "x_min": 10, "x_max": 40}),
+    ])
+    d["defs"] = [THETA, Z, ZEROS, TAU]
+    d["timeline"] = [add_all(d)]
+    src = codegen.generate(d).source
+    assert "def Z(t):" in src and src.index("def Z(t):") < src.index("class ")
+    r = runtime.run(d, 0, render=False)
+    assert r.error is None, r.error and r.error["trace"]
+    back = importer.import_code(src, base=d).doc
+    assert [x["name"] for x in back["defs"]] == ["theta", "Z", "ZEROS", "period"]
+    assert codegen.generate(back).source == src
+    # edited by hand: no longer what the definitions generate, so they become ordinary code above the scene
+    edited = src.replace("period = 2 * np.pi", "period = 6.28")
+    back = importer.import_code(edited, base=d).doc
+    assert not back.get("defs")
+    assert codegen.generate(back).source.count("def Z(t):") == 1
+
+
+def test_shown_as_math():
+    r = M.analyze_function("y = if(x < 0, 0, x^2) + sum(k, 1, 3, sin(k x)/k)", None, (-3, 3))
+    assert r["ok"] and r["normalized"] == "if(x < 0, 0, x ^ 2) + sum(k, 1, 3, sin(k * x) / k)"

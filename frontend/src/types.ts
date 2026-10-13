@@ -164,6 +164,31 @@ export interface Marker {
   anchor?: { id: string; edge: 'start' | 'end'; offset: number };
 }
 
+/**
+ * A definition of the scene (mathengine/defs.py): a named value, list or function written in math, made in
+ * Scene › Definitions. It becomes Python above the scene class; math everywhere can use it by name.
+ */
+export interface Def {
+  id: string;
+  name: string;
+  kind: 'value' | 'list' | 'function';
+  expr?: string; // value: its expression; function: what it returns
+  items?: string[]; // list
+  params?: string[]; // function: its inputs
+  where?: { name: string; expr: string }[]; // function: names worked out first, in order
+}
+
+/** What the editor learns about a definition (mathengine/server.py api_defs). */
+export interface DefInfo {
+  error?: string;
+  hint?: string;
+  value?: number;
+  length?: number;
+  items?: number[];
+  sample?: number;
+  at?: number;
+}
+
 export interface SceneDoc {
   version: number;
   scene: { name: string; base: string; members?: string; members_after?: string; decorators?: string }; // members: other code of the class
@@ -175,6 +200,7 @@ export interface SceneDoc {
   timeline: Step[];
   markers?: Marker[];
   constructions?: Template[];
+  defs?: Def[];
 }
 
 export interface Param {

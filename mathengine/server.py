@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from . import catalog, codegen, importer, mathexpr, opener, prefs, recent, recovery, render, runtime, samples, starters, tex, version
+from . import catalog, codegen, defs, importer, mathexpr, opener, prefs, recent, recovery, render, runtime, samples, starters, tex, version
 from .project import ProjectError, load_project, new_project, resolve_project_path, save_project, upgrade_template
 
 LIBRARY_PATH = Path.home() / ".mathengine" / "constructions.json"
@@ -129,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/prefs"): self.api_set_pref,
             ("POST", "/api/reveal"): self.api_reveal,
             ("POST", "/api/expr"): self.api_expr,
+            ("POST", "/api/defs"): self.api_defs,
             ("POST", "/api/check_equation"): self.api_check_equation,
             ("GET", "/api/constructions"): self.api_constructions,
             ("POST", "/api/constructions"): self.api_save_constructions,
@@ -397,17 +398,30 @@ class Handler(BaseHTTPRequestHandler):
         return {"doc": samples.sample(str(body.get("id", ""))), "path": None}
 
     def api_expr(self, _q: dict, body: dict) -> dict:
-        """Analyse a math expression: a function for the graph builder, or a value over parameters."""
+        """Analyse a math expression: a function for the graph builder, or a value over parameters. ``defs``: the
+        scene's definitions, which it can use by name."""
+        found = body.get("defs") or []
+        scope = defs.scope(found)
         if body.get("mode") == "value":
             try:
-                py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []))
+                py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []), scope)
                 return {"ok": True, "python": py, "params": params, "literal": mathexpr.literal(str(body.get("expr", "")))}
             except mathexpr.ExprError as exc:
                 return {"ok": False, "error": exc.message, "hint": exc.hint}
         dom = body.get("domain") or [-5, 5]
         yr = body.get("y_range")
         return mathexpr.analyze_function(str(body.get("expr", "")), {k: float(v) for k, v in (body.get("params") or {}).items()},
-                                         (float(dom[0]), float(dom[1])), (float(yr[0]), float(yr[1])) if yr else None)
+                                         (float(dom[0]), float(dom[1])), (float(yr[0]), float(yr[1])) if yr else None,
+                                         scope=scope, namespace=defs.namespace(found) if found else None)
+
+    def api_defs(self, _q: dict, body: dict) -> dict:
+        """Check the scene's definitions: each one's error, or its value (a list's items, a function at 1)."""
+        found = body.get("defs") or []
+        comp = defs.compile_defs(found, defs.manim_names())
+        out = defs.evaluate(found)
+        for did, (msg, hint) in comp.errors.items():
+            out[did] = {"error": msg, "hint": hint}
+        return {"defs": out}
 
     def api_check_equation(self, _q: dict, body: dict) -> dict:
         """Compile an equation's terms with manim's own MathTex and report glyphs per term."""

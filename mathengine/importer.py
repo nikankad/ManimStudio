@@ -33,7 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import catalog, codegen, construct, project, tex, timeline
+from . import catalog, codegen, construct, defs, mathexpr, project, tex, timeline
 
 # Lines codegen writes itself; dropped from the header so they aren't written twice.
 _AUTO_IMPORTS = {"from manim import *", "import numpy as np", "import svgelements as se", construct.TERMS_IMPORT}
@@ -977,9 +977,38 @@ def _restore_disabled(base: dict, steps: list[dict], reused: set[str]) -> list[d
     return out
 
 
-def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict) -> tuple[str, str]:
+def _def_texts(d: dict | None, all_defs: list[dict]) -> set[str]:
+    """The module-level statements (``ast.unparse``) one definition generates; ``d`` None: the helpers they need."""
+    comp = defs.compile_defs(all_defs)
+    py = "\n\n".join(mathexpr.HELPERS[h] for h in comp.helpers) if d is None else dict(comp.blocks).get(d.get("id"), "")
+    try:
+        return {ast.unparse(n) for n in ast.parse(py).body} if py else {"<error>"}
+    except SyntaxError:
+        return {"<error>"}
+
+
+def _module_texts(tree: ast.Module, scene: ast.ClassDef) -> set[str]:
+    """The module-level statements above the scene class (``ast.unparse``)."""
+    return {ast.unparse(n) for n in tree.body if n is not scene and (n.end_lineno or 0) < _first_line(scene)}
+
+
+def _def_statements(base: dict | None) -> set[str]:
+    """The module-level statements the base document's definitions (and their helpers) generate: reading them back
+    keeps those definitions (``doc["defs"]``) rather than making them header code."""
+    found = (base or {}).get("defs") or []
+    if not found:
+        return set()
+    out = _def_texts(None, found) - {"<error>"}
+    for d in found:
+        out |= _def_texts(d, found) - {"<error>"}
+    return out
+
+
+def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict,
+            def_statements: set[str] | None = None) -> tuple[str, str]:
     """Module-level code other than the scene and what codegen writes itself, before and after the scene class
-    (code after it can use it, so it stays after it); reads ``config.x = …`` into ``config``."""
+    (code after it can use it, so it stays after it); reads ``config.x = …`` into ``config``. A statement one of
+    the definitions generates (``def_statements``) is that definition, kept as one."""
     drop: set[int] = set()
 
     def skip(node: ast.AST) -> None:
@@ -990,7 +1019,9 @@ def _header(src: _Source, tree: ast.Module, scene: ast.ClassDef, config: dict) -
             skip(node)
             continue
         text = ast.unparse(node)
-        if text in _AUTO_IMPORTS:
+        if def_statements and text in def_statements and node.end_lineno and node.end_lineno < _first_line(scene):
+            skip(node)
+        elif text in _AUTO_IMPORTS:
             skip(node)
         elif isinstance(node, ast.ImportFrom) and node.module == "manim.utils.rate_functions" and all(a.name.startswith("ease_") for a in node.names):
             skip(node)
@@ -1059,7 +1090,13 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
         doc["scene"]["members"] = before
     if after:
         doc["scene"]["members_after"] = after
-    doc["header"], footer = _header(src, tree, node, doc["config"])
+    # The definitions stay definitions while all of their code is still there as they generate it; once it was
+    # edited, all of it is header code (in its own order: one may use another).
+    statements = _def_statements(base)
+    whole = bool(statements) and all(_def_texts(d, base["defs"]) <= _module_texts(tree, node) for d in base["defs"])
+    doc["header"], footer = _header(src, tree, node, doc["config"], statements if whole else None)
+    if whole:
+        doc["defs"] = copy.deepcopy(base["defs"])
     if footer:
         doc["footer"] = footer
 

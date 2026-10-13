@@ -1,4 +1,4 @@
-import type { Catalog, Job, RunResult, SceneDoc, Signature, Template } from './types';
+import type { Catalog, Def, DefInfo, Job, RunResult, SceneDoc, Signature, Template } from './types';
 
 export interface FunctionAnalysis {
   ok: boolean;
@@ -124,9 +124,10 @@ export const api = {
   openRecovery: (id: string) => post<{ doc: SceneDoc; path: string | null }>('/api/recovery/open', { id }),
   clearRecovery: (id: string) => post<{ recovery: Recovery[] }>('/api/recovery/clear', { id }),
   openSample: (id: string) => post<{ doc: SceneDoc; path: null }>('/api/samples/open', { id }),
-  analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number]) =>
-    post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range }),
-  checkValue: (expr: string, params: string[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params }),
+  analyzeFunction: (expr: string, params: Record<string, number>, domain: [number, number], y_range?: [number, number], defs?: Def[]) =>
+    post<FunctionAnalysis>('/api/expr', { expr, params, domain, y_range, defs }),
+  checkValue: (expr: string, params: string[], defs?: Def[]) => post<ValueCheck>('/api/expr', { mode: 'value', expr, params, defs }),
+  checkDefs: (defs: Def[]) => post<{ defs: Record<string, DefInfo> }>('/api/defs', { defs }),
   checkEquation: (parts: string[], ctor: string) => post<EquationCheck>('/api/check_equation', { parts, ctor }),
   constructions: () => get<{ starters: Template[]; library: Template[]; path: string }>('/api/constructions'),
   saveLibrary: (library: Template[]) => post<{ path: string }>('/api/constructions', { library }),

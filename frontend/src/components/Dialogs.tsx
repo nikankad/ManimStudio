@@ -39,7 +39,7 @@ export function GraphBuilder() {
   const values = { ...trackers, ...Object.fromEntries(Object.entries(defs).map(([k, v]) => [k, v.value])) };
 
   useEffect(() => {
-    const t = setTimeout(() => api.analyzeFunction(expr, values, dom, yr).then(setAnalysis).catch((e) => toast(String(e))), 250);
+    const t = setTimeout(() => api.analyzeFunction(expr, values, dom, yr, getState().doc.defs).then(setAnalysis).catch((e) => toast(String(e))), 250);
     return () => clearTimeout(t);
   }, [expr, JSON.stringify(values), dom[0], dom[1], yr[0], yr[1]]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -143,7 +143,7 @@ export function GraphBuilder() {
           </label>
           {analysis && !analysis.ok && <div className="err-box">{analysis.error}{analysis.hint ? <><br /><span className="muted">{analysis.hint}</span></> : null}</div>}
           {analysis?.ok && <p className="muted small">Reads as <code>y = {analysis.normalized}</code>{analysis.notes.length ? ` · ${analysis.notes.join(' ')}` : ''}</p>}
-          <p className="muted small">Supported: explicit functions of x with + − × ÷ ^, implicit multiplication (2x, 3(x+1)), sin cos tan exp ln log sqrt abs floor… and pi, e. Not yet: implicit equations (x² + y² = 1), inequalities, parametric or polar curves, piecewise definitions.</p>
+          <p className="muted small">Supported: explicit functions of x with + − × ÷ ^, implicit multiplication (2x, 3(x+1)), sin cos tan exp ln log sqrt abs floor… and pi, e; if(x &lt; 0, 0, x^2), sum(k, 1, n, …), mod, min, max, and the scene's definitions (Scene › Definitions). Not yet: implicit equations (x² + y² = 1), parametric or polar curves.</p>
 
           <h4>Parameters</h4>
           {(analysis?.params ?? []).length === 0 && <p className="muted small">None. Any other letter (like a, b, k) becomes a parameter slider you can animate on the timeline.</p>}

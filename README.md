@@ -311,13 +311,25 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
   - creates the axes and the graph in one step, with the domain and axis ranges exposed;
   - shows a live preview, rendered by manim, of exactly what will be added before you create it;
   - finds discontinuities (asymptotes, jumps) and leaves a gap around them so the curve isn't drawn across;
-  - explains unsupported input in plain words: implicit equations (`x^2 + y^2 = 1`), inequalities,
-    parametric or polar curves, and piecewise definitions.
+  - explains unsupported input in plain words: implicit equations (`x^2 + y^2 = 1`), inequalities as curves,
+    and parametric or polar curves.
+
+  Besides `+ − * / ^`, `sin cos tan exp ln log sqrt abs floor…`, `pi` and `e`, expressions can use
+  `if(x < 0, 0, x^2)` (comparisons `< <= > >= == !=`), `sum(k, 1, n, 1/k^2)` and `prod(…)`, `mod`, `min`,
+  `max`, `atan2`, `round`, `isprime` and the scene's definitions.
 
   Parameters are ValueTrackers. Graphs, constrained points and number labels share them. A slider sets a
   parameter's starting value. To animate one, use *Animate to… → Add clip*, or drag a point bound to it on the
   canvas in Record mode; either adds `.animate.set_value(…)` at the playhead. The *Scene* inspector lists every
   parameter as a slider.
+- **Definitions** (*Scene* inspector, with nothing selected): named values, lists and functions written in math,
+  not Python. `+ value` (`period = 2 pi`), `+ list` (`ZEROS = 14.134725, 21.02204, …`, used as `ZEROS[1]`
+  counting from 1 and `len(ZEROS)`) and `+ function` (inputs, optional *where* names worked out first, and what
+  it returns: `Z(t) = 2 sum(k, 1, n, cos(theta(t) - t ln(k))/sqrt(k))` where `n = floor(sqrt(t/period))`).
+  Each is checked as you type (its value, its items, or the function at 1, or what is wrong). Graphs, points
+  and every math field use them by name; renaming one renames its uses. In the code they are ordinary Python
+  above the scene class (`period = 2 * np.pi`, `def Z(t): …`), and reading the code back keeps them as
+  definitions while it is what they generate (edited by hand, they become code above the scene).
 - **Annotations offered for each kind of object**:
   - segment: *Show length*;
   - two lines: *Mark angle*;

@@ -14,6 +14,7 @@ import { ColorField, Field, ParamField, ScrubNumber, isColorKey, quote, unquote 
 import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
+import { DefinitionsPanel } from './Definitions';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
 import { addKey, CAMERA, CAMERA_NAME, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
@@ -150,6 +151,7 @@ function SceneInfo() {
         <button onClick={() => setState({ panel: 'help', panelData: null })}>Guide &amp; tour</button>
       </div>
       <ParametersPanel />
+      <DefinitionsPanel />
       <h4>How it works</h4>
       <ul className="tips">
         <li><b>Draw</b> with the tools above the canvas (keys 1–7): points, segments, arrows, circles, rectangles, polygons. Drawing between existing points connects to them.</li>

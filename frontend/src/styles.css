@@ -454,6 +454,11 @@ input.timecode { background: #141416; border: 1px solid var(--blue); border-radi
 .expr-err button { margin-left: 6px; }
 .param-slider { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; flex: 1; min-width: 0; }
 .param-row { margin: 2px 0; }
+.def-row { margin: 6px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.def-row .row { gap: 4px; align-items: center; }
+.def-row .def-name { width: 7em; flex: none; }
+.def-row .def-params { width: 6em; flex: none; }
+.def-row .def-where .field:not(.def-name) { flex: 1; min-width: 0; }
 .terms { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0; }
 .term { position: relative; padding: 3px 7px; border-radius: 4px; border: 1px solid var(--line); border-bottom-width: 3px; background: var(--panel-2); font-size: 12px; }
 .term.on { background: rgba(240, 172, 95, 0.2); border-color: var(--warn); }
