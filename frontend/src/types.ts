@@ -128,6 +128,7 @@ export interface Step {
   op?: string; // assign: "=", "+=", "-="…
   value?: string; // assign: the expression on the right
   head?: string; // block: its header without the colon, "for d in dots", "if k > 2", "else"
+  repeat?: Repeat; // block: a loop written in math; codegen writes its header from this (head follows it)
   written?: Written;
 }
 
@@ -176,6 +177,14 @@ export interface Def {
   items?: string[]; // list
   params?: string[]; // function: its inputs
   where?: { name: string; expr: string }[]; // function: names worked out first, in order
+}
+
+/** A Repeat: counter `var` from `from` to `to` (both included, math), or each item of the list definition `each`. */
+export interface Repeat {
+  var: string;
+  from?: string;
+  to?: string;
+  each?: string;
 }
 
 /** What the editor learns about a definition (mathengine/server.py api_defs). */

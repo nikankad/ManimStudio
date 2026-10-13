@@ -680,6 +680,26 @@ class _Ctx:
         self.trackers = {o["name"] for o in self.objects if base_ctor(o) == "ValueTracker"}
         self.scope = defs.scope(doc.get("defs") or [])  # the scene's definitions: math can use them by name
         self.tracker_index = {o["name"]: self.index[o["id"]] for o in self.objects if base_ctor(o) == "ValueTracker"}
+        # the loop counters around where each object is created (math can use them; see _expr)
+        self.loops: dict[str, list[str]] = {}
+        self.all_loops: set[str] = set()
+        stack: list[str | None] = []
+        around: dict[str, list[str]] = {}
+        for st in doc.get("timeline") or []:
+            if st.get("kind") == "block" and not timeline.is_clause(st):
+                v = defs.loop_var(st)
+                stack.append(v)
+                if v:
+                    self.all_loops.add(v)
+            elif st.get("kind") == "end" and stack:
+                stack.pop()
+            around[st["id"]] = [v for v in stack if v]
+        for o in self.objects:
+            self.loops[o["id"]] = around.get(o.get("after") or "", [])
+        self.bound: set[str] = set()  # the counters the object being built uses
+
+    def scope_for(self, obj: dict) -> dict[str, tuple]:
+        return {**self.scope, **{v: ("value", "loop") for v in self.loops.get(obj["id"], []) if v not in self.scope}}
 
     def name(self, oid: str) -> str:
         return self.by_id[oid]["name"]
@@ -799,7 +819,18 @@ def _check_link(obj: dict, ctx: _Ctx, cyclic: set[str]) -> str | None:
 
 def _expr(ctx: _Ctx, obj: dict, text, default: str, uses: list[str]) -> str:
     src = str(text if text not in (None, "") else default)
-    py, params = mathexpr.compile_value(src, ctx.trackers, ctx.scope, ctx.plan.helpers)
+    here = ctx.scope_for(obj)
+    try:
+        py, params = mathexpr.compile_value(src, ctx.trackers, here, ctx.plan.helpers)
+    except mathexpr.ExprError as e:
+        outside = next((v for v in sorted(ctx.all_loops - set(here)) if re.search(rf"\b{v}\b", src)), None)
+        if outside:
+            raise mathexpr.ExprError(f"{outside} is the counter of a Repeat, and {obj['name']} is created outside it.",
+                                     "Create it inside the Repeat: Properties › In the code › Created.") from e
+        raise
+    for v in ctx.loops.get(obj["id"], []):
+        if v not in ctx.scope and re.search(rf"\b{v}\b", py):
+            ctx.bound.add(v)
     me = ctx.index[obj["id"]]
     for p in params:
         if ctx.tracker_index[p] > me:
@@ -990,6 +1021,17 @@ def _equation(obj: dict, p: Plan) -> bool:
 
 
 def _link_lines(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
+    """Statements that build a constructed object (_build_link). Created in a loop and using its counter, the
+    functions it is kept up with keep the counter of their own run (``lambda m, k=k:``), not the loop's last."""
+    ctx.bound = set()
+    lines = _build_link(obj, ctx, switched)
+    if ctx.bound:
+        bind = ", ".join(f"{v}={v}" for v in sorted(ctx.bound))
+        lines = [ln.replace("lambda m: ", f"lambda m, {bind}: ").replace("lambda: ", f"lambda {bind}: ") for ln in lines]
+    return lines
+
+
+def _build_link(obj: dict, ctx: _Ctx, switched: bool = False) -> list[str]:
     """Statements that build a constructed object. ``switched``: couple / uncouple steps switch it.
 
     An uncoupled (``off``) standalone object is emitted as an ordinary object; these are then the

@@ -99,6 +99,12 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     the steps; **+ Repeat** puts the selected clips in `for i in range(2)`. Deleting, moving, copying or
     disabling a block takes the whole statement; a clause goes with its steps. The code stays valid whatever the
     edit: an empty body is written `pass`.
+    A loop's **Loop** menu writes it in math instead of a header: a counter (`k` from `1` to `len(ZEROS)`, both
+    ends included: `for k in range(1, len(ZEROS) + 1)`) or each item of a list definition (`for z in ZEROS`).
+    What is created in the loop (an object whose intro is added with the playhead in it, or one set to be
+    created there) is made anew on each run, and its math fields can use the counter: a point at coordinates
+    `(0.5, ZEROS[k])` lands on each zero in turn (its updater keeps its own run's `k`). Used outside its loop,
+    the field says so and offers **Create it in the loop**.
   - **Values** (`k = 2`, `total += k`, `a, b = f()`) are steps of their own, edited by name, operation and value
     (**+ Value** adds one). An animation built by an expression (`*[FadeOut(m) for m in dots]`) is a clip named
     after what it builds, its code edited in Effect Controls. `self.add` / `self.remove` keep expressions

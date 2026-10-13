@@ -185,3 +185,66 @@ def python_of(d: dict, defs: list[dict]) -> str | None:
     """The Python one definition generates (None: it has an error)."""
     comp = compile_defs(defs)
     return dict(comp.blocks).get(d.get("id"))
+
+
+_FOR = re.compile(r"^\s*(?:async\s+)?for\s+([A-Za-z_]\w*)\s+in\b")
+
+
+def loop_var(step: dict) -> str | None:
+    """The counter a loop step sets (``k`` of a Repeat ``k from 1 to 6``, or of a ``for k in …`` header)."""
+    r = step.get("repeat")
+    if r and _IDENT.match((r.get("var") or "").strip()):
+        return r["var"].strip()
+    m = _FOR.match(step.get("head") or "")
+    return m.group(1) if m else None
+
+
+def loop_scope(doc: dict) -> dict[str, tuple]:
+    """What a loop's math can use: the definitions and every loop counter of the timeline."""
+    sc = scope(doc.get("defs") or [])
+    for s in doc.get("timeline") or []:
+        if s.get("kind") == "block":
+            v = loop_var(s)
+            if v and v not in sc:
+                sc[v] = ("value", "loop")
+    return sc
+
+
+def _bound(text: str, sc: dict, extra: str = "") -> str:
+    """Python for a whole-number bound of a range (``extra``: `` + 1`` for the last value, which range leaves out)."""
+    src = str(text).strip()
+    if re.fullmatch(r"-?\d+", src):
+        return str(int(src) + (1 if extra else 0))
+    e = mathexpr.parse(src, set(), allow_x=False, scope=sc)
+    if e.params:
+        raise mathexpr.ExprError(f"{e.params[0]!r} isn't defined.", "A Repeat counts with numbers, definitions and the counters of loops around it.")
+    py = mathexpr.to_python(e.ast)
+    whole = re.fullmatch(r"len\(\w+\)", py)
+    return (py if whole else f"int({py})") + extra
+
+
+def repeat_head(r: dict, sc: dict) -> str:
+    """The ``for`` header of a Repeat: ``{"var": "k", "from": "1", "to": "6"}`` (both ends included, as in math) or
+    ``{"var": "z", "each": "ZEROS"}`` (each item of a list definition)."""
+    var = (r.get("var") or "").strip()
+    if not _IDENT.match(var) or keyword.iskeyword(var) or var in mathexpr.RESERVED - {mathexpr.VARIABLE}:
+        raise mathexpr.ExprError(f"{var or 'The counter'!r} can't be a counter's name.", "Use a short name such as k or i.")
+    if var in sc and sc[var] != ("value", "loop"):
+        raise mathexpr.ExprError(f"{var} is a definition's name.", "Name the counter something else.")
+    if r.get("each") is not None:
+        lst = str(r["each"]).strip()
+        if sc.get(lst) != ("list",):
+            raise mathexpr.ExprError(f"{lst or 'That'!r} isn't a list.", "Make one in Scene › Definitions (+ list).")
+        return f"for {var} in {lst}"
+    lo, hi = _bound(r.get("from", "1") or "1", sc), _bound(r.get("to", "1") or "1", sc, " + 1")
+    return f"for {var} in range({lo}, {hi})"
+
+
+def block_head(step: dict, sc: dict | None) -> str:
+    """The header codegen writes for a block step: its Repeat's, when it has one that compiles, else its own."""
+    if step.get("repeat") and sc is not None:
+        try:
+            return repeat_head(step["repeat"], sc)
+        except mathexpr.ExprError:
+            pass
+    return (step.get("head") or "").strip() or "if True"

@@ -650,6 +650,19 @@ export function newObjectPos(ctor: string): [number, number] {
   return SLOTS.find((s) => !placed.some((o) => Math.hypot(o.pos![0] - s[0], o.pos![1] - s[1]) < 1)) ?? [0, 0];
 }
 
+/**
+ * An object whose first statement (its intro or self.add) landed in a block's body is created there too, right
+ * before it: in a loop each run then makes its own, and its math can use the loop's counter.
+ */
+function createWhereIntroduced(d: SceneDoc, obj: SceneObject, step: string | undefined) {
+  const i = d.timeline.findIndex((s) => s.id === step);
+  if (i <= 0) return;
+  for (const c of compounds(d.timeline).values()) if (c.from < i && i < c.to) {
+    obj.after = d.timeline[i - 1].id;
+    return;
+  }
+}
+
 export function addObject(ctor: string, pos: [number, number] | null, targetName?: string, at?: At, initial?: Args): string {
   const entry = state.catalog?.mobjects.find((m) => m.name === ctor);
   const args: Record<string, string> = {};
@@ -667,8 +680,11 @@ export function addObject(ctor: string, pos: [number, number] | null, targetName
     if (intro) {
       const a = newAnim(intro, name);
       end = placeAt(d, [a], at) + animEstimate(a);
+      createWhereIntroduced(d, obj, findAnim(d, a.id)?.step.id);
     } else if (!NO_INTRO.has(ctor)) {
-      end = placeStepAt(d, { id: uid('s'), kind: 'add', targets: [name] }, at);
+      const add: Step = { id: uid('s'), kind: 'add', targets: [name] };
+      end = placeStepAt(d, add, at);
+      createWhereIntroduced(d, obj, add.id);
     }
   });
   setState({ selection: { kind: 'object', id: newId }, time: frameSnap(end) });
@@ -1092,12 +1108,18 @@ export function createLinked(spec: LinkedSpec, opts: { select?: boolean; time?: 
   let end: number | null = null;
   updateDoc((d) => {
     const name = uniqueName(d, spec.name ?? snake(spec.ctor.split('.').pop() || 'obj'));
-    d.objects.push({ id, name, ctor: spec.ctor, args: { ...spec.args }, pos: spec.pos ?? null, chain: '', link: spec.link });
+    const obj: SceneObject = { id, name, ctor: spec.ctor, args: { ...spec.args }, pos: spec.pos ?? null, chain: '', link: spec.link };
+    d.objects.push(obj);
     sortByDependencies(d);
     if (intro) {
       const a = newAnim(intro, name);
       end = placeAt(d, [a], at) + animEstimate(a);
-    } else if (spec.intro === undefined && !NO_INTRO.has(spec.ctor)) placeStepAt(d, { id: uid('s'), kind: 'add', targets: [name] }, at);
+      createWhereIntroduced(d, obj, findAnim(d, a.id)?.step.id);
+    } else if (spec.intro === undefined && !NO_INTRO.has(spec.ctor)) {
+      const add: Step = { id: uid('s'), kind: 'add', targets: [name] };
+      placeStepAt(d, add, at);
+      createWhereIntroduced(d, obj, add.id);
+    }
   });
   if (opts.select !== false) selectObjects([id]);
   if (end !== null) setState({ time: frameSnap(end) }); // like addObject: show the object once its intro has played

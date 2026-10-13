@@ -121,6 +121,23 @@ const CLAUSE = /^\s*(elif|else|except|finally)\b/;
 /** A block step that continues the open compound statement (elif …, else, except …, finally). */
 export const isClause = (s: Step) => s.kind === 'block' && CLAUSE.test(s.head ?? '');
 
+const FOR = /^\s*(?:async\s+)?for\s+([A-Za-z_]\w*)\s+in\b/;
+
+/** The counter a loop step sets: its Repeat's, or the name of a `for k in …` header. */
+export const loopVar = (s: Step): string | null => (s.kind !== 'block' ? null : s.repeat?.var?.trim() || FOR.exec(s.head ?? '')?.[1] || null);
+
+/** The counters of the loops around the point right after step `id` (none: the start of construct()). Its own,
+ * when it opens a loop: what is created right after it is in its body. */
+export function loopsAround(steps: Step[], id: string | undefined): string[] {
+  const stack: (string | null)[] = [];
+  for (const s of steps) {
+    if (s.kind === 'block' && !isClause(s)) stack.push(loopVar(s));
+    else if (s.kind === 'end') stack.pop();
+    if (s.id === id) return stack.filter((v): v is string => !!v);
+  }
+  return [];
+}
+
 /** For each block step opening a compound statement: its clauses and its end (undefined: not closed). */
 export function compounds(steps: Step[]): Map<string, { clauses: string[]; end?: string; from: number; to: number }> {
   const out = new Map<string, { clauses: string[]; end?: string; from: number; to: number }>();

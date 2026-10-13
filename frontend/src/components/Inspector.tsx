@@ -15,6 +15,7 @@ import { Tip, type TipContent } from './Tip';
 import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { DefinitionsPanel } from './Definitions';
+import { RepeatFields } from './Repeat';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
 import { addKey, CAMERA, CAMERA_NAME, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
@@ -717,18 +718,12 @@ function BlockSection({ step }: { step: Step }) {
         ? <p className="muted small">The end of the block: the steps after it run once the block is done.</p>
         : <p className="muted small">{isClause(step) ? 'This clause’s steps run when the code reaches it.' : 'The steps under it on the timeline, up to its end, are its body: they run each time it does.'}{' '}
           {runs !== undefined ? (runs === 0 ? 'Its body didn’t run.' : `Its body ran ${runs} time${runs === 1 ? '' : 's'}${b?.estimated ? ' (estimated)' : ''}.`) : ''}</p>}
-      {step.kind === 'block' && (
-        <>
-          <label className="param"><span className="pname"><Tip tip={CLIP_HELP.blockHead}>Header</Tip></span>
-            <Field className="mono" value={head} ariaLabel="Header" onChange={(v) => setStep(step.id, (s) => void (s.head = v.replace(/:\s*$/, '')), 'head')} />
-          </label>
-          {rep && (
-            <div className="fx-row"><Tip tip={CLIP_HELP.repeat}>Repeat</Tip>
-              <ScrubNumber value={+rep[2]} min={0} step={1} precision={0} suffix="×" onChange={(v) => setStep(step.id, (s) => void (s.head = `for ${rep[1]} in range(${Math.max(0, Math.round(v))})`), 'head')} />
-            </div>
-          )}
-        </>
+      {step.kind === 'block' && !isClause(step) && (/^\s*(for|while)\b/.test(head) || step.repeat) && (
+        <RepeatFields step={step}>
+          <BlockHeader step={step} head={head} rep={rep} />
+        </RepeatFields>
       )}
+      {step.kind === 'block' && !(!isClause(step) && (/^\s*(for|while)\b/.test(head) || step.repeat)) && <BlockHeader step={step} head={head} rep={rep} />}
       <div className="row">
         {step.id !== opener && <button className="ghost small" onClick={() => selectClips([opener])}>Select the block</button>}
         {!isClause(step) && canElse && shape?.end && <button className="ghost small" title="Add an else: steps that run when the block’s own don’t (or after a loop that wasn’t broken out of)" onClick={() => addClause('else')}>+ else</button>}
@@ -736,6 +731,22 @@ function BlockSection({ step }: { step: Step }) {
         <button className="ghost small" title="Take its steps out of the block: they run once, in place (other clauses go with their steps)" onClick={() => unwrapBlock(step.id)}>Unwrap</button>
       </div>
     </section>
+  );
+}
+
+/** The header of a block step as code, and its count when it is `for i in range(n)`. */
+function BlockHeader({ step, head, rep }: { step: Step; head: string; rep: RegExpMatchArray | null }) {
+  return (
+    <>
+      <label className="param"><span className="pname"><Tip tip={CLIP_HELP.blockHead}>Header</Tip></span>
+        <Field className="mono" value={head} ariaLabel="Header" onChange={(v) => setStep(step.id, (s) => void (s.head = v.replace(/:\s*$/, '')), 'head')} />
+      </label>
+      {rep && (
+        <div className="fx-row"><Tip tip={CLIP_HELP.repeat}>Repeat</Tip>
+          <ScrubNumber value={+rep[2]} min={0} step={1} precision={0} suffix="×" onChange={(v) => setStep(step.id, (s) => void (s.head = `for ${rep[1]} in range(${Math.max(0, Math.round(v))})`), 'head')} />
+        </div>
+      )}
+    </>
   );
 }
 

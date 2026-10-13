@@ -470,6 +470,7 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
     # clause before it); an empty body gets `pass`, a try left without except or finally gets `finally: pass`,
     # a block left open is closed at the end. A disabled block leaves its whole statement out.
     shapes = timeline.compounds(full)
+    loops = defs.loop_scope(doc)  # what a Repeat's math can use
     open_: list[dict] = []  # {"id", "end", "at": line of its header, "clause": (id, line) of the open clause, "body"}
     hidden: list[int] = []  # depth of a disabled block being skipped
 
@@ -498,7 +499,7 @@ def generate(doc: dict, preview: bool = False, latex: bool | None = None) -> Gen
         if step.get("gap") and not preview:
             emit("")
         _emit_comment(step, emit, B + 4 * depth, ref)
-        line = f"{(step.get('head') or '').strip() or 'if True'}:"
+        line = f"{defs.block_head(step, loops)}:"
         emit(line if preview else _with_eol(step, [line])[0], ref, B + 4 * depth)
 
     for i, step in enumerate(full):
@@ -636,13 +637,20 @@ def top_lines(doc: dict, plan: construct.Plan, preview: bool, latex: bool) -> li
         emit("")
         emit(comp.source.rstrip("\n"), ("header", "defs"))
     header = (doc.get("header") or "").rstrip()
+    gap = bool(comp.source)  # after the definitions' functions: two blank lines, as Python is written
     if header:
         emit("")
+        if gap:
+            emit("")
         emit(header, ("header", "header"))
+        gap = False
     for used, src in ((plan.uses_constraints, construct.CONSTRAINTS_SOURCE), (plan.uses_geometry, construct.GEOMETRY_SOURCE),
                       (plan.uses_terms, construct.TERMS_SOURCE)):
         if used:
             emit("")
+            if gap:
+                emit("")
+                gap = False
             emit(src.strip("\n"))
     emit("")
     emit("")
@@ -843,7 +851,7 @@ def statement(step: dict, doc: dict | None = None, plan: construct.Plan | None =
             return []
         return [(line, ref) for line in f"{target} {op} {value}".splitlines()]
     if kind == "block":
-        return [(f"{(step.get('head') or '').strip() or 'if True'}:", ref)]
+        return [(f"{defs.block_head(step, defs.loop_scope(doc) if doc else None)}:", ref)]
     if kind == "code":
         body = dedent_code(step.get("code") or "").rstrip()
         return [(line, ref) for line in body.splitlines()] if body.strip() else []

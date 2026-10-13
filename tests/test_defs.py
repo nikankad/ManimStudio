@@ -85,3 +85,61 @@ def test_graph_uses_a_definition_and_round_trips():
 def test_shown_as_math():
     r = M.analyze_function("y = if(x < 0, 0, x^2) + sum(k, 1, 3, sin(k x)/k)", None, (-3, 3))
     assert r["ok"] and r["normalized"] == "if(x < 0, 0, x ^ 2) + sum(k, 1, 3, sin(k * x) / k)"
+
+
+@pytest.mark.parametrize("r,head", [
+    ({"var": "k", "from": "1", "to": "6"}, "for k in range(1, 7)"),
+    ({"var": "k", "from": "1", "to": "len(ZEROS)"}, "for k in range(1, len(ZEROS) + 1)"),
+    ({"var": "k", "from": "2", "to": "period"}, "for k in range(2, int(2 * np.pi) + 1)".replace("2 * np.pi", "period")),
+    ({"var": "z", "each": "ZEROS"}, "for z in ZEROS"),
+])
+def test_repeat_headers(r, head):
+    assert defs.repeat_head(r, defs.scope([ZEROS, TAU])) == head
+
+
+@pytest.mark.parametrize("r,fragment", [
+    ({"var": "ZEROS", "from": "1", "to": "2"}, "definition"),
+    ({"var": "k", "each": "period"}, "isn't a list"),
+    ({"var": "k", "from": "1", "to": "q"}, "isn't defined"),
+    ({"var": "for", "from": "1", "to": "2"}, "can't be"),
+])
+def test_repeat_errors(r, fragment):
+    with pytest.raises(M.ExprError) as e:
+        defs.repeat_head(r, defs.scope([ZEROS, TAU]))
+    assert fragment in e.value.message
+
+
+def repeat_doc(after="b1"):
+    d = doc([obj("ox", "axes", "Axes", args={"x_range": "[-1, 2, 1]", "y_range": "[0, 30, 10]"}),
+             obj("od", "dot", "Dot", after=after, link={"kind": "coords", "axes": "ox", "x": "0.5", "y": "ZEROS[k]"})])
+    d["defs"] = [ZEROS]
+    d["timeline"] = [{"id": "s0", "kind": "add", "targets": ["axes"]},
+                     {"id": "b1", "kind": "block", "head": "for i in range(2)", "repeat": {"var": "k", "from": "1", "to": "len(ZEROS)"}},
+                     {"id": "p1", "kind": "play", "anims": [{"id": "a1", "cls": "GrowFromCenter", "target": "dot", "args": {}}], "args": {}},
+                     {"id": "e1", "kind": "end"}]
+    return d
+
+
+def test_repeat_counter_in_math_fields():
+    """Each run of the loop makes its own dot at its own zero (the updater keeps its run's k, not the last)."""
+    d = repeat_doc()
+    src = codegen.generate(d).source
+    assert "for k in range(1, len(ZEROS) + 1):" in src and "lambda m, k=k: m.move_to(axes.c2p(0.5, ZEROS[int(k) - 1]))" in src
+    from manim import tempconfig
+
+    ns = {}
+    with tempconfig({"dry_run": True, "disable_caching": True, "verbosity": "ERROR"}):
+        exec(compile(src, "scene", "exec"), ns)
+        scene = ns["MainScene"]()
+        scene.render()
+        ys = sorted(round(float(m.get_center()[1]), 3) for m in scene.mobjects if type(m).__name__ == "Dot")
+    assert len(ys) == 3 and len(set(ys)) == 3
+    back = importer.import_code(src, base=d).doc
+    assert back["timeline"][1]["repeat"] == d["timeline"][1]["repeat"]
+    assert codegen.generate(back).source == src
+
+
+def test_counter_outside_its_loop_is_explained():
+    d = repeat_doc(after=None)
+    r = runtime.run(d, 0, render=False)
+    assert any("counter of a Repeat" in x["message"] for x in r.diagnostics), r.diagnostics

@@ -129,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/prefs"): self.api_set_pref,
             ("POST", "/api/reveal"): self.api_reveal,
             ("POST", "/api/expr"): self.api_expr,
+            ("POST", "/api/repeat"): self.api_repeat,
             ("POST", "/api/defs"): self.api_defs,
             ("POST", "/api/check_equation"): self.api_check_equation,
             ("GET", "/api/constructions"): self.api_constructions,
@@ -402,6 +403,8 @@ class Handler(BaseHTTPRequestHandler):
         scene's definitions, which it can use by name."""
         found = body.get("defs") or []
         scope = defs.scope(found)
+        for v in body.get("vars") or []:  # the counters of the loops around it
+            scope.setdefault(v, ("value", "loop"))
         if body.get("mode") == "value":
             try:
                 py, params = mathexpr.compile_value(str(body.get("expr", "")), set(body.get("params") or []), scope)
@@ -422,6 +425,17 @@ class Handler(BaseHTTPRequestHandler):
         for did, (msg, hint) in comp.errors.items():
             out[did] = {"error": msg, "hint": hint}
         return {"defs": out}
+
+    def api_repeat(self, _q: dict, body: dict) -> dict:
+        """The for header of a Repeat (``{"var", "from", "to"}`` or ``{"var", "each"}``), or what is wrong with it.
+        ``vars``: the counters of the loops around it."""
+        sc = defs.scope(body.get("defs") or [])
+        for v in body.get("vars") or []:
+            sc.setdefault(v, ("value", "loop"))
+        try:
+            return {"head": defs.repeat_head(body.get("repeat") or {}, sc)}
+        except mathexpr.ExprError as e:
+            return {"error": e.message, "hint": e.hint}
 
     def api_check_equation(self, _q: dict, body: dict) -> dict:
         """Compile an equation's terms with manim's own MathTex and report glyphs per term."""

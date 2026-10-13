@@ -12,6 +12,7 @@ an accessibility scenario), SKIP_EXPORT=1 (leave out the scenario that renders a
 import glob
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -1710,7 +1711,65 @@ def definitions(b):
         ctx.close()
 
 
-SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
+def repeat_loops(b):
+    """A Repeat written in math (k from 1 to len(ZEROS)) around a point's intro: the point's y uses ZEROS[k]; made
+    outside the loop, the field says so and offers to create it in the loop; then each run makes its own point."""
+    code = ("from manim import *\n\n\nclass L(Scene):\n    def construct(self):\n"
+            "        axes = Axes(x_range=[-1, 2, 1], y_range=[0, 30, 10])\n        self.add(axes)\n        self.wait()\n")
+    project = os.path.join(tempfile.mkdtemp(prefix="manim-studio-ui-"), "loops.py")
+    open(project, "w").write(code)
+    with editor(project) as (url, home):
+        ctx, pg = page_in(b, url, 1500, 900)
+        pg.wait_for_selector(".tl-lanes .clip", timeout=60000)
+
+        def source():
+            pg.wait_for_timeout(400)
+            pg.locator(".monitor-title .tab-btn", has_text="Code").first.click()
+            pg.wait_for_timeout(700)
+            text = pg.locator(".code-monitor textarea").first.input_value()
+            pg.get_by_role("button", name="Program").click()
+            pg.wait_for_timeout(200)
+            return text
+
+        def pick(name):  # select an object from Scene › Drawing order
+            if not pg.locator(".outline").count():
+                pg.get_by_role("button", name="Scene", exact=True).first.click()
+                pg.get_by_role("button", name="Drawing order").click()
+            pg.locator(".outline .outline-row", has_text=name).first.click()
+            pg.wait_for_timeout(300)
+
+        panel = pg.locator(".defs-panel")
+        panel.get_by_role("button", name="+ list").click()
+        box = panel.locator(".def-row").last.locator("input.def-name").first
+        box.fill("ZEROS")
+        box.press("Enter")
+        panel.get_by_label("Items of ZEROS").fill("14.134725, 21.02204, 25.010858")
+
+        pick("axes")
+        pg.locator(".inspector .chip", has_text="Point at coordinates").click()
+        pg.wait_for_timeout(500)
+        pg.locator(".tl-lanes .clip.anim", has_text="P").first.click()
+        pg.get_by_role("button", name="+ Repeat").click()
+        pg.wait_for_timeout(300)
+        insp = pg.locator(".inspector")
+        insp.get_by_label("Loop kind").select_option("range")
+        insp.get_by_label("To", exact=True).fill("len(ZEROS)")
+        insp.get_by_label("Counter").fill("k")
+        insp.get_by_text("for k in range(1, len(ZEROS) + 1)").first.wait_for(timeout=10000)
+
+        pick("P")
+        y = insp.locator(".fx-row.wide-row", has=pg.locator("span", has_text=re.compile("^y$"))).locator("input")
+        y.fill("ZEROS[k]")
+        insp.get_by_role("button", name="Create it in the loop").click()
+        pg.wait_for_timeout(300)
+        src = source()
+        assert "        for k in range(1, len(ZEROS) + 1):\n            P = Dot(" in src, src
+        assert "lambda m, k=k: m.move_to(axes.c2p(1, ZEROS[int(k) - 1]))" in src, src
+        assert not pg.errors, pg.errors
+        ctx.close()
+
+
+SCENARIOS = [recovery, leaving, shortcuts, system_keys, timeline_keys, timeline_edit, clip_roles, track_heights, add_tracks, timeline_fixes, editing_fixes, drawing_order, retiming, keyframe_controls, relative_keys, code_highlight, computed_steps, blocks, updaters, record_in_loop, definitions, repeat_loops, markers, work_area, preview_freshness, try_this, broken_files, early_settings, failing_backend, dropped_files, preferences, toolbar, export, accessibility]
 
 
 def main() -> int:

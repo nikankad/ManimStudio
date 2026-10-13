@@ -11,7 +11,8 @@ import {
   timecode, toast, uncoupleObjects, updateDoc, useStore,
 } from '../store';
 import { allTemplates, detachInstance, syncInstances, updateTemplateFromInstance } from '../templates';
-import type { Link, Pt, SceneObject } from '../types';
+import { compounds, loopsAround, loopVar } from '../timeline';
+import type { Link, Pt, SceneDoc, SceneObject } from '../types';
 import { Field, ScrubNumber } from './ParamField';
 
 const GROUP_ORDER = ['Couple', 'Connect', 'Measure', 'Annotate', 'Terms'] as const;
@@ -82,24 +83,42 @@ export function ActionsSection({ ids, terms }: { ids: string[]; terms?: string[]
   );
 }
 
+/** The loop (its block step's id) whose counter is `v`: the one around the first step using `name`, else the first. */
+function loopFor(doc: SceneDoc, v: string, name: string): string | null {
+  const shapes = compounds(doc.timeline);
+  const blocks = doc.timeline.map((s, i) => [s, i] as const).filter(([s]) => loopVar(s) === v && shapes.has(s.id));
+  if (!blocks.length) return null;
+  const uses = new RegExp(`\\b${name}\\b`);
+  const first = doc.timeline.findIndex((s) => JSON.stringify([s.targets, s.anims, s.target]).match(uses));
+  const around = blocks.find(([s]) => { const c = shapes.get(s.id)!; return first > c.from && first < c.to; });
+  return (around ?? blocks[0])[0].id;
+}
+
 /** An editable math expression over parameters, checked by the backend. */
-export function ExprField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+export function ExprField({ value, onChange, placeholder, vars = [], obj }: { value: string; onChange: (v: string) => void; placeholder?: string; vars?: string[]; obj?: SceneObject }) {
   const doc = useStore((s) => s.doc);
   const [check, setCheck] = useState<{ ok: boolean; error?: string; hint?: string; params?: string[] } | null>(null);
   const names = params(doc).map((p) => p.name);
   useEffect(() => {
     if (!value.trim() || literal(value) !== null) return setCheck(null);
-    const t = setTimeout(() => api.checkValue(value, names, getState().doc.defs).then(setCheck).catch(() => setCheck(null)), 250);
+    const t = setTimeout(() => api.checkValue(value, names, getState().doc.defs, vars).then(setCheck).catch(() => setCheck(null)), 250);
     return () => clearTimeout(t);
-  }, [value, names.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
-  const missing = check && !check.ok && check.error?.startsWith('Undefined parameter') ? check.error.match(/'([^']+)'/)?.[1] : undefined;
+  }, [value, names.join(','), vars.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  let missing = check && !check.ok && check.error?.startsWith('Undefined parameter') ? check.error.match(/'([^']+)'/)?.[1] : undefined;
+  // a loop's counter, used by an object created outside the loop: offer to create it in the loop
+  const loop = missing && obj ? loopFor(doc, missing, obj.name) : null;
+  if (loop) missing = undefined;
   return (
     <div className="expr-field">
       <Field value={value} onChange={onChange} placeholder={placeholder} className={`mono ${check && !check.ok ? 'bad' : ''}`} />
       {check && !check.ok && (
         <div className="expr-err">
           {check.error}{check.hint ? ` ${check.hint}` : ''}
-          {missing && <button className="ghost small" onClick={() => updateDoc((d) => void createParam(d, missing, 1, { min: -5, max: 5, step: 0.1 }))}>Create parameter {missing}</button>}
+          {missing && <button className="ghost small" onClick={() => updateDoc((d) => void createParam(d, missing!, 1, { min: -5, max: 5, step: 0.1 }))}>Create parameter {missing}</button>}
+          {loop && obj && <button className="ghost small" title="Each run of the loop then makes its own, using its counter" onClick={() => updateDoc((d) => {
+            const o = d.objects.find((x) => x.id === obj.id);
+            if (o) o.after = loop;
+          })}>Create it in the loop</button>}
         </div>
       )}
     </div>
@@ -320,7 +339,7 @@ export function RelationshipSection({ obj }: { obj: SceneObject }) {
       {exprs.map((f) => (
         <div key={f} className="fx-row wide-row">
           <span>{EXPR_LABELS[f] ?? f}</span>
-          <ExprField value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : link.kind === 'parallel' && f === 'length' ? 'same as the line' : link.kind === 'perpendicular' && f === 'length' ? '4' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
+          <ExprField vars={loopsAround(doc.timeline, obj.after)} obj={obj} value={String(l[f] ?? '')} placeholder={f === 'radius' ? 'auto' : link.kind === 'parallel' && f === 'length' ? 'same as the line' : link.kind === 'perpendicular' && f === 'length' ? '4' : ''} onChange={(v) => set((x) => { if (v.trim()) x[f] = v; else delete x[f]; }, f)} />
         </div>
       ))}
       {link.kind === 'graph' && <GraphFields obj={obj} link={link} />}

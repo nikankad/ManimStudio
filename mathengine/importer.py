@@ -562,6 +562,10 @@ class _Importer:
         prev_end = 0
         for k, (head, body, line) in enumerate(parts):
             step = {"id": ids[0][k] if ids else _id("s"), "kind": "block", "head": head}
+            if ids:  # a Repeat whose header is still the one it writes stays a Repeat
+                was = next((s for s in self.base_doc.get("timeline") or [] if s["id"] == step["id"]), None)
+                if was and was.get("repeat") and defs.block_head(was, defs.loop_scope(self.base_doc)) == head.strip():
+                    step["repeat"] = copy.deepcopy(was["repeat"])
             if k == 0:
                 self.add_step(step, comment, self.header_comment(line))
             else:

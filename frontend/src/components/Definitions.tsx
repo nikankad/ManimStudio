@@ -63,6 +63,13 @@ export function renameDef(id: string, newName: string) {
     }
     for (const o of d.objects) renameRefs(o, names);
     renameInTimeline(d, names);
+    for (const s of d.timeline) {
+      const r = s.repeat;
+      if (!r) continue;
+      if (r.from) r.from = rep(r.from);
+      if (r.to) r.to = rep(r.to);
+      if (r.each) r.each = rep(r.each);
+    }
   });
 }
 
