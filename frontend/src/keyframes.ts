@@ -12,7 +12,7 @@ import {
 } from './timeline';
 import type { Anim, Args, RunResult, SceneDoc, SceneObject, Step } from './types';
 
-export type Channel = 'position' | 'scale' | 'rotation' | 'opacity' | 'color' | 'value';
+export type Channel = 'position' | 'scale' | 'rotation' | 'opacity' | 'color' | 'stroke' | 'value';
 export type KeyValue = number | [number, number] | string; // a point, a number, or colour source (`RED`, `"#ff0000"`)
 
 export const CHANNELS: { id: Channel; label: string; unit?: string }[] = [
@@ -21,8 +21,16 @@ export const CHANNELS: { id: Channel; label: string; unit?: string }[] = [
   { id: 'rotation', label: 'Rotation', unit: '°' },
   { id: 'opacity', label: 'Opacity' },
   { id: 'color', label: 'Color' },
+  { id: 'stroke', label: 'Stroke' },
   { id: 'value', label: 'Value' },
 ];
+
+/** The camera of a MovingCameraScene (`self.camera.frame`): keyframed like an object (its position, and its zoom as
+ * a scale: 2 shows twice as much). It isn't an object of the document, so it starts at the centre at scale 1. */
+export const CAMERA_NAME = 'self.camera.frame';
+export const CAMERA: SceneObject = { id: 'camera', name: CAMERA_NAME, ctor: 'Camera', args: {}, pos: [0, 0], chain: '', scale: 1, rotation: 0 };
+const objectNamed = (doc: SceneDoc, name: string) => doc.objects.find((o) => o.name === name) ?? (name === CAMERA_NAME ? CAMERA : undefined);
+const frameWidth = (doc: SceneDoc) => (8 * (doc.config?.pixel_width || 1920)) / (doc.config?.pixel_height || 1080);
 
 /** Chain methods that change a channel. abs: sets it; rel: changes it by an amount; other: changes it some other way (shown, not editable). */
 const METHODS: Record<string, { channel: Channel; kind: 'abs' | 'rel' | 'x' | 'y' | 'other' }> = {
@@ -93,6 +101,10 @@ export function baseValue(obj: SceneObject, channel: Channel): KeyValue | undefi
   if (channel === 'scale') return obj.scale ?? 1;
   if (channel === 'rotation') return obj.rotation ?? 0;
   if (channel === 'value') return evalNumber(obj.args['*'] ?? obj.args.value ?? '0') ?? undefined;
+  if (channel === 'stroke') {
+    const set = chainCalls(obj.chain ?? '')?.filter((c) => c.name === 'set_stroke' && widthArg(c)).pop();
+    return evalNumber(set ? widthArg(set)!.src : obj.args.stroke_width ?? '') ?? undefined;
+  }
   const call = chainCalls(obj.chain ?? '')?.filter((c) => METHODS[c.name]?.channel === channel && METHODS[c.name].kind === 'abs').pop();
   if (!call) return channel === 'opacity' ? undefined : obj.args.color?.trim() || undefined;
   return channel === 'opacity' ? evalNumber(splitTop(call.args)[0] ?? '') ?? undefined : colorArg(call)?.src;
@@ -103,6 +115,18 @@ function colorArg(call: ChainCall): { src: string; start: number; end: number } 
   const parts = splitWithSpans(call.args);
   const kw = parts.find((p) => /^color\s*=/.test(p.text));
   const pos = parts.find((p) => !/^[A-Za-z_]\w*\s*=(?!=)/.test(p.text));
+  const hit = kw ?? pos;
+  if (!hit) return undefined;
+  const off = kw ? hit.text.indexOf('=') + 1 : 0;
+  const lead = hit.text.slice(off).length - hit.text.slice(off).trimStart().length;
+  return { src: hit.text.slice(off).trim(), start: hit.start + off + lead, end: hit.start + hit.text.trimEnd().length };
+}
+
+/** set_stroke's width: by keyword, else its second argument by position (set_stroke(color, width, opacity)). */
+function widthArg(call: ChainCall): { src: string; start: number; end: number } | undefined {
+  const parts = splitWithSpans(call.args);
+  const kw = parts.find((p) => /^width\s*=/.test(p.text));
+  const pos = parts.filter((p) => !/^[A-Za-z_]\w*\s*=(?!=)/.test(p.text))[1];
   const hit = kw ?? pos;
   if (!hit) return undefined;
   const off = kw ? hit.text.indexOf('=') + 1 : 0;
@@ -153,7 +177,7 @@ type Measured = Map<string, MeasuredClip>;
  * says them (a literal), else from manim's measurement of the clip (when it is measured).
  */
 export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null, name: string): Key[] {
-  const obj = doc.objects.find((o) => o.name === name);
+  const obj = objectNamed(doc, name);
   const ms: Measured = new Map((measured?.anims ?? []).map((a) => [a.id, a as { from?: Record<string, unknown>; to?: Record<string, unknown> }]));
   const keys: Key[] = [];
   // the value each channel has after the keyframes so far (undefined: not known from the code)
@@ -168,6 +192,8 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
       if (ch === 'opacity' && typeof to.opacity === 'number') return to.opacity;
       if (ch === 'value' && typeof to.value === 'number') return to.value;
       if (ch === 'color' && typeof to.color === 'string') return to.color;
+      if (ch === 'stroke' && typeof to.stroke === 'number') return to.stroke;
+      if (ch === 'scale' && obj === CAMERA && typeof to.width === 'number') return to.width / frameWidth(doc);
       return undefined;
     };
     const touched = new Set<Channel>(); // channels an earlier call of this chain set: measured `from` is before those
@@ -197,6 +223,14 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
     const calls = chainCalls(a.chain ?? '');
     if (!calls) return;
     calls.forEach((c, i) => {
+      if (c.name === 'set_stroke') {
+        const w = widthArg(c);
+        if (w) {
+          const v = evalNumber(w.src);
+          push({ channel: 'stroke', call: i, method: c.name, value: v ?? after('stroke'), editable: v !== null, why: v === null ? `The value is an expression (${w.src.slice(0, 40)})` : undefined }, c.args);
+        }
+        if (!colorArg(c)) return; // set_stroke(width=4): no colour
+      }
       const info = METHODS[c.name];
       if (!info) return;
       const ch = info.channel;
@@ -285,7 +319,8 @@ export function keyframes(doc: SceneDoc, lay: Layout, measured: RunResult | null
 
 /** Which channels an object has: a ValueTracker has a value; anything else is drawn. */
 export function channelsOf(obj: SceneObject): Channel[] {
-  return obj.ctor === 'ValueTracker' || obj.ctor === 'ComplexValueTracker' ? ['value'] : ['position', 'scale', 'rotation', 'opacity', 'color'];
+  if (obj === CAMERA) return ['position', 'scale'];
+  return obj.ctor === 'ValueTracker' || obj.ctor === 'ComplexValueTracker' ? ['value'] : ['position', 'scale', 'rotation', 'opacity', 'color', 'stroke'];
 }
 
 /** The channel's value just before time `t` (its last keyframe at or before `t`, else as created). */
@@ -365,7 +400,7 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
   if (same(key.value, value)) return null;
   const a = clipOf(d, key.anim);
   if (!a) return 'Its clip is gone';
-  const obj = d.objects.find((o) => o.name === a.target);
+  const obj = objectNamed(d, a.target ?? '');
   const keys = obj ? keyframes(d, lay, measured, obj.name) : [];
   const i = keys.findIndex((k) => k.anim === key.anim && k.call === key.call && k.channel === key.channel);
   const prev = i > 0 ? keys.slice(0, i).filter((k) => k.channel === key.channel).pop() : undefined;
@@ -396,6 +431,10 @@ export function setKeyValue(d: SceneDoc, lay: Layout, measured: RunResult | null
   if (key.channel === 'color') {
     const col = colorArg(call);
     return col && typeof value === 'string' ? at(col, value.trim()) : 'Not a colour';
+  }
+  if (key.channel === 'stroke') {
+    const w = widthArg(call);
+    return w && typeof value === 'number' ? at(w, num(Math.max(0, value))) : 'Not a width';
   }
   if (!arg) return 'Its value is missing';
   const b = before();
@@ -509,6 +548,7 @@ function keyClip(obj: SceneObject, channel: Channel, value: KeyValue, before: Ke
     return { ...newAnim('Rotate', obj.name), args: { angle: angleSrc(value - before, '') } };
   } else if (channel === 'opacity' && typeof value === 'number') a.chain = `.set_opacity(${num(value)})`;
   else if (channel === 'color' && typeof value === 'string') a.chain = `.set_color(${value.trim()})`;
+  else if (channel === 'stroke' && typeof value === 'number') a.chain = `.set_stroke(width=${num(Math.max(0, value))})`;
   else if (channel === 'value' && typeof value === 'number') a.chain = `.set_value(${num(value)})`;
   else return 'Not a value for this';
   return a;
@@ -520,7 +560,7 @@ function keyClip(obj: SceneObject, channel: Channel, value: KeyValue, before: Ke
  * a pause. Returns the new clip's id, or why it can't.
  */
 export function addKey(d: SceneDoc, measured: RunResult | null, objName: string, channel: Channel, t: number, value: KeyValue, length = 1): { id: string } | { error: string } {
-  const obj = d.objects.find((o) => o.name === objName);
+  const obj = objectNamed(d, objName);
   if (!obj) return { error: 'No such object' };
   if (t <= EPS) return { error: 'A keyframe at the very start has nothing to animate from: set the value as created instead, or move the playhead later' };
   const lay = layout(d, measured);
@@ -568,6 +608,12 @@ export function setBaseValue(obj: SceneObject, channel: Channel, value: KeyValue
     // where the code gives it: ValueTracker(3) or ValueTracker(value=3) (both would pass it twice)
     const k = obj.args['*'] === undefined && obj.args.value !== undefined ? 'value' : '*';
     obj.args = { ...obj.args, [k]: num(value) };
+  }
+  else if (channel === 'stroke' && typeof value === 'number') {
+    const call = chainCalls(obj.chain ?? '')?.filter((c) => c.name === 'set_stroke' && widthArg(c)).pop();
+    const w = call && widthArg(call);
+    if (call && w) spliceChain(obj, call.argStart + w.start, call.argStart + w.end, num(Math.max(0, value)));
+    else obj.args = { ...obj.args, stroke_width: num(Math.max(0, value)) };
   }
   else if (channel === 'opacity' || channel === 'color') {
     const method = channel === 'opacity' ? 'set_opacity' : 'set_color';

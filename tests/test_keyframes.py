@@ -285,3 +285,66 @@ class K(Scene):
     assert edited["keys"][1]["value"] == [0, 1]  # after move_to(ORIGIN), not from where c started
     assert "c.animate.move_to(ORIGIN).shift(UP * 2)" in roundtrip(edited["doc"])
     assert "t = ValueTracker(value=5)" in roundtrip(base["doc"])  # not ValueTracker(5, value=3)
+
+
+STROKE = '''from manim import *
+
+
+class W(Scene):
+    def construct(self):
+        c = Circle(stroke_width=2)
+        self.play(Create(c))
+        self.play(c.animate.set_stroke(RED, 6))
+        self.play(c.animate.set_stroke(width=10))
+        self.wait()
+'''
+
+
+@needs_node
+def test_stroke_width_is_a_keyframe_channel():
+    doc = import_code(STROKE).doc
+    measured = measure(doc)
+    width, colour, base, added = edit(doc, measured,
+                                      {"op": "set", "name": "c", "channel": "stroke", "index": 0, "value": 8},
+                                      {"op": "set", "name": "c", "channel": "color", "index": 0, "value": "BLUE"},
+                                      {"op": "base", "name": "c", "channel": "stroke", "value": 3},
+                                      {"op": "add", "name": "c", "channel": "stroke", "t": 5.0, "value": 1})
+    for r in (width, colour, base, added):
+        assert r["error"] is None, r["error"]
+    assert [(k["method"], k["value"], k["editable"]) for k in width["keys"]] == [("set_stroke", 6, True), ("set_stroke", 10, True)]
+    assert "c.animate.set_stroke(RED, 8)" in roundtrip(width["doc"])  # in its style: by position
+    assert "c.animate.set_stroke(BLUE, 6)" in roundtrip(colour["doc"])
+    assert "Circle(stroke_width=3)" in roundtrip(base["doc"])
+    assert "c.animate.set_stroke(width=1)" in roundtrip(added["doc"])
+    play = [s for s in doc["timeline"] if s["kind"] == "play"][2]
+    assert anim_state(measured, play["anims"][0]["id"])["stroke"] == 10
+
+
+CAMERA = '''from manim import *
+
+
+class Cam(MovingCameraScene):
+    def construct(self):
+        d = Dot()
+        self.add(d)
+        self.play(self.camera.frame.animate.move_to(RIGHT * 2))
+        self.play(self.camera.frame.animate.scale(0.5))
+        self.wait()
+'''
+
+
+@needs_node
+def test_the_camera_has_keyframes():
+    doc = import_code(CAMERA).doc
+    measured = measure(doc)
+    pos, zoom, added = edit(doc, measured,
+                            {"op": "set", "name": "self.camera.frame", "channel": "position", "index": 0, "value": [1, 1]},
+                            {"op": "set", "name": "self.camera.frame", "channel": "scale", "index": 0, "value": 2},
+                            {"op": "add", "name": "self.camera.frame", "channel": "scale", "t": 4.0, "value": 1})
+    for r in (pos, zoom, added):
+        assert r["error"] is None, r["error"]
+    assert [(k["channel"], k["value"]) for k in pos["keys"]] == [("position", [2, 0])]
+    assert [(k["channel"], k["value"]) for k in zoom["keys"]] == [("scale", 0.5)]
+    assert "self.camera.frame.animate.move_to(RIGHT + UP)" in roundtrip(pos["doc"])
+    assert "self.camera.frame.animate.scale(2)" in roundtrip(zoom["doc"])
+    assert "self.camera.frame.animate.scale(2)" in roundtrip(added["doc"])  # from 0.5 back to 1

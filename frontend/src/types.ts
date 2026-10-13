@@ -271,6 +271,7 @@ export interface ObjState {
   height?: number;
   opacity?: number;
   color?: string; // #RRGGBB
+  stroke?: number; // stroke width
   value?: number;
 }
 

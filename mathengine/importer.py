@@ -26,8 +26,10 @@ import ast
 import copy
 import functools
 import inspect
+import io
 import re
 import textwrap
+import tokenize
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -212,6 +214,7 @@ class _Importer:
         self.base_doc = base
         self.scene_cls: type | None = None
         self.scene_methods: list[str] = []
+        self.own_methods: list[str] = []  # methods the scene class defines itself (show_points, setup_axes…)
         self.blocks, self.base_compounds = _base_blocks(base) if base else ({}, [])
         self.reused_steps: set[str] = set()
         self.gap = False  # a blank line before the statement being read
@@ -421,6 +424,15 @@ class _Importer:
         _keep_positional(step, given, values)
         return step
 
+    def own_call(self, call: ast.Call) -> dict | None:
+        """``self.show_points(dots)``: a method the scene class defines itself, its arguments as written."""
+        kw = self.keywords(call)
+        if kw is None:
+            return None
+        values = [self.s.seg(a) for a in call.args]
+        step = {"id": _id("s"), "kind": "call", "method": call.func.attr, "args": {**({"*": ", ".join(values)} if values else {}), **kw}}  # type: ignore[union-attr]
+        return step
+
     def apply(self, stmt: ast.stmt) -> dict | None:
         """``obj.next_to(u, UP)``, ``group[0].set_color(RED)``, ``self.camera.frame.save_state()``,
         ``VGroup(a, b).arrange()``, ``Text.set_default(color=BLACK)``: methods called on something (an object, a part
@@ -464,23 +476,48 @@ class _Importer:
                 return k
         return before.lineno
 
+    def header(self, line: int, made: str) -> str:
+        """A compound statement's header as written (``if (\n a\n and b\n)``): from its keyword on ``line`` to the
+        colon that ends it, without the colon. ``made``: the header built from its parts, if it can't be read."""
+        first = self.s.lines[line - 1]
+        col = len(first) - len(first.lstrip())
+        text = "\n".join([first[col:], *self.s.lines[line:]])
+        depth = 0
+        try:
+            for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+                if tok.type == tokenize.OP and tok.string in "([{":
+                    depth += 1
+                elif tok.type == tokenize.OP and tok.string in ")]}":
+                    depth -= 1
+                elif tok.type == tokenize.OP and tok.string == ":" and depth == 0:
+                    rows = text.split("\n")[:tok.start[0]]
+                    rows[-1] = rows[-1][:tok.start[1]]
+                    head = "\n".join(rows).rstrip()
+                    if "\n" in head:  # continuation lines keep their indentation relative to each other
+                        top, rest = head.split("\n", 1)
+                        head = top + "\n" + textwrap.dedent(rest)
+                    return head
+        except (tokenize.TokenError, IndentationError, SyntaxError):
+            pass
+        return made
+
     def compound(self, stmt: ast.stmt) -> list[tuple[str, list[ast.stmt], int]] | None:
         """The clauses of a compound statement: (header without its colon, body, header line). None: not one the
         timeline shows as a block (function and class definitions, match, async…)."""
         seg = self.s.seg
         if isinstance(stmt, (ast.For, ast.While)):
             head = f"for {seg(stmt.target)} in {seg(stmt.iter)}" if isinstance(stmt, ast.For) else f"while {seg(stmt.test)}"
-            out = [(head, stmt.body, stmt.lineno)]
+            out = [(self.header(stmt.lineno, head), stmt.body, stmt.lineno)]
             if stmt.orelse:
                 out.append(("else", stmt.orelse, self.clause_line(stmt.body[-1], stmt.orelse[0], "else")))
             return out
         if isinstance(stmt, ast.If):
-            out = [(f"if {seg(stmt.test)}", stmt.body, stmt.lineno)]
+            out = [(self.header(stmt.lineno, f"if {seg(stmt.test)}"), stmt.body, stmt.lineno)]
             node = stmt
             while node.orelse:
                 o = node.orelse
                 if len(o) == 1 and isinstance(o[0], ast.If) and self.s.lines[o[0].lineno - 1][o[0].col_offset:].startswith("elif"):
-                    out.append((f"elif {seg(o[0].test)}", o[0].body, o[0].lineno))
+                    out.append((self.header(o[0].lineno, f"elif {seg(o[0].test)}"), o[0].body, o[0].lineno))
                     node = o[0]
                 else:
                     out.append(("else", o, self.clause_line(node.body[-1], o[0], "else")))
@@ -488,13 +525,13 @@ class _Importer:
             return out
         if isinstance(stmt, ast.With):
             items = ", ".join(seg(i.context_expr) + (f" as {seg(i.optional_vars)}" if i.optional_vars else "") for i in stmt.items)
-            return [(f"with {items}", stmt.body, stmt.lineno)]
+            return [(self.header(stmt.lineno, f"with {items}"), stmt.body, stmt.lineno)]
         if isinstance(stmt, ast.Try):
             out = [("try", stmt.body, stmt.lineno)]
             last = stmt.body[-1]
             for h in stmt.handlers:
                 head = "except" + (f" {seg(h.type)}" if h.type else "") + (f" as {h.name}" if h.name else "")
-                out.append((head, h.body, h.lineno))
+                out.append((self.header(h.lineno, head), h.body, h.lineno))
                 last = h.body[-1]
             if stmt.orelse:
                 out.append(("else", stmt.orelse, self.clause_line(last, stmt.orelse[0], "else")))
@@ -552,6 +589,8 @@ class _Importer:
             return self.add_remove(call, call.func.attr)  # type: ignore[union-attr]
         if (call := _self_call(stmt, *self.scene_methods)) is not None:
             return self.scene_call(call)
+        if (call := _self_call(stmt, *self.own_methods)) is not None:
+            return self.own_call(call)
         return self.assignment(stmt)
 
     def object_def(self, stmt: ast.stmt) -> tuple[dict, type | None] | None:
@@ -869,18 +908,28 @@ def _base_blocks(base: dict) -> tuple[dict[str, list[tuple[str, dict, list[str]]
     compounds: list[tuple[str, str, list[str], str]] = []
 
     def visit(body: list[ast.stmt]) -> None:
+        # in code order (statements written the same are matched in order), the bodies of blocks where they are
         groups: list[tuple[tuple[str, str] | None, list[str]]] = []
+
+        def flush() -> None:
+            for ref, texts in groups:
+                elem = objects.get(ref[1]) if ref and ref[0] == "object" else steps.get(ref[1]) if ref and ref[0] == "step" else None
+                if ref is not None and elem is not None:
+                    out.setdefault(texts[0], []).append(("object" if ref[0] == "object" else "step", elem, texts))
+            groups.clear()
+
         for stmt in body:
             ref = gen.linemap.get(stmt.lineno)
             if isinstance(stmt, _COMPOUND):
+                flush()
                 if ref and ref[0] == "step" and ref[1] in shapes and shapes[ref[1]][1]:
                     clause_ids, end = shapes[ref[1]]
                     compounds.append((_shell(stmt), ref[1], clause_ids, end))  # type: ignore[arg-type]
-                for f in ("body", "orelse", "finalbody"):
-                    visit(getattr(stmt, f, None) or [])
+                visit(stmt.body)
                 for h in getattr(stmt, "handlers", None) or []:
                     visit(h.body)
-                groups.append((None, []))
+                for f in ("orelse", "finalbody"):
+                    visit(getattr(stmt, f, None) or [])
                 continue
             if ref and ref[0] == "anim":
                 ref = ("step", step_of.get(ref[1], ""))
@@ -888,13 +937,7 @@ def _base_blocks(base: dict) -> tuple[dict[str, list[tuple[str, dict, list[str]]
                 groups[-1][1].append(ast.unparse(stmt))
             else:
                 groups.append((ref, [ast.unparse(stmt)]))
-        for ref, texts in groups:
-            if ref is None:
-                continue
-            elem = objects.get(ref[1]) if ref[0] == "object" else steps.get(ref[1]) if ref[0] == "step" else None
-            if elem is None:
-                continue
-            out.setdefault(texts[0], []).append(("object" if ref[0] == "object" else "step", elem, texts))
+        flush()
 
     visit(fn.body)
     return out, compounds
@@ -1036,6 +1079,7 @@ def import_code(code: str, scene: str | None = None, base: dict | None = None) -
     if imp.scene_cls is not None:
         own = {n.name for n in node.body if isinstance(n, ast.FunctionDef)}  # the class's own methods aren't the base's
         imp.scene_methods = [m for m in catalog.scene_methods(imp.scene_cls) if m not in own and m not in ("play", "wait", "add", "remove")]
+    imp.own_methods = [n.name for n in node.body if isinstance(n, ast.FunctionDef) and n.name not in ("construct", "play", "wait", "add", "remove")]
     body = list(construct_fn.body)
     if base:  # the helper object codegen makes for constructions
         plan = construct.plan(base)

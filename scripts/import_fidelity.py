@@ -465,7 +465,7 @@ def report(results: list[dict], sources: dict) -> str:
                 if not k["editable"]:
                     why[re.sub(r"\(.*\)", "(…)", k.get("why") or "?")] += 1
     lines += ["## Keyframes (all imported scenes)", "", "| Channel | Keyframes | Value set directly in Effect Controls |", "|---|---|---|"]
-    for ch in ["position", "scale", "rotation", "opacity", "color", "value"]:
+    for ch in ["position", "scale", "rotation", "opacity", "color", "stroke", "value"]:
         lines.append(f"| {ch} | {per[ch]} | {pct(editable[ch], per[ch])} ({editable[ch]}) |")
     lines += ["", "Every keyframe can be edited in Effect Controls; the others are edited by their method's arguments, as code "
               "(relative ones can also be pinned to a point), because:", ""] + [f"- {n}× {w}" for w, n in why.most_common(8)] + [""]

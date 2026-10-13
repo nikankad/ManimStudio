@@ -644,3 +644,26 @@ def test_editing_a_block_keeps_the_code_valid():
     body = out[out.index("def construct"):]
     assert "else" not in body and "for j in range(2):\n            if j:\n                pass\n" in body, body
     assert runtime.run(doc, render=False).error is None
+
+
+def test_a_call_to_the_scenes_own_method_is_a_step():
+    src = '''from manim import *
+
+
+class S(Scene):
+    def flash(self, m, color=YELLOW):
+        self.play(Indicate(m, color=color))
+
+    def construct(self):
+        c = Circle()
+        self.add(c)
+        self.flash(c, color=RED)
+        self.flash(c)
+'''
+    imp = import_code(src)
+    calls = [(s["method"], s["args"]) for s in imp.doc["timeline"] if s["kind"] == "call"]
+    assert calls == [("flash", {"*": "c", "color": "RED"}), ("flash", {"*": "c"})]
+    out = codegen.generate(imp.doc, latex=True).source
+    assert out == src
+    r = runtime.run(imp.doc, render=False)
+    assert r.error is None and r.duration == 2  # each call is measured: it plays an animation

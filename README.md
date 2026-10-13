@@ -118,7 +118,7 @@ manim-studio import scene.py -s MyScene -o scene.manimstudio   # the same, writt
     There and back), and **Keyframes** lists where the object's animations start and end across the scene: ◀ ▶
     move the playhead from one to the next, and a diamond selects its animation.
   - **Keyframes of** *object* (in Effect Controls and in an object's Properties) has a row per property at the
-    playhead: Position, Scale, Rotation, Opacity, Color (a `ValueTracker`: its value). A keyframe is the end of a
+    playhead: Position, Scale, Rotation, Opacity, Color, Stroke width (a `ValueTracker`: its value; the camera of a `MovingCameraScene`: its position and zoom, in the clips that move `self.camera.frame`). A keyframe is the end of a
     clip that changes the property, so every keyframe is plain manim code:
     - Changing a keyframe's value rewrites only that method's argument, the way it was written:
       `c.animate.shift(RIGHT * 2)` becomes `shift(RIGHT * 3)`, `Rotate(c, PI / 2)` stays in `PI`, and an unchanged

@@ -453,6 +453,7 @@ def _state(mob: Any) -> dict | None:
                      "height": round(float(mob.height), 4)}
         if isinstance(mob, m.VMobject):
             out["opacity"] = round(max(float(mob.get_fill_opacity()), float(mob.get_stroke_opacity())), 4)
+            out["stroke"] = round(float(mob.get_stroke_width()), 4)
         elif hasattr(mob, "get_opacity"):
             out["opacity"] = round(float(mob.get_opacity()), 4)
         color = mob.get_color()

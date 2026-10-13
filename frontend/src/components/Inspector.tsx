@@ -16,7 +16,7 @@ import { versionLabel } from './Updates';
 import { ActionsSection, CoupleSection, Diagnostics, GeometrySection, InstanceSection, LatexNotice, ParametersPanel, ParamSection, RelationshipSection } from './Construction';
 import { EquationSection, TermsClipEditor } from './EquationEditor';
 import { CONTROLLED_ARGS, isCoupled, isFollow, isRedraw, ownsPosition, standsAlone } from '../construct';
-import { addKey, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
+import { addKey, CAMERA, CAMERA_NAME, CHANNELS, channelsOf, deleteKey, fixKey, keyframes, setBaseValue, setKeyArgs, setKeyValue, valueBefore, type Channel, type Key, type KeyValue } from '../keyframes';
 import { coupleObjects, detachObjects, duplicateObjects, selectedObjectIds, uncoupleObjects, unwrapBlock } from '../store';
 import { keys } from '../keys';
 
@@ -661,6 +661,7 @@ function ApplySection({ step }: { step: Step }) {
       </section>
       <ChainEditor title="Methods" help={CLIP_HELP.methods} cls={cls} chain={step.chain ?? ''} placeholder=".next_to(other, UP)" onChange={(v) => setStep(step.id, (s) => void (s.chain = v), 'chain')} />
       {obj && <KeyframeChannels obj={obj} clip={step.id} />}
+      {!obj && target.trim() === CAMERA_NAME && <KeyframeChannels obj={CAMERA} clip={step.id} />}
     </>
   );
 }
@@ -983,6 +984,7 @@ function AnimInspector({ r }: { r: AnimRef }) {
         <EnabledRow id={anim.id} disabled={anim.disabled} />
       </section>
       {targetObj && <KeyframeChannels obj={targetObj} clip={anim.id} />}
+      {!targetObj && anim.target.trim() === CAMERA_NAME && <KeyframeChannels obj={CAMERA} clip={anim.id} />}
 
       {composition && (
         <>
@@ -1157,7 +1159,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
       const own = keyframes(d, lay2, tl, obj.name).filter((k) => k.channel === ch);
       const on = own.find((k) => Math.abs(frameSnap(k.t) - time) < half);
       if (on) return setKeyValue(d, lay2, tl, on, v);
-      if (!own.length) {
+      if (!own.length && obj !== CAMERA) {
         const o = d.objects.find((x) => x.id === obj.id);
         if (!o) return 'The object is gone';
         setBaseValue(o, ch, v);
@@ -1208,6 +1210,7 @@ function KeyframeChannels({ obj, clip }: { obj: SceneObject; clip?: string }) {
         else if (ch === 'scale') editor = <ScrubNumber value={num} min={0.01} step={0.01} precision={3} suffix="×" onChange={(v) => write(ch, v)} />;
         else if (ch === 'rotation') editor = <ScrubNumber value={num} step={0.5} precision={1} suffix="°" onChange={(v) => write(ch, v)} />;
         else if (ch === 'opacity') editor = <ScrubNumber value={num} placeholder="1" min={0} max={1} step={0.01} onChange={(v) => write(ch, v)} />;
+        else if (ch === 'stroke') editor = <ScrubNumber value={num} placeholder="as created" min={0} step={0.5} precision={2} onChange={(v) => write(ch, v)} />;
         else editor = <ScrubNumber value={num} step={0.05} precision={3} onChange={(v) => write(ch, v)} />;
         return (
           <div key={ch} className="kf-channel" data-channel={ch}>
